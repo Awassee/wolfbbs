@@ -1,0 +1,42 @@
+version: '3.9'
+services:
+  bbs:
+    build: .
+    entrypoint: ["/app/wolfbbs"]
+    command: ["-listen", ":2222"]
+    ports:
+      - "2222:2222"
+    environment:
+      WOLFBBS_DATABASE_URL: "postgres://wolfbbs:wolfbbs@postgres:5432/wolfbbs?sslmode=disable"
+    depends_on:
+      - postgres
+  web:
+    build: .
+    entrypoint: ["/app/wolfbbs-web"]
+    command: ["-listen", ":8080"]
+    ports:
+      - "8080:8080"
+    environment:
+      WOLFBBS_DATABASE_URL: "postgres://wolfbbs:wolfbbs@postgres:5432/wolfbbs?sslmode=disable"
+    depends_on:
+      - postgres
+  irc:
+    build: .
+    entrypoint: ["/app/wolfbbs-irc"]
+    command: ["-listen", ":6667"]
+    ports:
+      - "6667:6667"
+    depends_on:
+      - postgres
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: wolfbbs
+      POSTGRES_PASSWORD: wolfbbs
+      POSTGRES_DB: wolfbbs
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+volumes:
+  pgdata:
