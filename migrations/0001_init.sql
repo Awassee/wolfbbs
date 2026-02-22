@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_login_at TIMESTAMPTZ
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_handle_lower ON users (LOWER(handle));
 
 CREATE TABLE IF NOT EXISTS boards (
     id BIGSERIAL PRIMARY KEY,

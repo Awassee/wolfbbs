@@ -6,9 +6,10 @@ import (
 	"embed"
 	_ "github.com/lib/pq"
 	"os"
-	"sort"
 	"strconv"
+	"sort"
 	"strings"
+	"time"
 )
 
 const (
@@ -99,9 +100,31 @@ func OpenPostgres(dsn string) (*sql.DB, error) {
 	}
 	db.SetMaxOpenConns(maxConn)
 	db.SetMaxIdleConns(4)
-	if err := db.Ping(); err != nil {
+	pingTries := 1
+	if raw := strings.TrimSpace(os.Getenv("WOLFBBS_DB_CONNECT_RETRIES")); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			pingTries = v
+		}
+	}
+	pingDelay := 1 * time.Second
+	if raw := strings.TrimSpace(os.Getenv("WOLFBBS_DB_CONNECT_DELAY_MS")); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v >= 0 {
+			pingDelay = time.Duration(v) * time.Millisecond
+		}
+	}
+	var pingErr error
+	for i := 0; i < pingTries; i++ {
+		pingErr = db.Ping()
+		if pingErr == nil {
+			break
+		}
+		if i+1 < pingTries {
+			time.Sleep(pingDelay)
+		}
+	}
+	if pingErr != nil {
 		_ = db.Close()
-		return nil, err
+		return nil, pingErr
 	}
 	if err := runMigrations(context.Background(), db, migrationFS); err != nil {
 		_ = db.Close()

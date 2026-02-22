@@ -28,6 +28,15 @@ func (r *PostgresUserRepository) Create(user *domain.User) error {
 		return errors.New("handle is required")
 	}
 	user.Handle = key
+	var existingID int64
+	existsErr := r.db.QueryRowContext(context.Background(), `
+SELECT id FROM users WHERE lower(handle) = lower($1) LIMIT 1`, user.Handle).Scan(&existingID)
+	if existsErr == nil {
+		return errors.New("handle already exists")
+	}
+	if existsErr != nil && existsErr != sql.ErrNoRows {
+		return existsErr
+	}
 	now := time.Now().UTC()
 	if user.CreatedAt.IsZero() {
 		user.CreatedAt = now
@@ -56,26 +65,26 @@ INSERT INTO users (
 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 RETURNING id, created_at, updated_at`
 
-		err := r.db.QueryRowContext(
-			context.Background(),
-			query,
-			user.Handle,
-			user.PasswordHash,
-			user.Enabled,
-			user.Banned,
-			user.ForceReset,
-			user.Theme,
-			user.TimeFormat24h,
-			user.ANSIEnabled,
-			user.PagingEnabled,
-			user.Role,
-			nullString(user.TOTPSecret),
-			pq.Array(user.RecoveryCodes),
-			user.Verified,
-			user.LastLoginAt,
-			user.CreatedAt,
-			user.UpdatedAt,
-		).Scan(&user.ID, &user.CreatedAt, &user.UpdatedAt)
+	err := r.db.QueryRowContext(
+		context.Background(),
+		query,
+		user.Handle,
+		user.PasswordHash,
+		user.Enabled,
+		user.Banned,
+		user.ForceReset,
+		user.Theme,
+		user.TimeFormat24h,
+		user.ANSIEnabled,
+		user.PagingEnabled,
+		user.Role,
+		nullString(user.TOTPSecret),
+		pq.Array(user.RecoveryCodes),
+		user.Verified,
+		user.LastLoginAt,
+		user.CreatedAt,
+		user.UpdatedAt,
+	).Scan(&user.ID, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		if pgErr, ok := err.(*pq.Error); ok && pgErr.Code == "23505" {
 			return errors.New("handle already exists")

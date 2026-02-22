@@ -54,6 +54,7 @@ go run ./cmd/wolfbbs -listen :2222
 - `WOLFBBS_READ_ONLY` : set to `1` or `true` to block admin mutating actions
 - `WOLFBBS_DATABASE_URL` : PostgreSQL DSN, e.g. `postgres://wolfbbs:wolfbbs@postgres:5432/wolfbbs?sslmode=disable`
 - `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` can also be used when URL is not set
+- When a PostgreSQL DSN is configured, `cmd/wolfbbs` and `cmd/wolfbbs-web` open shared DB repos and apply startup migrations from `migrations/0001_init.sql` if needed.
 
 ## Docs Added
 - `docs/screens.md` screen language and mockups
