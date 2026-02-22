@@ -3,11 +3,13 @@ package main
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -36,9 +38,37 @@ type mailRow struct {
 	Read   bool
 }
 
+type chatHistoryResponse struct {
+	Channel  string         `json:"channel"`
+	Messages []chat.Message `json:"messages"`
+	Online   []chat.Presence `json:"online,omitempty"`
+	LastID   int64          `json:"last_id"`
+}
+
+type chatModerationPayload struct {
+	Channel  string `json:"channel"`
+	Action   string `json:"action"`
+	Target   string `json:"target"`
+	Reason   string `json:"reason"`
+	Duration string `json:"duration"`
+}
+
 type sessionState struct {
 	handle string
 	expire time.Time
+	csrf   string
+}
+
+const (
+	roleUser      = "user"
+	roleModerator = "moderator"
+	roleAdmin     = "admin"
+)
+
+var roleWeight = map[string]int{
+	roleUser:      1,
+	roleModerator: 2,
+	roleAdmin:     3,
 }
 
 type adminLogEntry struct {
@@ -124,27 +154,36 @@ func main() {
 		},
 		mailLimits: map[string]bool{},
 	}
+	_ = app.chatSvc.JoinChannel("system", "#lobby")
 	_, _ = app.chatSvc.Post("system", "#lobby", "Welcome to #lobby")
 
 	http.HandleFunc("/", app.handleRoot)
 	http.HandleFunc("/login", app.handleLogin)
+	http.HandleFunc("/admin/login", app.handleLogin)
 	http.HandleFunc("/logout", app.handleLogout)
-	http.HandleFunc("/boards", app.authRequired(app.handleBoards))
-	http.HandleFunc("/mail", app.authRequired(app.handleMail))
-	http.HandleFunc("/settings", app.authRequired(app.handleSettings))
-	http.HandleFunc("/admin", app.roleRequired("admin", app.handleAdmin))
-	http.HandleFunc("/admin/users", app.roleRequired("admin", app.handleAdminUsers))
-	http.HandleFunc("/admin/boards", app.roleRequired("admin", app.handleAdminBoards))
-	http.HandleFunc("/admin/mail", app.roleRequired("admin", app.handleAdminMail))
-	http.HandleFunc("/admin/files", app.roleRequired("admin", app.handleAdminFiles))
-	http.HandleFunc("/admin/gateways", app.roleRequired("admin", app.handleAdminGateways))
-	http.HandleFunc("/admin/chat", app.roleRequired("admin", app.handleAdminChat))
-	http.HandleFunc("/admin/system", app.roleRequired("admin", app.handleAdminSystem))
-	http.HandleFunc("/admin/audit", app.roleRequired("admin", app.handleAdminAudit))
-	http.HandleFunc("/chat", app.authRequired(app.handleChat))
-	http.HandleFunc("/chat/send", app.authRequired(app.handleChatSend))
-	http.HandleFunc("/chat/stream", app.authRequired(app.handleChatStream))
-	http.HandleFunc("/gateway", app.authRequired(app.handleGateway))
+	http.Handle("/boards", app.authRequired(http.HandlerFunc(app.handleBoards)))
+	http.Handle("/mail", app.authRequired(http.HandlerFunc(app.handleMail)))
+	http.Handle("/settings", app.authRequired(http.HandlerFunc(app.handleSettings)))
+	http.Handle("/admin", app.mustBeRole(roleAdmin, app.handleAdmin))
+	http.Handle("/admin/users", app.mustBeRole(roleAdmin, app.handleAdminUsers))
+	http.Handle("/admin/boards", app.mustBeRole(roleAdmin, app.handleAdminBoards))
+	http.Handle("/admin/mail", app.mustBeRole(roleAdmin, app.handleAdminMail))
+	http.Handle("/admin/files", app.mustBeRole(roleAdmin, app.handleAdminFiles))
+	http.Handle("/admin/gateways", app.mustBeRole(roleAdmin, app.handleAdminGateways))
+	http.Handle("/admin/chat", app.mustBeRole(roleAdmin, app.handleAdminChat))
+	http.Handle("/admin/system", app.mustBeRole(roleAdmin, app.handleAdminSystem))
+	http.Handle("/admin/audit", app.mustBeRole(roleAdmin, app.handleAdminAudit))
+	http.Handle("/chat", app.authRequired(http.HandlerFunc(app.handleChat)))
+	http.Handle("/chat/send", app.authRequired(http.HandlerFunc(app.handleChatSend)))
+	http.Handle("/chat/stream", app.authRequired(http.HandlerFunc(app.handleChatStream)))
+	http.Handle("/chat/channels", app.authRequired(http.HandlerFunc(app.handleChatChannels)))
+	http.Handle("/chat/join", app.authRequired(http.HandlerFunc(app.handleChatJoin)))
+	http.Handle("/chat/leave", app.authRequired(http.HandlerFunc(app.handleChatLeave)))
+	http.Handle("/chat/history", app.authRequired(http.HandlerFunc(app.handleChatHistory)))
+	http.Handle("/chat/online", app.authRequired(http.HandlerFunc(app.handleChatOnline)))
+	http.Handle("/chat/moderation", app.mustBeRole(roleModerator, http.HandlerFunc(app.handleChatModeration)))
+	http.Handle("/gateway", app.authRequired(http.HandlerFunc(app.handleGateway)))
+	http.HandleFunc("/healthz", app.handleHealthz)
 
 	fmt.Printf("WolfBBS web companion on %s\n", *listen)
 	log.Fatal(http.ListenAndServe(*listen, nil))
@@ -158,8 +197,18 @@ func (a *webApp) handleRoot(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
+func (a *webApp) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	_ = r
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
+}
+
 func (a *webApp) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
+		if _, ok := a.currentUser(r); ok {
+			http.Redirect(w, r, "/boards", http.StatusFound)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(loginPage()))
 		return
@@ -190,6 +239,7 @@ func (a *webApp) handleLogin(w http.ResponseWriter, r *http.Request) {
 			Value:    sid,
 			Path:     "/",
 			HttpOnly: true,
+			Secure:   strings.EqualFold(strings.TrimSpace(os.Getenv("WOLFBBS_SECURE_COOKIE")), "true"),
 			SameSite: http.SameSiteStrictMode,
 			Expires:  time.Now().Add(2 * time.Hour),
 		})
@@ -409,16 +459,9 @@ func (a *webApp) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
-	if user.Role != "admin" {
-		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte("forbidden"))
-		return
-	}
 
 	if r.Method == http.MethodPost {
-		if a.readOnly {
-			w.WriteHeader(http.StatusForbidden)
-			_, _ = w.Write([]byte("read-only mode"))
+		if !a.requireAdminWrite(w, r) {
 			return
 		}
 		target := strings.TrimSpace(r.FormValue("handle"))
@@ -463,6 +506,7 @@ func (a *webApp) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	csrf := a.csrfHiddenInput(r)
 	rows := strings.Builder{}
 	for _, u := range users {
 		if filter != "" && !strings.Contains(strings.ToLower(u.Handle), filter) {
@@ -478,27 +522,33 @@ func (a *webApp) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		rows.WriteString(`<tr><td>` + u.Handle + `</td><td>` + status + `</td><td>` + u.Role + `</td><td>`)
 		rows.WriteString(fmt.Sprintf(`<form method="POST" action="/admin/users">
 			<input type="hidden" name="handle" value="%s">
-			<input type="hidden" name="action" value="enable"><button type="submit">Enable</button></form>`, u.Handle))
+			%s
+			<input type="hidden" name="action" value="enable"><button type="submit">Enable</button></form>`, u.Handle, csrf))
 		rows.WriteString(fmt.Sprintf(`<form method="POST" action="/admin/users">
 			<input type="hidden" name="handle" value="%s">
-			<input type="hidden" name="action" value="disable"><button type="submit">Disable</button></form>`, u.Handle))
+			%s
+			<input type="hidden" name="action" value="disable"><button type="submit">Disable</button></form>`, u.Handle, csrf))
 		rows.WriteString(fmt.Sprintf(`<form method="POST" action="/admin/users">
 			<input type="hidden" name="handle" value="%s">
-			<input type="hidden" name="action" value="ban"><button type="submit">Ban</button></form>`, u.Handle))
+			%s
+			<input type="hidden" name="action" value="ban"><button type="submit">Ban</button></form>`, u.Handle, csrf))
 		rows.WriteString(fmt.Sprintf(`<form method="POST" action="/admin/users">
 			<input type="hidden" name="handle" value="%s">
-			<input type="hidden" name="action" value="unban"><button type="submit">Unban</button></form>`, u.Handle))
+			%s
+			<input type="hidden" name="action" value="unban"><button type="submit">Unban</button></form>`, u.Handle, csrf))
 		rows.WriteString(fmt.Sprintf(`<form method="POST" action="/admin/users">
 			<input type="hidden" name="handle" value="%s">
-			<input type="hidden" name="action" value="reset"><button type="submit">Reset Password</button></form>`, u.Handle))
+			%s
+			<input type="hidden" name="action" value="reset"><button type="submit">Reset Password</button></form>`, u.Handle, csrf))
 		rows.WriteString(fmt.Sprintf(`<form method="POST" action="/admin/users">
 			<input type="hidden" name="handle" value="%s">
+			%s
 			<input type="hidden" name="action" value="set_role">
 			<select name="role">
 				<option value="user"%s>User</option>
 				<option value="moderator"%s>Moderator</option>
 				<option value="admin"%s>Admin</option>
-			</select><button type="submit">Set role</button></form>`, u.Handle, selectedIf(u.Role == "user"), selectedIf(u.Role == "moderator"), selectedIf(u.Role == "admin")))
+			</select><button type="submit">Set role</button></form>`, u.Handle, csrf, selectedIf(u.Role == "user"), selectedIf(u.Role == "moderator"), selectedIf(u.Role == "admin")))
 		rows.WriteString(`</td></tr>`)
 	}
 
@@ -517,9 +567,7 @@ func (a *webApp) handleAdminBoards(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodPost {
-		if a.readOnly {
-			w.WriteHeader(http.StatusForbidden)
-			_, _ = w.Write([]byte("read-only mode"))
+		if !a.requireAdminWrite(w, r) {
 			return
 		}
 		action := strings.ToLower(strings.TrimSpace(r.FormValue("action")))
@@ -559,13 +607,14 @@ func (a *webApp) handleAdminBoards(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows := strings.Builder{}
+	csrf := a.csrfHiddenInput(r)
 	for _, b := range a.boards {
 		rows.WriteString(fmt.Sprintf(`<tr><td>%d</td><td>%s</td><td>%d</td><td>%s</td>`, b.ID, b.Title, b.Topics, b.LastAt))
-		rows.WriteString(fmt.Sprintf(`<td><form method="POST" action="/admin/boards"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="%d"><button type="submit">delete</button></form></td>`, b.ID))
+		rows.WriteString(fmt.Sprintf(`<td><form method="POST" action="/admin/boards"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="%d">`+csrf+`<button type="submit">delete</button></form></td>`, b.ID))
 		rows.WriteString(`</tr>`)
 	}
 	page := `<html><body><h1>Boards</h1><p><a href="/admin">back</a></p>` +
-		`<form method="POST"><label>Title <input name="title"></label><input type="hidden" name="action" value="create"><button type="submit">add</button></form>` +
+		`<form method="POST"><label>Title <input name="title"></label>` + csrf + `<input type="hidden" name="action" value="create"><button type="submit">add</button></form>` +
 		`<table border="1"><tr><th>ID</th><th>Title</th><th>Topics</th><th>Last</th><th>Actions</th></tr>` + rows.String() + `</table>` +
 		`</body></html>`
 	w.WriteHeader(http.StatusOK)
@@ -579,9 +628,7 @@ func (a *webApp) handleAdminMail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodPost {
-		if a.readOnly {
-			w.WriteHeader(http.StatusForbidden)
-			_, _ = w.Write([]byte("read-only mode"))
+		if !a.requireAdminWrite(w, r) {
 			return
 		}
 		target := strings.TrimSpace(r.FormValue("handle"))
@@ -601,10 +648,12 @@ func (a *webApp) handleAdminMail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows := strings.Builder{}
+	csrf := a.csrfHiddenInput(r)
 	for handle, blocked := range a.mailLimits {
 		rows.WriteString(fmt.Sprintf(`<tr><td>%s</td><td>%t</td>`, handle, blocked))
 		rows.WriteString(`<td><form method="POST" action="/admin/mail">`)
 		rows.WriteString(`<input type="hidden" name="handle" value="` + handle + `">`)
+		rows.WriteString(csrf)
 		if blocked {
 			rows.WriteString(`<input type="hidden" name="action" value="enable_outbound"><button type="submit">enable</button>`)
 		} else {
@@ -672,6 +721,127 @@ func (a *webApp) handleAdminAudit(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(`<html><body><h1>Admin Audit Log</h1><p><a href="/admin">back</a></p><table border="1"><tr><th>Time</th><th>Actor</th><th>Target</th><th>Action</th><th>Details</th></tr>` + rows.String() + `</table></body></html>`))
 }
 
+func (a *webApp) roleForUser(u *domain.User) int {
+	if u == nil {
+		return 0
+	}
+	return roleWeight[strings.ToLower(strings.TrimSpace(u.Role))]
+}
+
+func (a *webApp) hasRole(u *domain.User, minimum string) bool {
+	return a.roleForUser(u) >= roleWeight[strings.ToLower(strings.TrimSpace(minimum))]
+}
+
+func (a *webApp) authRequired(next http.HandlerFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := a.currentUser(r); !ok {
+			http.Redirect(w, r, "/login", http.StatusFound)
+			return
+		}
+		next(w, r)
+	})
+}
+
+func (a *webApp) mustBeRole(minRole string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u, ok := a.currentUser(r)
+		if !ok {
+			http.Redirect(w, r, "/login", http.StatusFound)
+			return
+		}
+		if !a.hasRole(u, minRole) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (a *webApp) requireCSRF(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		return true
+	}
+
+	s, ok := currentSessionState(r, a)
+	if !ok {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return false
+	}
+	requestToken := r.FormValue("csrf_token")
+	if requestToken == "" {
+		requestToken = r.Header.Get("X-CSRF-Token")
+	}
+	if requestToken == "" {
+		http.Error(w, "csrf token missing", http.StatusForbidden)
+		return false
+	}
+	if !secureEquals(requestToken, s.csrf) {
+		http.Error(w, "invalid csrf token", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+func (a *webApp) requireAdminWrite(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		return true
+	}
+	if a.readOnly {
+		http.Error(w, "read-only mode", http.StatusForbidden)
+		return false
+	}
+	return a.requireCSRF(w, r)
+}
+
+func (a *webApp) csrfHiddenInput(r *http.Request) string {
+	session, ok := currentSessionState(r, a)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf(`<input type="hidden" name="csrf_token" value="%s">`, session.csrf)
+}
+
+func secureEquals(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	diff := 0
+	for i := 0; i < len(a); i++ {
+		diff |= int(a[i] ^ b[i])
+	}
+	return diff == 0
+}
+
+func currentSessionState(r *http.Request, a *webApp) (sessionState, bool) {
+	c, err := r.Cookie("wolfbbs_session")
+	if err != nil {
+		return sessionState{}, false
+	}
+	a.Lock()
+	defer a.Unlock()
+	state, ok := a.sessions[c.Value]
+	if !ok {
+		return sessionState{}, false
+	}
+	if time.Now().After(state.expire) {
+		delete(a.sessions, c.Value)
+		return sessionState{}, false
+	}
+	return state, true
+}
+
+func (a *webApp) currentUser(r *http.Request) (*domain.User, bool) {
+	session, ok := currentSessionState(r, a)
+	if !ok {
+		return nil, false
+	}
+	u, err := a.authSvc.GetUser(session.handle)
+	if err != nil {
+		return nil, false
+	}
+	return u, true
+}
+
 func boolToText(v bool) string {
 	if v {
 		return "true"
@@ -720,25 +890,120 @@ func randomPassword(length int) string {
 	return string(b)
 }
 
+func randomToken(length int) string {
+	return randomPassword(length)
+}
+
 func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 	user, ok := a.currentUser(r)
 	if !ok {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
-	chatPage := `<html><body>
+	modActions := ""
+	if strings.EqualFold(user.Role, roleModerator) || strings.EqualFold(user.Role, roleAdmin) {
+		modActions = `
+			<section id="mod">
+				<h3>Moderation</h3>
+				<form id="modForm">
+					<input type="hidden" name="channel" value="#lobby">
+					<input type="hidden" name="target">
+					<input type="hidden" name="action">
+					<input type="text" name="target" placeholder="target" required>
+					<select name="modAction">
+						<option value="kick">kick</option>
+						<option value="mute">mute</option>
+						<option value="ban">ban</option>
+						<option value="unban">unban</option>
+						<option value="unmute">unmute</option>
+					</select>
+					<button type="button" id="modButton">Apply</button>
+				</form>
+			</section>`
+	}
+	chatPage := `<!doctype html>
+<html>
+<body>
 	<h1>WolfBBS Chat</h1>
 	<p>Logged in as ` + user.Handle + `</p>
-	<form method="POST" action="/chat/send">
-		<select name="channel"><option value="#lobby">#lobby</option></select>
-		<input name="message" size="50">
+	<p><label>Channel:
+		<select id="channelSelect"><option value="#lobby">#lobby</option></select>
+	</label></p>
+	<div id="chat" style="height:300px; width: 800px; border:1px solid #333; overflow:auto; font-family: monospace; white-space: pre;"></div>
+	<form id="sendForm">
+		<input type="text" id="message" style="width: 600px;" autocomplete="off">
 		<button type="submit">Send</button>
 	</form>
-	<pre id="chat"></pre>
+	<p>Online:
+		<span id="online"></span>
+	</p>
+	` + modActions + `
 	<script>
-	fetch('/chat/stream?channel=%23lobby').then(r=>r.text()).then(t=>{document.getElementById('chat').textContent=t});
+		const channel = document.getElementById('channelSelect').value;
+		const token = document.cookie.match(/(?:^|; )wolfbbs_session=[^;]*/)?.[0]?.split('=')[1] || '';
+		function formatLine(m) {
+			return '[' + m.created_at + '] ' + m.from + ': ' + m.body;
+		}
+		async function loadHistory() {
+			const ch = document.getElementById('channelSelect').value;
+			const res = await fetch('/chat/history?channel=' + encodeURIComponent(ch) + '&limit=100', {credentials:'same-origin'});
+			if (!res.ok) return;
+			const payload = await res.json();
+			const list = document.getElementById('online');
+			list.textContent = 'channel users: ' + (payload.online || 0);
+			const box = document.getElementById('chat');
+			box.textContent = '';
+			for (const m of payload.messages || []) {
+				const line = document.createElement('div');
+				line.textContent = formatLine(m);
+				box.appendChild(line);
+			}
+		}
+		async function loadOnline() {
+			const ch = document.getElementById('channelSelect').value;
+			const res = await fetch('/chat/online?channel=' + encodeURIComponent(ch), {credentials:'same-origin'});
+			if (!res.ok) return;
+			const payload = await res.json();
+			const online = document.getElementById('online');
+			const names = (payload.online || []).map(p => p.nick).join(', ');
+			online.textContent = names || 'none';
+		}
+		async function join() {
+			const ch = document.getElementById('channelSelect').value;
+			await fetch('/chat/join', {
+				method:'POST',
+				headers:{'Content-Type':'application/x-www-form-urlencoded'},
+				body:'channel=' + encodeURIComponent(ch)
+			});
+		}
+		function watch() {
+			const ch = document.getElementById('channelSelect').value;
+			const source = new EventSource('/chat/stream?channel=' + encodeURIComponent(ch));
+			source.onmessage = function(evt){
+				const pre = document.getElementById('chat');
+				pre.textContent += evt.data + '\\n';
+				pre.scrollTop = pre.scrollHeight;
+			};
+		}
+		document.getElementById('sendForm').addEventListener('submit', async function(evt){
+			evt.preventDefault();
+			const ch = document.getElementById('channelSelect').value;
+			const message = document.getElementById('message').value;
+			if (!message) return;
+			await fetch('/chat/send', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:'channel=' + encodeURIComponent(ch) + '&message=' + encodeURIComponent(message)});
+			document.getElementById('message').value = '';
+			await loadHistory();
+		});
+		window.addEventListener('load', async () => {
+			await fetch('/chat/join', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:'channel=%23lobby&csrf_token=' + ''});
+			await loadHistory();
+			await loadOnline();
+			watch();
+			setInterval(loadOnline, 5000);
+		});
 	</script>
-	</body></html>`
+</body>
+</html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(chatPage))
 }
@@ -793,58 +1058,15 @@ func (a *webApp) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	flusher.Flush()
 }
 
-func (a *webApp) authRequired(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := a.currentUser(r); !ok {
-			http.Redirect(w, r, "/login", http.StatusFound)
-			return
-		}
-		next(w, r)
-	}
-}
-
-func (a *webApp) roleRequired(role string, next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		u, ok := a.currentUser(r)
-		if !ok {
-			http.Redirect(w, r, "/login", http.StatusFound)
-			return
-		}
-		if u.Role != role {
-			w.WriteHeader(http.StatusForbidden)
-			_, _ = w.Write([]byte("forbidden"))
-			return
-		}
-		next(w, r)
-	}
-}
-
-func (a *webApp) currentUser(r *http.Request) (*domain.User, bool) {
-	c, err := r.Cookie("wolfbbs_session")
-	if err != nil {
-		return nil, false
-	}
-	a.Lock()
-	state, ok := a.sessions[c.Value]
-	a.Unlock()
-	if !ok || time.Now().After(state.expire) {
-		return nil, false
-	}
-	u, err := a.authSvc.GetUser(state.handle)
-	if err != nil {
-		return nil, false
-	}
-	return u, true
-}
-
 func (a *webApp) createSession(handle string) (string, bool) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		return "", false
 	}
 	sid := hex.EncodeToString(b)
+	csrf := randomToken(32)
 	a.Lock()
-	a.sessions[sid] = sessionState{handle: handle, expire: time.Now().Add(2 * time.Hour)}
+	a.sessions[sid] = sessionState{handle: handle, expire: time.Now().Add(2 * time.Hour), csrf: csrf}
 	a.Unlock()
 	return sid, true
 }

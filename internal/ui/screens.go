@@ -164,7 +164,7 @@ func RenderGatewayMenu(width int) string {
 		"┌────────────────────────── Gateway Menu ───────────────────────────┐",
 		"│ [E]mail gateway     Send external mail from BBS compose           │",
 		"│ [W]eb gateway       Read and save URLs in offline reader        │",
-		"│ [R]eturn",
+		"│ [R]eturn                                                       │",
 		"└───────────────────────────────────────────────────────────────────┘",
 	}
 	return clampLines(width, lines) + "\r\n"

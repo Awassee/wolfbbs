@@ -332,6 +332,8 @@ func (s *Server) handleSession(sess gssh.Session) {
 }
 
 func renderFrame(out io.Writer, termWidth, contentWidth int, frame string) {
+	frame = strings.ReplaceAll(frame, "\r\n", "\n")
+	frame = strings.TrimSuffix(frame, "\n")
 	if termWidth <= contentWidth {
 		io.WriteString(out, frame)
 		return
@@ -341,7 +343,7 @@ func renderFrame(out io.Writer, termWidth, contentWidth int, frame string) {
 		io.WriteString(out, frame)
 		return
 	}
-	lines := strings.Split(strings.ReplaceAll(frame, "\n", "\r\n"), "\r\n")
+	lines := strings.Split(frame, "\n")
 	for i, line := range lines {
 		lines[i] = strings.Repeat(" ", padding) + line
 	}

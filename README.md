@@ -8,21 +8,41 @@ WolfBBS is an SSH-first BBS with a Wildcat-inspired ANSI/TUI flow and companion 
 - Read-only web companion + admin surfaces (in-memory MVP)
 - Shared in-memory chat core used by web and IRC stubs
 
-## Quickstart
+## Installation
+
+### Quick install
 
 ```bash
-# Start SSH, web, IRC, and postgres
-	docker-compose up --build
+curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/main/install.sh | bash -s -- --with-docker
 ```
+
+Replace `<owner>/<repo>` with the real Git repository location you host WolfBBS from.
+
+See [`docs/INSTALL.md`](docs/INSTALL.md) for full installer options, supported OS notes, and troubleshooting.
+
+### Install from local clone
+
+```bash
+cd /path/to/repo
+bash install.sh --with-docker
+```
+
+### Quick connect
 
 - SSH: `ssh localhost -p 2222`
 - Web read-only companion: `http://localhost:8080/login`
-- IRC endpoint: connect with any IRC client to `localhost:6667`
+- Web admin: `http://localhost:8080/admin`
+- Chat: `http://localhost:8080/chat`
+- IRC: connect with any IRC client to `localhost:6667`
 
 ## Local run
 
 ```bash
 go run ./cmd/wolfbbs -listen :2222
+```
+
+```bash
+docker-compose up --build
 ```
 
 ## Current Runtime Surface
@@ -55,6 +75,9 @@ go run ./cmd/wolfbbs -listen :2222
 - `WOLFBBS_DATABASE_URL` : PostgreSQL DSN, e.g. `postgres://wolfbbs:wolfbbs@postgres:5432/wolfbbs?sslmode=disable`
 - `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` can also be used when URL is not set
 - When a PostgreSQL DSN is configured, `cmd/wolfbbs` and `cmd/wolfbbs-web` open shared DB repos and apply startup migrations from `migrations/0001_init.sql` if needed.
+- PostgreSQL startup defaults are tuned for container startup:
+  - `WOLFBBS_DB_CONNECT_RETRIES` (default `10`)
+  - `WOLFBBS_DB_CONNECT_DELAY_MS` (default `1000`)
 
 ## Docs Added
 - `docs/screens.md` screen language and mockups

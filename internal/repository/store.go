@@ -15,6 +15,8 @@ import (
 const (
 	defaultPostgresHost = "postgres"
 	defaultPostgresPort = "5432"
+	defaultPingTries    = 10
+	defaultPingDelay    = 1 * time.Second
 )
 
 //go:embed migrations/*.sql
@@ -100,13 +102,13 @@ func OpenPostgres(dsn string) (*sql.DB, error) {
 	}
 	db.SetMaxOpenConns(maxConn)
 	db.SetMaxIdleConns(4)
-	pingTries := 1
+	pingTries := defaultPingTries
 	if raw := strings.TrimSpace(os.Getenv("WOLFBBS_DB_CONNECT_RETRIES")); raw != "" {
 		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
 			pingTries = v
 		}
 	}
-	pingDelay := 1 * time.Second
+	pingDelay := defaultPingDelay
 	if raw := strings.TrimSpace(os.Getenv("WOLFBBS_DB_CONNECT_DELAY_MS")); raw != "" {
 		if v, err := strconv.Atoi(raw); err == nil && v >= 0 {
 			pingDelay = time.Duration(v) * time.Millisecond
