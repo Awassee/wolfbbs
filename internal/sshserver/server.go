@@ -14,8 +14,8 @@ import (
 
 	gssh "github.com/gliderlabs/ssh"
 	"wolfbbs/internal/auth"
-	"wolfbbs/internal/gateway"
 	"wolfbbs/internal/doors"
+	"wolfbbs/internal/gateway"
 	"wolfbbs/internal/ui"
 )
 
@@ -385,7 +385,12 @@ func readLine(reader *bufio.Reader, max int) (string, error) {
 		}
 		if ch == 0x7f || ch == 0x08 {
 			if b.Len() > 0 {
-				b.Truncate(b.Len() - 1)
+				cur := b.String()
+				if len(cur) > 0 {
+					cur = cur[:len(cur)-1]
+					b.Reset()
+					_, _ = b.WriteString(cur)
+				}
 			}
 			continue
 		}

@@ -53,6 +53,28 @@ Options:
 USAGE
 }
 
+require_value() {
+  local flag="$1"
+  local value="${2:-}"
+  if [[ -z "$value" ]]; then
+    echo "Missing value for ${flag}"
+    usage
+    exit 1
+  fi
+}
+
+prompt_repo_url() {
+  local input=""
+  if [[ "$NON_INTERACTIVE" == "true" ]]; then
+    return
+  fi
+  printf "No local docker-compose file found. Enter repository URL to clone: "
+  read -r input
+  if [[ -n "$input" ]]; then
+    REPO_URL="$input"
+  fi
+}
+
 log() {
   local msg="$1"
   printf '[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$msg" | tee -a "$LOG_FILE"
@@ -332,13 +354,33 @@ ensure_compose_file() {
     return
   fi
 
+  if [[ -z "$REPO_URL" ]]; then
+    prompt_repo_url
+  fi
+
   if [[ -n "$REPO_URL" ]]; then
+    if [[ -d "$PREFIX" && -n "$(ls -A "$PREFIX" 2>/dev/null)" && "$FORCE" != "true" ]]; then
+      if [[ -d "$PREFIX/.git" ]]; then
+        echo "Target directory is a git checkout and will be updated: $PREFIX"
+      elif [[ "$FORCE" == "true" ]]; then
+        run "rm -rf '$PREFIX'"
+        run "mkdir -p '$PREFIX'"
+      else
+        echo "Target directory exists and is not empty: $PREFIX"
+        echo "Use --force to replace it, or choose a different --prefix."
+        exit 1
+      fi
+    fi
     log "No local compose file found. Cloning repository from ${REPO_URL}."
     init_install_dir
     if [[ "$DRY_RUN" == "true" ]]; then
       return
     fi
-    run "git clone '$REPO_URL' '$PREFIX'"
+    if [[ -d "$PREFIX/.git" ]]; then
+      run "git -C '$PREFIX' pull --ff-only"
+    else
+      run "git clone '$REPO_URL' '$PREFIX'"
+    fi
     WORK_DIR="$PREFIX"
     compose_file="$(find_compose_file || true)"
     if [[ -n "$compose_file" ]]; then
@@ -540,6 +582,7 @@ parse_args() {
   while (($# > 0)); do
     case "$1" in
       --prefix)
+        require_value "$1" "${2:-}"
         PREFIX="$2"
         shift 2
         ;;
@@ -560,18 +603,22 @@ parse_args() {
         shift
         ;;
       --ssh-port)
+        require_value "$1" "${2:-}"
         SSH_PORT="$2"
         shift 2
         ;;
       --web-port)
+        require_value "$1" "${2:-}"
         WEB_PORT="$2"
         shift 2
         ;;
       --irc-port)
+        require_value "$1" "${2:-}"
         IRC_PORT="$2"
         shift 2
         ;;
       --irc-tls-port)
+        require_value "$1" "${2:-}"
         IRC_TLS_PORT="$2"
         shift 2
         ;;
@@ -592,6 +639,7 @@ parse_args() {
         shift
         ;;
       --repo-url)
+        require_value "$1" "${2:-}"
         REPO_URL="$2"
         shift 2
         ;;
@@ -631,7 +679,7 @@ main() {
   require_cmd grep
   require_cmd openssl
 
-  if [[ -z "$compose_file" ]]; then
+  if [[ -z "$compose_file" && "$STATUS" != "true" ]]; then
     require_cmd git
   fi
 
@@ -643,9 +691,16 @@ main() {
   fi
 
   compose_file="$(find_compose_file || true)"
-  if [[ -z "$compose_file" ]]; then
+  if [[ -z "$compose_file" && "$STATUS" != "true" ]]; then
     ensure_compose_file
-  else
+  elif [[ -z "$compose_file" && "$STATUS" == "true" ]]; then
+    if [[ -d "$PREFIX" ]]; then
+      WORK_DIR="$PREFIX"
+      compose_file="$(find_compose_file || true)"
+    fi
+  fi
+
+  if [[ -n "$compose_file" ]]; then
     # if found in a separate path, keep prefix aligned
     if [[ "$(dirname "$compose_file")" != "$WORK_DIR" ]]; then
       PREFIX="$(dirname "$compose_file")"

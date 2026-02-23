@@ -30,19 +30,19 @@ type boardRow struct {
 }
 
 type mailRow struct {
-	ID     int
-	From   string
-	To     string
+	ID      int
+	From    string
+	To      string
 	Subject string
-	SentAt string
-	Read   bool
+	SentAt  string
+	Read    bool
 }
 
 type chatHistoryResponse struct {
-	Channel  string         `json:"channel"`
-	Messages []chat.Message `json:"messages"`
+	Channel  string          `json:"channel"`
+	Messages []chat.Message  `json:"messages"`
 	Online   []chat.Presence `json:"online,omitempty"`
-	LastID   int64          `json:"last_id"`
+	LastID   int64           `json:"last_id"`
 }
 
 type chatModerationPayload struct {
@@ -83,11 +83,11 @@ type webApp struct {
 	authSvc  *auth.Service
 	sessions map[string]sessionState
 	sync.Mutex
-	boards   []boardRow
-	chatSvc  *chat.Service
+	boards     []boardRow
+	chatSvc    *chat.Service
 	offlineDir string
-	readOnly bool
-	adminLog  []adminLogEntry
+	readOnly   bool
+	adminLog   []adminLogEntry
 	mailLimits map[string]bool
 }
 
@@ -136,9 +136,9 @@ func main() {
 	seedWebUsers(authSvc)
 
 	app := &webApp{
-		authSvc: authSvc,
+		authSvc:  authSvc,
 		sessions: map[string]sessionState{},
-		chatSvc: chat.NewService(),
+		chatSvc:  chat.NewService(),
 		offlineDir: func() string {
 			dir := strings.TrimSpace(os.Getenv("WOLFBBS_OFFLINE_DIR"))
 			if dir == "" {
@@ -154,8 +154,6 @@ func main() {
 		},
 		mailLimits: map[string]bool{},
 	}
-	_ = app.chatSvc.JoinChannel("system", "#lobby")
-	_, _ = app.chatSvc.Post("system", "#lobby", "Welcome to #lobby")
 
 	http.HandleFunc("/", app.handleRoot)
 	http.HandleFunc("/login", app.handleLogin)
@@ -205,8 +203,12 @@ func (a *webApp) handleHealthz(w http.ResponseWriter, r *http.Request) {
 
 func (a *webApp) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		if _, ok := a.currentUser(r); ok {
-			http.Redirect(w, r, "/boards", http.StatusFound)
+		if user, ok := a.currentUser(r); ok {
+			if user != nil && a.hasRole(user, roleAdmin) && strings.HasPrefix(r.URL.Path, "/admin") {
+				http.Redirect(w, r, "/admin", http.StatusFound)
+			} else {
+				http.Redirect(w, r, "/boards", http.StatusFound)
+			}
 			return
 		}
 		w.WriteHeader(http.StatusOK)
@@ -244,7 +246,11 @@ func (a *webApp) handleLogin(w http.ResponseWriter, r *http.Request) {
 			Expires:  time.Now().Add(2 * time.Hour),
 		})
 	}
-	http.Redirect(w, r, "/boards", http.StatusFound)
+	redirectTo := "/boards"
+	if strings.HasPrefix(r.URL.Path, "/admin") && a.hasRole(user, roleAdmin) {
+		redirectTo = "/admin"
+	}
+	http.Redirect(w, r, redirectTo, http.StatusFound)
 }
 
 func (a *webApp) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -354,81 +360,81 @@ func (a *webApp) handleSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-		if r.Method == http.MethodPost {
-			action := strings.TrimSpace(strings.ToLower(r.FormValue("action")))
-			switch action {
-			case "change_password":
-				next := strings.TrimSpace(r.FormValue("password"))
-				confirm := strings.TrimSpace(r.FormValue("confirm"))
-				if next == "" || confirm == "" {
-					w.WriteHeader(http.StatusBadRequest)
-					_, _ = w.Write([]byte("missing password"))
-					return
-				}
-				if next != confirm {
-					w.WriteHeader(http.StatusBadRequest)
-					_, _ = w.Write([]byte("passwords do not match"))
-					return
-				}
-				if err := a.authSvc.SetPassword(user.Handle, next); err != nil {
-					w.WriteHeader(http.StatusInternalServerError)
-					_, _ = w.Write([]byte("password update failed"))
-					return
-				}
-			case "enable_2fa":
-				secret, err := auth.GenerateTOTPSecret()
-				if err != nil {
-					w.WriteHeader(http.StatusInternalServerError)
-					_, _ = w.Write([]byte("2FA setup failed"))
-					return
-				}
-				codes, err := auth.GenerateRecoveryCodes(8)
-				if err != nil {
-					w.WriteHeader(http.StatusInternalServerError)
-					_, _ = w.Write([]byte("2FA setup failed"))
-					return
-				}
-				_ = a.authSvc.SetTOTPSecret(user.Handle, secret)
-				_ = a.authSvc.SetRecoveryCodes(user.Handle, codes)
-			case "disable_2fa":
-				_ = a.authSvc.SetTOTPSecret(user.Handle, "")
-				_ = a.authSvc.SetRecoveryCodes(user.Handle, nil)
-			case "regen_codes":
-				codes, err := auth.GenerateRecoveryCodes(8)
-				if err != nil {
-					w.WriteHeader(http.StatusInternalServerError)
-					_, _ = w.Write([]byte("2FA setup failed"))
-					return
-				}
-				_ = a.authSvc.SetRecoveryCodes(user.Handle, codes)
-			default:
-				http.Redirect(w, r, "/settings", http.StatusFound)
+	if r.Method == http.MethodPost {
+		action := strings.TrimSpace(strings.ToLower(r.FormValue("action")))
+		switch action {
+		case "change_password":
+			next := strings.TrimSpace(r.FormValue("password"))
+			confirm := strings.TrimSpace(r.FormValue("confirm"))
+			if next == "" || confirm == "" {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte("missing password"))
 				return
 			}
+			if next != confirm {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte("passwords do not match"))
+				return
+			}
+			if err := a.authSvc.SetPassword(user.Handle, next); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte("password update failed"))
+				return
+			}
+		case "enable_2fa":
+			secret, err := auth.GenerateTOTPSecret()
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte("2FA setup failed"))
+				return
+			}
+			codes, err := auth.GenerateRecoveryCodes(8)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte("2FA setup failed"))
+				return
+			}
+			_ = a.authSvc.SetTOTPSecret(user.Handle, secret)
+			_ = a.authSvc.SetRecoveryCodes(user.Handle, codes)
+		case "disable_2fa":
+			_ = a.authSvc.SetTOTPSecret(user.Handle, "")
+			_ = a.authSvc.SetRecoveryCodes(user.Handle, nil)
+		case "regen_codes":
+			codes, err := auth.GenerateRecoveryCodes(8)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte("2FA setup failed"))
+				return
+			}
+			_ = a.authSvc.SetRecoveryCodes(user.Handle, codes)
+		default:
 			http.Redirect(w, r, "/settings", http.StatusFound)
 			return
 		}
+		http.Redirect(w, r, "/settings", http.StatusFound)
+		return
+	}
 
-		var secondFactorBlock strings.Builder
-		if user.TOTPSecret == "" {
-			secondFactorBlock.WriteString(`<p>2FA is currently disabled.</p>`)
-			secondFactorBlock.WriteString(`<form method="POST" action="/settings"><input type="hidden" name="action" value="enable_2fa"><button type="submit">Enable TOTP</button></form>`)
-		} else {
-			secondFactorBlock.WriteString(`<p>2FA is enabled.</p>`)
-			secondFactorBlock.WriteString(`<form method="POST" action="/settings"><input type="hidden" name="action" value="disable_2fa"><button type="submit">Disable TOTP</button></form>`)
-			secondFactorBlock.WriteString(`<form method="POST" action="/settings"><input type="hidden" name="action" value="regen_codes"><button type="submit">Regenerate recovery codes</button></form>`)
-			secondFactorBlock.WriteString(`<p>Recovery Codes: ` + strings.Join(user.RecoveryCodes, ", ") + `</p>`)
-		}
-		page := `<html><body><h1>Settings</h1><p>User: ` + user.Handle + `</p><ul>` +
-			`<li>ANSI: ` + boolToText(user.ANSIEnabled) + `</li>` +
-			`<li>Paging: ` + boolToText(user.PagingEnabled) + `</li>` +
-			`<li>Time format 24h: ` + boolToText(user.TimeFormat24h) + `</li>` +
-			`</ul>` +
-			`<h2>Password</h2><form method="POST" action="/settings"><input type="hidden" name="action" value="change_password">` +
-			`<label>New password: <input name="password" type="password"></label><br>` +
-			`<label>Confirm: <input name="confirm" type="password"></label><br><button type="submit">Change password</button></form>` +
-			secondFactorBlock.String() +
-			`</body></html>`
+	var secondFactorBlock strings.Builder
+	if user.TOTPSecret == "" {
+		secondFactorBlock.WriteString(`<p>2FA is currently disabled.</p>`)
+		secondFactorBlock.WriteString(`<form method="POST" action="/settings"><input type="hidden" name="action" value="enable_2fa"><button type="submit">Enable TOTP</button></form>`)
+	} else {
+		secondFactorBlock.WriteString(`<p>2FA is enabled.</p>`)
+		secondFactorBlock.WriteString(`<form method="POST" action="/settings"><input type="hidden" name="action" value="disable_2fa"><button type="submit">Disable TOTP</button></form>`)
+		secondFactorBlock.WriteString(`<form method="POST" action="/settings"><input type="hidden" name="action" value="regen_codes"><button type="submit">Regenerate recovery codes</button></form>`)
+		secondFactorBlock.WriteString(`<p>Recovery Codes: ` + strings.Join(user.RecoveryCodes, ", ") + `</p>`)
+	}
+	page := `<html><body><h1>Settings</h1><p>User: ` + user.Handle + `</p><ul>` +
+		`<li>ANSI: ` + boolToText(user.ANSIEnabled) + `</li>` +
+		`<li>Paging: ` + boolToText(user.PagingEnabled) + `</li>` +
+		`<li>Time format 24h: ` + boolToText(user.TimeFormat24h) + `</li>` +
+		`</ul>` +
+		`<h2>Password</h2><form method="POST" action="/settings"><input type="hidden" name="action" value="change_password">` +
+		`<label>New password: <input name="password" type="password"></label><br>` +
+		`<label>Confirm: <input name="confirm" type="password"></label><br><button type="submit">Change password</button></form>` +
+		secondFactorBlock.String() +
+		`</body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
 }
@@ -742,18 +748,22 @@ func (a *webApp) authRequired(next http.HandlerFunc) http.Handler {
 	})
 }
 
-func (a *webApp) mustBeRole(minRole string, next http.Handler) http.Handler {
+func (a *webApp) mustBeRole(minRole string, next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, ok := a.currentUser(r)
 		if !ok {
-			http.Redirect(w, r, "/login", http.StatusFound)
+			loginPath := "/login"
+			if strings.HasPrefix(r.URL.Path, "/admin") {
+				loginPath = "/admin/login"
+			}
+			http.Redirect(w, r, loginPath, http.StatusFound)
 			return
 		}
 		if !a.hasRole(u, minRole) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		next.ServeHTTP(w, r)
+		next(w, r)
 	})
 }
 
@@ -900,110 +910,195 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
+
+	csrf := ""
+	if state, ok := currentSessionState(r, a); ok {
+		csrf = state.csrf
+	}
+	csrfJSON := fmt.Sprintf("%q", csrf)
+
 	modActions := ""
-	if strings.EqualFold(user.Role, roleModerator) || strings.EqualFold(user.Role, roleAdmin) {
+	csrfInput := a.csrfHiddenInput(r)
+	if a.hasRole(user, roleModerator) {
 		modActions = `
 			<section id="mod">
 				<h3>Moderation</h3>
-				<form id="modForm">
-					<input type="hidden" name="channel" value="#lobby">
-					<input type="hidden" name="target">
+				<form id="modForm" action="/chat/moderation" method="POST">
+					` + csrfInput + `
+					<label>Channel:
+						<input type="text" name="channel" value="#lobby">
+					</label>
+					<label>Target: <input type="text" name="target" placeholder="target" required></label>
+					<label>Reason: <input type="text" name="reason"></label>
+					<label>Duration (optional): <input type="text" name="duration" value="" placeholder="5m"></label>
 					<input type="hidden" name="action">
-					<input type="text" name="target" placeholder="target" required>
-					<select name="modAction">
-						<option value="kick">kick</option>
-						<option value="mute">mute</option>
-						<option value="ban">ban</option>
-						<option value="unban">unban</option>
-						<option value="unmute">unmute</option>
+					<select name="action">
+						<option value="kick">Kick</option>
+						<option value="mute">Mute</option>
+						<option value="unmute">Unmute</option>
+						<option value="ban">Ban</option>
+						<option value="unban">Unban</option>
 					</select>
-					<button type="button" id="modButton">Apply</button>
+					<button type="submit">Apply</button>
 				</form>
 			</section>`
 	}
+
 	chatPage := `<!doctype html>
-<html>
-<body>
-	<h1>WolfBBS Chat</h1>
-	<p>Logged in as ` + user.Handle + `</p>
-	<p><label>Channel:
-		<select id="channelSelect"><option value="#lobby">#lobby</option></select>
-	</label></p>
-	<div id="chat" style="height:300px; width: 800px; border:1px solid #333; overflow:auto; font-family: monospace; white-space: pre;"></div>
-	<form id="sendForm">
-		<input type="text" id="message" style="width: 600px;" autocomplete="off">
-		<button type="submit">Send</button>
-	</form>
-	<p>Online:
-		<span id="online"></span>
-	</p>
-	` + modActions + `
-	<script>
-		const channel = document.getElementById('channelSelect').value;
-		const token = document.cookie.match(/(?:^|; )wolfbbs_session=[^;]*/)?.[0]?.split('=')[1] || '';
-		function formatLine(m) {
-			return '[' + m.created_at + '] ' + m.from + ': ' + m.body;
-		}
-		async function loadHistory() {
-			const ch = document.getElementById('channelSelect').value;
-			const res = await fetch('/chat/history?channel=' + encodeURIComponent(ch) + '&limit=100', {credentials:'same-origin'});
-			if (!res.ok) return;
-			const payload = await res.json();
-			const list = document.getElementById('online');
-			list.textContent = 'channel users: ' + (payload.online || 0);
-			const box = document.getElementById('chat');
-			box.textContent = '';
-			for (const m of payload.messages || []) {
-				const line = document.createElement('div');
-				line.textContent = formatLine(m);
-				box.appendChild(line);
+	<html>
+	<body>
+		<h1>WolfBBS Chat</h1>
+		<p>Logged in as ` + user.Handle + `</p>
+		<p><label>Channel:
+			<select id="channelSelect"></select>
+		</label></p>
+		<div id="chat" style="height:300px; width: 800px; border:1px solid #333; overflow:auto; font-family: monospace; white-space: pre;"></div>
+		<form id="sendForm">
+			<input type="text" id="message" style="width: 600px;" autocomplete="off">
+			<button type="submit">Send</button>
+		</form>
+		<p>Online:
+			<span id="online"></span>
+		</p>
+		` + modActions + `
+		<script>
+			const csrf = ` + csrfJSON + `;
+			const streamState = {es: null, channel: '#lobby'};
+
+			function formatLine(m) {
+				return '[' + m.created_at + '] ' + m.from + ': ' + m.body;
 			}
-		}
-		async function loadOnline() {
-			const ch = document.getElementById('channelSelect').value;
-			const res = await fetch('/chat/online?channel=' + encodeURIComponent(ch), {credentials:'same-origin'});
-			if (!res.ok) return;
-			const payload = await res.json();
-			const online = document.getElementById('online');
-			const names = (payload.online || []).map(p => p.nick).join(', ');
-			online.textContent = names || 'none';
-		}
-		async function join() {
-			const ch = document.getElementById('channelSelect').value;
-			await fetch('/chat/join', {
-				method:'POST',
-				headers:{'Content-Type':'application/x-www-form-urlencoded'},
-				body:'channel=' + encodeURIComponent(ch)
+
+			async function loadChannels() {
+				const res = await fetch('/chat/channels', {credentials: 'same-origin'});
+				if (!res.ok) return;
+				const payload = await res.json();
+				const select = document.getElementById('channelSelect');
+				select.innerHTML = '';
+				const channels = payload.channels || ['#lobby'];
+				channels.forEach((name) => {
+					const option = document.createElement('option');
+					option.value = name;
+					option.textContent = name;
+					select.appendChild(option);
+				});
+				if (!channels.includes(streamState.channel)) {
+					streamState.channel = channels[0] || '#lobby';
+				}
+				select.value = streamState.channel;
+			}
+
+			async function loadHistory() {
+				const ch = streamState.channel;
+				const res = await fetch('/chat/history?channel=' + encodeURIComponent(ch) + '&limit=100', {credentials: 'same-origin'});
+				if (!res.ok) return;
+				const payload = await res.json();
+				const box = document.getElementById('chat');
+				box.textContent = '';
+				for (const m of payload.messages || []) {
+					const line = document.createElement('div');
+					line.textContent = formatLine(m);
+					box.appendChild(line);
+				}
+			}
+
+			async function loadOnline() {
+				const ch = streamState.channel;
+				const res = await fetch('/chat/online?channel=' + encodeURIComponent(ch), {credentials: 'same-origin'});
+				if (!res.ok) return;
+				const payload = await res.json();
+				const online = document.getElementById('online');
+				const names = (payload.presence || []).map((p) => p.nick).join(', ');
+				online.textContent = names || 'none';
+			}
+
+			async function join() {
+				const ch = streamState.channel;
+				await fetch('/chat/join', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'X-CSRF-Token': csrf,
+					},
+					body: JSON.stringify({ channel: ch }),
+				});
+			}
+
+			function stopStream() {
+				if (streamState.es) {
+					streamState.es.close();
+					streamState.es = null;
+				}
+			}
+
+			function watch() {
+				stopStream();
+				const es = new EventSource('/chat/stream?channel=' + encodeURIComponent(streamState.channel) + '&after_id=0');
+				streamState.es = es;
+				es.onmessage = function(evt){
+					const msg = JSON.parse(evt.data);
+					const line = document.createElement('div');
+					line.textContent = formatLine(msg);
+					const box = document.getElementById('chat');
+					box.appendChild(line);
+					box.scrollTop = box.scrollHeight;
+				};
+				es.onerror = function() {
+					es.close();
+					setTimeout(watch, 1200);
+				};
+			}
+
+			async function switchChannel(next) {
+				streamState.channel = next;
+				await join();
+				await loadHistory();
+				await loadOnline();
+				watch();
+			}
+
+			async function leave(channel) {
+				await fetch('/chat/leave', {
+					method: 'POST',
+					headers: {'Content-Type':'application/json','X-CSRF-Token': csrf},
+					body: JSON.stringify({channel: channel}),
+				});
+			}
+
+			document.getElementById('channelSelect').addEventListener('change', async function(evt){
+				await switchChannel(evt.target.value);
 			});
-		}
-		function watch() {
-			const ch = document.getElementById('channelSelect').value;
-			const source = new EventSource('/chat/stream?channel=' + encodeURIComponent(ch));
-			source.onmessage = function(evt){
-				const pre = document.getElementById('chat');
-				pre.textContent += evt.data + '\\n';
-				pre.scrollTop = pre.scrollHeight;
-			};
-		}
-		document.getElementById('sendForm').addEventListener('submit', async function(evt){
-			evt.preventDefault();
-			const ch = document.getElementById('channelSelect').value;
-			const message = document.getElementById('message').value;
-			if (!message) return;
-			await fetch('/chat/send', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:'channel=' + encodeURIComponent(ch) + '&message=' + encodeURIComponent(message)});
-			document.getElementById('message').value = '';
-			await loadHistory();
-		});
-		window.addEventListener('load', async () => {
-			await fetch('/chat/join', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:'channel=%23lobby&csrf_token=' + ''});
-			await loadHistory();
-			await loadOnline();
-			watch();
-			setInterval(loadOnline, 5000);
-		});
-	</script>
-</body>
-</html>`
+
+			document.getElementById('sendForm').addEventListener('submit', async function(evt){
+				evt.preventDefault();
+				const message = document.getElementById('message').value;
+				if (!message) return;
+				await fetch('/chat/send', {
+					method:'POST',
+					headers:{'Content-Type':'application/json','X-CSRF-Token': csrf},
+					body: JSON.stringify({channel: streamState.channel, message: message}),
+				});
+				document.getElementById('message').value = '';
+				await loadHistory();
+			});
+
+			window.addEventListener('load', async () => {
+				await loadChannels();
+				streamState.channel = document.getElementById('channelSelect').value || '#lobby';
+				await join();
+				await loadHistory();
+				await loadOnline();
+				watch();
+				setInterval(loadOnline, 5000);
+			});
+
+			window.addEventListener('beforeunload', async () => {
+				await leave(streamState.channel);
+				stopStream();
+			});
+		</script>
+	</body>
+	</html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(chatPage))
 }
@@ -1018,44 +1113,258 @@ func (a *webApp) handleChatSend(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	channel := strings.TrimSpace(r.FormValue("channel"))
-	message := strings.TrimSpace(r.FormValue("message"))
+	if !a.requireCSRF(w, r) {
+		return
+	}
+	body, err := chatRequestBody(r)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("invalid request"))
+		return
+	}
+	channel := chat.NormalizeChannel(body["channel"])
 	if channel == "" {
 		channel = "#lobby"
 	}
-	if message != "" {
-		if _, err := a.chatSvc.Post(user.Handle, channel, message); err != nil {
-			w.WriteHeader(http.StatusTooManyRequests)
-			_, _ = w.Write([]byte("rate limited"))
-			return
-		}
+	message := body["message"]
+	if message == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("message required"))
+		return
 	}
-	http.Redirect(w, r, "/chat", http.StatusFound)
+	msg, err := a.chatSvc.Post(user.Handle, channel, message)
+	if err != nil {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(err.Error()))
+		return
+	}
+	_ = writeJSON(w, http.StatusCreated, msg)
 }
 
 func (a *webApp) handleChatStream(w http.ResponseWriter, r *http.Request) {
-	if _, ok := a.currentUser(r); !ok {
+	user, ok := a.currentUser(r)
+	if !ok {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
-	channel := strings.TrimSpace(r.URL.Query().Get("channel"))
+	channel := chat.NormalizeChannel(strings.TrimSpace(r.URL.Query().Get("channel")))
 	if channel == "" {
 		channel = "#lobby"
 	}
+	a.chatSvc.JoinChannel(user.Handle, channel)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte("stream unsupported"))
 		return
 	}
-	h := a.chatSvc.History(channel, 32)
-	for _, msg := range h {
-		t := fmt.Sprintf("%s %s: %s", msg.CreatedAt.Format("15:04:05"), msg.From, msg.Body)
-		_, _ = fmt.Fprintf(w, "data: %s\n\n", t)
+	after := parseChatSince(r)
+	for _, msg := range a.chatSvc.HistorySince(channel, after, 50) {
+		_ = writeMessageEvent(w, msg)
 	}
+	sub, closeSub := a.chatSvc.Subscribe(channel, user.Handle)
+	defer closeSub()
 	flusher.Flush()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case msg, ok := <-sub:
+			if !ok {
+				return
+			}
+			if msg.Channel != channel {
+				continue
+			}
+			if msg.ID <= after {
+				continue
+			}
+			if err := writeMessageEvent(w, msg); err != nil {
+				return
+			}
+			flusher.Flush()
+			after = msg.ID
+		}
+	}
+}
+
+func writeMessageEvent(w http.ResponseWriter, msg chat.Message) error {
+	payload, err := json.Marshal(map[string]interface{}{
+		"id":         msg.ID,
+		"from":       msg.From,
+		"body":       msg.Body,
+		"created_at": msg.CreatedAt.Format("15:04:05"),
+		"channel":    msg.Channel,
+		"to":         msg.To,
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := w.Write([]byte("data: ")); err != nil {
+		return err
+	}
+	if _, err := w.Write(payload); err != nil {
+		return err
+	}
+	_, err = w.Write([]byte("\n\n"))
+	return err
+}
+
+func (a *webApp) handleChatChannels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	_ = writeJSON(w, http.StatusOK, map[string]interface{}{"channels": a.chatSvc.ListChannels()})
+}
+
+func (a *webApp) handleChatJoin(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !a.requireCSRF(w, r) {
+		return
+	}
+	body, err := chatRequestBody(r)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("invalid request"))
+		return
+	}
+	channel := chat.NormalizeChannel(body["channel"])
+	if channel == "" {
+		channel = "#lobby"
+	}
+	a.chatSvc.JoinChannel(user.Handle, channel)
+	_ = writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "channel": channel})
+}
+
+func (a *webApp) handleChatLeave(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !a.requireCSRF(w, r) {
+		return
+	}
+	body, err := chatRequestBody(r)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("invalid request"))
+		return
+	}
+	channel := chat.NormalizeChannel(body["channel"])
+	if channel == "" {
+		channel = "#lobby"
+	}
+	a.chatSvc.LeaveChannel(user.Handle, channel)
+	_ = writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "channel": channel})
+}
+
+func (a *webApp) handleChatHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	channel := chat.NormalizeChannel(strings.TrimSpace(r.URL.Query().Get("channel")))
+	if channel == "" {
+		channel = "#lobby"
+	}
+	limit := parseLimit(r.URL.Query().Get("limit"), 50)
+	after := parseChatSince(r)
+	var msgs []chat.Message
+	if after > 0 {
+		msgs = a.chatSvc.HistorySince(channel, after, limit)
+	} else {
+		msgs = a.chatSvc.History(channel, limit)
+	}
+	var last int64
+	if len(msgs) > 0 {
+		last = msgs[len(msgs)-1].ID
+	}
+	presence := a.chatSvc.OnlineInChannel(channel)
+	_ = writeJSON(w, http.StatusOK, chatHistoryResponse{
+		Channel:  channel,
+		Messages: msgs,
+		Online:   presence,
+		LastID:   last,
+	})
+}
+
+func (a *webApp) handleChatOnline(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	channel := chat.NormalizeChannel(strings.TrimSpace(r.URL.Query().Get("channel")))
+	presence := a.chatSvc.OnlineInChannel(channel)
+	_ = writeJSON(w, http.StatusOK, map[string]interface{}{
+		"channel":  channel,
+		"presence": presence,
+		"count":    len(presence),
+	})
+}
+
+func (a *webApp) handleChatModeration(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if !a.hasRole(user, roleModerator) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !a.requireCSRF(w, r) {
+		return
+	}
+	payload := chatModerationPayload{}
+	if err := chatRequestBodyStruct(r, &payload); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("invalid request"))
+		return
+	}
+	channel := chat.NormalizeChannel(payload.Channel)
+	if channel == "" {
+		channel = "#lobby"
+	}
+	target := strings.TrimSpace(payload.Target)
+	action := strings.ToLower(strings.TrimSpace(payload.Action))
+	switch action {
+	case "ban":
+		a.chatSvc.Ban(channel, target, user.Handle, payload.Reason, payload.Duration)
+	case "unban":
+		a.chatSvc.Unban(channel, target)
+	case "mute":
+		a.chatSvc.Mute(channel, target, user.Handle, payload.Reason, payload.Duration)
+	case "unmute":
+		a.chatSvc.Unmute(channel, target)
+	case "kick":
+		a.chatSvc.Kick(channel, user.Handle, target, payload.Reason)
+	default:
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("unsupported action"))
+		return
+	}
+	_ = writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (a *webApp) createSession(handle string) (string, bool) {
@@ -1069,6 +1378,83 @@ func (a *webApp) createSession(handle string) (string, bool) {
 	a.sessions[sid] = sessionState{handle: handle, expire: time.Now().Add(2 * time.Hour), csrf: csrf}
 	a.Unlock()
 	return sid, true
+}
+
+func parseLimit(raw string, defaultVal int) int {
+	v, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || v <= 0 {
+		return defaultVal
+	}
+	return v
+}
+
+func parseChatSince(r *http.Request) int64 {
+	var afterID int64
+	raw := strings.TrimSpace(r.URL.Query().Get("after_id"))
+	if raw != "" {
+		if v, err := strconv.ParseInt(raw, 10, 64); err == nil && v >= 0 {
+			afterID = v
+		}
+	}
+	return afterID
+}
+
+func chatRequestBody(r *http.Request) (map[string]string, error) {
+	payload := map[string]string{}
+	if err := parseJSONBody(r, &payload); err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
+
+func chatRequestBodyStruct(r *http.Request, out interface{}) error {
+	return parseJSONBody(r, out)
+}
+
+func parseJSONBody(r *http.Request, out interface{}) error {
+	if out == nil {
+		return nil
+	}
+	if !strings.Contains(strings.ToLower(r.Header.Get("Content-Type")), "application/json") {
+		return parseBodyFromForm(r, out)
+	}
+	dec := json.NewDecoder(r.Body)
+	defer r.Body.Close()
+	return dec.Decode(out)
+}
+
+func parseBodyFromForm(r *http.Request, out interface{}) error {
+	_ = r.ParseForm()
+	if payload, ok := out.(*chatModerationPayload); ok {
+		payload.Channel = strings.TrimSpace(r.FormValue("channel"))
+		payload.Action = strings.TrimSpace(r.FormValue("action"))
+		payload.Target = strings.TrimSpace(r.FormValue("target"))
+		payload.Reason = strings.TrimSpace(r.FormValue("reason"))
+		payload.Duration = strings.TrimSpace(r.FormValue("duration"))
+		return nil
+	}
+	if payload, ok := out.(*map[string]string); ok {
+		if *payload == nil {
+			*payload = map[string]string{}
+		}
+		(*payload)["channel"] = strings.TrimSpace(r.FormValue("channel"))
+		(*payload)["message"] = strings.TrimSpace(r.FormValue("message"))
+		return nil
+	}
+	return nil
+}
+
+func writeJSON(w http.ResponseWriter, status int, body interface{}) error {
+	raw, err := json.Marshal(body)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("json encode failure"))
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, err = w.Write(raw)
+	return err
 }
 
 func loginPage() string {

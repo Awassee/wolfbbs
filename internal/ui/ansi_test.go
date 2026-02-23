@@ -22,8 +22,8 @@ func TestANSIHelpers(t *testing.T) {
 		t.Fatalf("Color = %q, want %q", got, want)
 	}
 
-	if got, want := CenterTextLine(6, FgGreen, BgBlack, "Y"); got != "\x1b[32m\x1b[40m  Y   \x1b[0m" {
-		t.Fatalf("CenterTextLine = %q, want %q", got, want)
+	if got := CenterTextLine(6, FgGreen, BgBlack, "Y"); got != "\x1b[32m\x1b[40m  Y   \x1b[0m" {
+		t.Fatalf("CenterTextLine = %q", got)
 	}
 
 	footer := FooterPrompt(20, "More")
@@ -33,9 +33,9 @@ func TestANSIHelpers(t *testing.T) {
 
 	box := DrawBox(8, 4, "Hi", []string{"a", "b"}, AsciiBox, FgGreen, BgBlack)
 	expected := []string{
-		"+--Hi--+",
-		"|a      |",
-		"|b      |",
+		"+- Hi -+",
+		"|a     |",
+		"|b     |",
 		"+------+",
 	}
 	for _, line := range expected {

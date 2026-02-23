@@ -1,6 +1,14 @@
 # Unified Chat Service
 
-WolfBBS chat is a shared in-memory service for this milestone, intended to move to Redis/Postgres-backed persistence in a follow-up.
+WolfBBS chat is a shared service used by SSH/web/IRC and supports persistence when
+`WOLFBBS_DATABASE_URL` (or `DATABASE_URL`) is configured.
+
+In DB mode the service writes messages and presence into:
+- `chat_channels`
+- `chat_messages`
+- `chat_presence`
+
+In-memory mode is used automatically when DB configuration is not present.
 
 ## Objects
 - Channels (default `#lobby`)
@@ -17,8 +25,8 @@ WolfBBS chat is a shared in-memory service for this milestone, intended to move 
 - `messageType` (channel/dm/system)
 
 ## Access Paths
-- SSH UI: command hooks from `C` menu (placeholder in this milestone)
-- Web UI: WebSocket endpoint `/ws/chat`
+- SSH UI: command hooks from `C` menu (planned for next pass)
+- Web UI: SSE endpoint `/chat/stream` with channel history and live messages
 - IRC endpoint: implemented in `cmd/wolfbbs-irc`
 
 ## Message Rules

@@ -14,10 +14,12 @@
 One-liner:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/main/install.sh | bash -s -- --with-docker
+curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/main/install.sh | bash -s -- --with-docker --repo-url https://github.com/<owner>/<repo>.git
 ```
 
 Replace `<owner>/<repo>` with the real Git repository location.
+
+If you are running from the repository checkout, no `--repo-url` is needed.
 
 From local clone:
 

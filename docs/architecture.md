@@ -8,14 +8,14 @@ Go was selected for this implementation because it gives fast, concurrency-frien
 
 - `cmd/wolfbbs`: SSH + ANSI session entrypoint.
 - `cmd/wolfbbs-web`: read-only web companion + admin shell.
-- `cmd/wolfbbs-irc`: IRC server endpoint (compatibility stub).
+- `cmd/wolfbbs-irc`: IRC endpoint implementation with shared chat integration.
 - `internal/ui`: ANSI rendering primitives and screen templates.
 - `internal/app`: lifecycle and wiring.
 - `internal/sshserver`: PTY session loop + screen router.
 - `internal/auth`: account service, optional TOTP helpers, bcrypt credentials.
 - `internal/domain`: domain entities.
 - `internal/repository`: repository abstractions and in-memory adapters.
-- `internal/chat`: shared in-memory chat service used by web and IRC.
+- `internal/chat`: shared chat service with optional Postgres persistence used by web and IRC.
 
 ## Data Model (MVP)
 
@@ -29,8 +29,8 @@ Go was selected for this implementation because it gives fast, concurrency-frien
   - board-scoped message threads and body/headers
 - `private_mail`
   - sender/recipient/message fields plus external routing metadata
-- `chat_presence`, `chat_messages`
-  - planned persistence fields for unified live chat
+- `chat_channels`, `chat_messages`, `chat_presence`
+  - persisted when DB-backed mode is enabled
 
 ## Security Baseline
 

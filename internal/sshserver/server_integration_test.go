@@ -90,11 +90,13 @@ func TestSSHLoginFlow(t *testing.T) {
 		t.Fatalf("timed out waiting for %q in output: %q", substr, curr)
 	}
 
+	waitFor("Press any key to continue")
+	_, _ = stdin.Write([]byte("x"))
 	waitFor("Handle:")
 	_, _ = stdin.Write([]byte("tester\n"))
 	waitFor("Password:")
 	_, _ = stdin.Write([]byte("password123\n"))
-	waitFor("Press Q to quit")
+	waitFor("Enter selection:")
 	_, _ = stdin.Write([]byte("Q\n"))
 
 	_ = session.Wait()

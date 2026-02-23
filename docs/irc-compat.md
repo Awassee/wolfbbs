@@ -13,11 +13,13 @@
 - `MODE` (minimal channel mode support)
 - `KICK` (ops only)
 
+NICK changes are guarded by collision checks.
+
 ## Required numeric replies
 - 001-004 welcome block
 - 375/372/376 MOTD flow
 - 353/366 names listing
-- 421, 431, 432, 433, 441, 451, 461, 462 and 403
+- 401, 403, 421, 431, 432, 433, 451, 461, 462
 
 ## Authentication mapping
 - IRC PASS/NICK should map to existing WolfBBS user handles.

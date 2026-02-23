@@ -5,15 +5,15 @@ WolfBBS is an SSH-first BBS with a Wildcat-inspired ANSI/TUI flow and companion 
 ## Stack
 - Go
 - SSH (gliderlabs/ssh)
-- Read-only web companion + admin surfaces (in-memory MVP)
-- Shared in-memory chat core used by web and IRC stubs
+- Read-only web companion + admin surfaces
+- Shared chat core with optional Postgres persistence
 
 ## Installation
 
 ### Quick install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/main/install.sh | bash -s -- --with-docker
+curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/main/install.sh | bash -s -- --with-docker --repo-url https://github.com/<owner>/<repo>.git
 ```
 
 Replace `<owner>/<repo>` with the real Git repository location you host WolfBBS from.
@@ -62,10 +62,10 @@ docker-compose up --build
   - Settings and admin landing pages
   - Admin user actions at `/admin/users` (read/write unless read-only mode)
 - Shared chat core
-  - `internal/chat`
+  - `internal/chat` (shared in web/IRC, DB-backed when configured)
 - Text web gateway at `/gateway` with SSRF deny rules and offline saves
 - Doors option in main menu (`/wolfbbs-trivia` sample)
-- IRC compatibility stub
+- IRC compatibility endpoint
   - `cmd/wolfbbs-irc`
 
 ### Environment Variables

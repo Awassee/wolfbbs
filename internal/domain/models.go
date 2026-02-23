@@ -49,3 +49,39 @@ type PrivateMail struct {
 	CreatedAt  time.Time
 	ReadAt     *time.Time
 }
+
+type FileArea struct {
+	ID          int64
+	Name        string
+	Path        string
+	Description string
+	CreatedAt   time.Time
+}
+
+type GatewaySettings struct {
+	SMTPHost        string
+	SMTPPort        int
+	SMTPUser        string
+	SMTPPass        string
+	FromDomain      string
+	MaxRecipients   int
+	MaxMessageBytes int
+	WebTimeoutSec   int
+	WebMaxBytes     int
+	UpdatedAt       time.Time
+}
+
+type MailOutboundPolicy struct {
+	Handle           string
+	OutboundDisabled bool
+	UpdatedAt        time.Time
+}
+
+type AdminAudit struct {
+	ID        int64
+	Actor     string
+	Target    string
+	Action    string
+	Details   string
+	CreatedAt time.Time
+}

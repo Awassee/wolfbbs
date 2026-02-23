@@ -2,8 +2,8 @@ package chat
 
 import (
 	"database/sql"
-	_ "github.com/lib/pq"
 	"fmt"
+	_ "github.com/lib/pq"
 	"os"
 	"sort"
 	"strconv"
@@ -63,6 +63,8 @@ type Service struct {
 	rateWindow   map[string][]time.Time
 	bans         map[string]map[string]moderationState
 	mutes        map[string]map[string]moderationState
+	subscribers  map[string]map[int64]*chatSubscription
+	nextSubID    int64
 	nextID       int64
 	historyLimit int
 	rateWindowSz time.Duration
@@ -71,6 +73,14 @@ type Service struct {
 	node         string
 	db           *sql.DB
 	audit        []ModerationAction
+	pollInterval time.Duration
+}
+
+type chatSubscription struct {
+	channel  string
+	messages chan Message
+	stop     chan struct{}
+	lastID   int64
 }
 
 func NewService() *Service {
@@ -97,11 +107,13 @@ func newServiceWithStorage(dsn string) *Service {
 		rateWindow:   map[string][]time.Time{},
 		bans:         map[string]map[string]moderationState{},
 		mutes:        map[string]map[string]moderationState{},
+		subscribers:  map[string]map[int64]*chatSubscription{},
 		historyLimit: defaultChatHistoryLimit,
 		rateWindowSz: defaultChatRateLimitWindow,
 		rateBurst:    defaultChatRateLimitBurst,
 		retention:    defaultChatRetentionHours * time.Hour,
 		node:         "bbs-node",
+		pollInterval: 500 * time.Millisecond,
 	}
 
 	if dsn == "" {
@@ -131,6 +143,11 @@ func newServiceWithStorage(dsn string) *Service {
 			s.retention = time.Duration(parsed) * time.Hour
 		}
 	}
+	if v := strings.TrimSpace(os.Getenv("WOLFBBS_CHAT_POLL_INTERVAL_MS")); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			s.pollInterval = time.Duration(parsed) * time.Millisecond
+		}
+	}
 
 	db, err := openChatDB(dsn)
 	if err != nil {
@@ -151,6 +168,10 @@ func normalizeChannel(channel string) string {
 		return "#" + channel
 	}
 	return channel
+}
+
+func NormalizeChannel(channel string) string {
+	return normalizeChannel(channel)
 }
 
 func normalizeNick(value string) string {
@@ -266,9 +287,28 @@ func (s *Service) ensureChannel(channel string) {
 	if _, ok := s.channels[channel]; !ok {
 		s.channels[channel] = map[string]bool{}
 	}
+	if _, ok := s.subscribers[channel]; !ok {
+		s.subscribers[channel] = map[int64]*chatSubscription{}
+	}
 	if s.db != nil {
 		_, _ = s.db.Exec("INSERT INTO chat_channels(name) VALUES($1) ON CONFLICT(name) DO NOTHING", channel)
 	}
+}
+
+func (s *Service) latestMessageID(channel string) int64 {
+	channel = normalizeChannel(channel)
+	if s.db == nil {
+		msgs := s.history[channel]
+		if len(msgs) == 0 {
+			return 0
+		}
+		return msgs[len(msgs)-1].ID
+	}
+	var out int64
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(id), 0) FROM chat_messages WHERE channel = $1`, channel).Scan(&out); err != nil {
+		return 0
+	}
+	return out
 }
 
 func (s *Service) setPresenceLocked(nick, channel string) {
@@ -326,6 +366,82 @@ func (s *Service) LeaveChannel(nick, channel string) {
 	}
 }
 
+func (s *Service) Subscribe(channel, nick string) (chan Message, func()) {
+	channel = normalizeChannel(channel)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_ = nick
+
+	s.ensureChannel(channel)
+	s.nextSubID++
+	id := s.nextSubID
+	ch := make(chan Message, 32)
+	sub := &chatSubscription{
+		channel:  channel,
+		messages: ch,
+		stop:     make(chan struct{}),
+		lastID:   s.latestMessageID(channel),
+	}
+	s.subscribers[channel][id] = sub
+	if s.db != nil {
+		go s.watchSubscription(sub)
+	}
+
+	closeFn := func() {
+		s.unsubscribe(channel, id)
+	}
+	return ch, closeFn
+}
+
+func (s *Service) unsubscribe(channel string, id int64) {
+	channel = normalizeChannel(channel)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if channelSubs, ok := s.subscribers[channel]; ok {
+		if sub, found := channelSubs[id]; found {
+			delete(channelSubs, id)
+			select {
+			case <-sub.stop:
+			default:
+				close(sub.stop)
+			}
+			close(sub.messages)
+		}
+	}
+}
+
+func (s *Service) watchSubscription(sub *chatSubscription) {
+	if sub == nil || sub.messages == nil || sub.stop == nil {
+		return
+	}
+	ticker := time.NewTicker(s.pollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-sub.stop:
+			return
+		case <-ticker.C:
+			msgs := s.HistorySince(sub.channel, sub.lastID, 50)
+			for _, msg := range msgs {
+				if msg.ID <= sub.lastID {
+					continue
+				}
+				sub.lastID = msg.ID
+				func() {
+					defer func() {
+						_ = recover()
+					}()
+					select {
+					case sub.messages <- msg:
+					default:
+					}
+				}()
+			}
+		}
+	}
+}
+
 func (s *Service) rateLimited(nick string) bool {
 	window := s.rateWindow[nick]
 	now := time.Now()
@@ -369,12 +485,11 @@ func (s *Service) Post(nick, channel, body string) (Message, error) {
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	s.cleanExpiredModeration()
 	if bans, ok := s.bans[channel]; ok {
 		if state, exists := bans[nick]; exists {
 			if state.ExpiresAt.IsZero() || state.ExpiresAt.After(time.Now()) {
+				s.mu.Unlock()
 				return Message{}, fmt.Errorf("banned")
 			}
 		}
@@ -382,11 +497,13 @@ func (s *Service) Post(nick, channel, body string) (Message, error) {
 	if mutes, ok := s.mutes[channel]; ok {
 		if state, exists := mutes[nick]; exists {
 			if state.ExpiresAt.IsZero() || state.ExpiresAt.After(time.Now()) {
+				s.mu.Unlock()
 				return Message{}, fmt.Errorf("muted")
 			}
 		}
 	}
 	if s.rateLimited(nick) {
+		s.mu.Unlock()
 		return Message{}, fmt.Errorf("rate limit")
 	}
 
@@ -408,6 +525,7 @@ func (s *Service) Post(nick, channel, body string) (Message, error) {
 	} else {
 		if err := s.db.QueryRow(`INSERT INTO chat_messages(channel, from_user, body) VALUES($1,$2,$3)
 		  RETURNING id, created_at`, channel, nick, body).Scan(&msg.ID, &msg.CreatedAt); err != nil {
+			s.mu.Unlock()
 			return Message{}, err
 		}
 		_ = s.cleanupOldMessages()
@@ -416,6 +534,28 @@ func (s *Service) Post(nick, channel, body string) (Message, error) {
 	s.ensureChannel(channel)
 	s.channels[channel][nick] = true
 	s.setPresenceLocked(nick, channel)
+
+	subs := make([]chan Message, 0, len(s.subscribers[channel]))
+	for _, subscriber := range s.subscribers[channel] {
+		subs = append(subs, subscriber.messages)
+	}
+	s.mu.Unlock()
+
+	if s.db != nil {
+		return msg, nil
+	}
+
+	for _, subscriber := range subs {
+		func(ch chan Message) {
+			defer func() {
+				_ = recover()
+			}()
+			select {
+			case ch <- msg:
+			default:
+			}
+		}(subscriber)
+	}
 	return msg, nil
 }
 
@@ -516,6 +656,39 @@ func (s *Service) Online() []Presence {
 	}
 
 	rows, err := s.db.Query(`SELECT nick, node, area, login_at, last_seen, online FROM chat_presence WHERE online = TRUE`)
+	if err != nil {
+		return []Presence{}
+	}
+	defer rows.Close()
+	out := make([]Presence, 0)
+	for rows.Next() {
+		var p Presence
+		if err := rows.Scan(&p.Nick, &p.Node, &p.Area, &p.LoginAt, &p.LastSeen, &p.Online); err != nil {
+			continue
+		}
+		p.IdleSec = int(time.Since(p.LastSeen).Seconds())
+		out = append(out, p)
+	}
+	return out
+}
+
+func (s *Service) OnlineInChannel(channel string) []Presence {
+	channel = normalizeChannel(channel)
+	if s.db == nil {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		out := make([]Presence, 0)
+		for _, p := range s.presence {
+			if p.Online && p.Area == channel {
+				cp := *p
+				cp.IdleSec = int(time.Since(cp.LastSeen).Seconds())
+				out = append(out, cp)
+			}
+		}
+		sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Nick) < strings.ToLower(out[j].Nick) })
+		return out
+	}
+	rows, err := s.db.Query(`SELECT nick, node, area, login_at, last_seen, online FROM chat_presence WHERE online = TRUE AND area = $1`, channel)
 	if err != nil {
 		return []Presence{}
 	}
