@@ -6,6 +6,7 @@ DEFAULT_SSH_PORT=2222
 DEFAULT_WEB_PORT=8080
 DEFAULT_IRC_PORT=6667
 DEFAULT_IRC_TLS_PORT=6697
+DEFAULT_MAILIN_PORT=8091
 
 PREFIX="$DEFAULT_PREFIX"
 WITH_DOCKER=true
@@ -16,6 +17,7 @@ SSH_PORT="$DEFAULT_SSH_PORT"
 WEB_PORT="$DEFAULT_WEB_PORT"
 IRC_PORT="$DEFAULT_IRC_PORT"
 IRC_TLS_PORT="$DEFAULT_IRC_TLS_PORT"
+MAILIN_PORT="$DEFAULT_MAILIN_PORT"
 UNINSTALL=false
 UPGRADE=false
 STATUS=false
@@ -44,6 +46,7 @@ Options:
   --web-port <port>         web port (default: 8080)
   --irc-port <port>         IRC port (default: 6667)
   --irc-tls-port <port>     IRC TLS port suggestion (default: 6697)
+  --mailin-port <port>      inbound mail webhook port (default: 8091)
   --uninstall               stop/remove services
   --upgrade                 pull/restart services in existing install
   --status                  show service status and endpoints
@@ -426,11 +429,13 @@ POSTGRES_DB=$db_name
 WOLFBBS_DB_CONNECT_RETRIES=15
 WOLFBBS_DB_CONNECT_DELAY_MS=500
 WOLFBBS_SESSION_SECRET=$db_seed
+WOLFBBS_INBOUND_TOKEN=$(random_secret)
 WOLFBBS_OFFLINE_DIR=/app/.wolfbbs/offline
 WOLFBBS_SSH_PORT=${SSH_PORT}
 WOLFBBS_WEB_PORT=${WEB_PORT}
 WOLFBBS_IRC_PORT=${IRC_PORT}
 WOLFBBS_IRC_TLS_PORT=${IRC_TLS_PORT}
+WOLFBBS_MAILIN_PORT=${MAILIN_PORT}
 WOLFBBS_READ_ONLY=false
 EOF
   chmod 600 "$ENV_FILE"
@@ -553,6 +558,7 @@ verify_install() {
   fi
   wait_for_port 127.0.0.1 "$SSH_PORT" "SSH BBS"
   wait_for_port 127.0.0.1 "$IRC_PORT" "IRC"
+  wait_for_port 127.0.0.1 "$MAILIN_PORT" "Mail Ingest"
 }
 
 status_view() {
@@ -570,6 +576,7 @@ status_view() {
   echo "Web: http://localhost:${WOLFBBS_WEB_PORT:-$WEB_PORT}/admin"
   echo "Chat: http://localhost:${WOLFBBS_WEB_PORT:-$WEB_PORT}/chat"
   echo "IRC: localhost:${WOLFBBS_IRC_PORT:-$IRC_PORT} (TLS: localhost:${WOLFBBS_IRC_TLS_PORT:-$IRC_TLS_PORT})"
+  echo "Mail Ingest: http://localhost:${WOLFBBS_MAILIN_PORT:-$MAILIN_PORT}/ingest"
   local cmd
   cmd="$(compose_cmd)"
   if [[ -n "$cmd" ]]; then
@@ -620,6 +627,11 @@ parse_args() {
       --irc-tls-port)
         require_value "$1" "${2:-}"
         IRC_TLS_PORT="$2"
+        shift 2
+        ;;
+      --mailin-port)
+        require_value "$1" "${2:-}"
+        MAILIN_PORT="$2"
         shift 2
         ;;
       --uninstall)
@@ -745,7 +757,7 @@ main() {
       exit 1
     fi
     ensure_docker
-    require_ports_free "$SSH_PORT" "$WEB_PORT" "$IRC_PORT"
+    require_ports_free "$SSH_PORT" "$WEB_PORT" "$IRC_PORT" "$MAILIN_PORT"
     write_env_file
     ENV_FILE="${PREFIX}/.env"
     docker_compose_pull_restart
@@ -766,7 +778,7 @@ main() {
     require_cmd nc
   fi
   ensure_compose_file
-  require_ports_free "$SSH_PORT" "$WEB_PORT" "$IRC_PORT"
+  require_ports_free "$SSH_PORT" "$WEB_PORT" "$IRC_PORT" "$MAILIN_PORT"
   init_install_dir
 
   compose_file="$(find_compose_file || true)"
@@ -788,6 +800,7 @@ main() {
   echo "Web: http://localhost:${WEB_PORT}/admin"
   echo "Web Chat: http://localhost:${WEB_PORT}/chat"
   echo "IRC: localhost:${IRC_PORT} (TLS: ${IRC_TLS_PORT})"
+  echo "Mail Ingest: http://localhost:${MAILIN_PORT}/ingest"
 }
 
 main "$@"

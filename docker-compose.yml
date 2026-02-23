@@ -31,10 +31,27 @@ services:
     command: ["-listen", ":6667"]
     ports:
       - "${WOLFBBS_IRC_PORT:-6667}:6667"
+      - "${WOLFBBS_IRC_TLS_PORT:-6697}:6697"
     depends_on:
       - postgres
     environment:
       WOLFBBS_DATABASE_URL: "${WOLFBBS_DATABASE_URL}"
+      WOLFBBS_IRC_TLS_LISTEN: "${WOLFBBS_IRC_TLS_LISTEN:-}"
+      WOLFBBS_IRC_TLS_CERT: "${WOLFBBS_IRC_TLS_CERT:-}"
+      WOLFBBS_IRC_TLS_KEY: "${WOLFBBS_IRC_TLS_KEY:-}"
+      WOLFBBS_IRC_IP_MSG_BURST: "${WOLFBBS_IRC_IP_MSG_BURST:-20}"
+      WOLFBBS_IRC_IP_MSG_WINDOW_MS: "${WOLFBBS_IRC_IP_MSG_WINDOW_MS:-2000}"
+  mailin:
+    build: .
+    entrypoint: ["/app/wolfbbs-mailin"]
+    command: ["-listen", ":8091", "-forward-url", "http://web:8080/mail/inbound"]
+    ports:
+      - "${WOLFBBS_MAILIN_PORT:-8091}:8091"
+    environment:
+      WOLFBBS_INBOUND_TOKEN: "${WOLFBBS_INBOUND_TOKEN:-dev-inbound-token}"
+      WOLFBBS_MAILIN_ALLOW_DOMAINS: "${WOLFBBS_MAILIN_ALLOW_DOMAINS:-}"
+    depends_on:
+      - web
   postgres:
     image: postgres:16
     environment:

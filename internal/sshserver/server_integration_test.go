@@ -12,6 +12,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 	"wolfbbs/internal/auth"
+	"wolfbbs/internal/domain"
 	"wolfbbs/internal/repository"
 	"wolfbbs/internal/sshserver"
 )
@@ -96,9 +97,137 @@ func TestSSHLoginFlow(t *testing.T) {
 	_, _ = stdin.Write([]byte("tester\n"))
 	waitFor("Password:")
 	_, _ = stdin.Write([]byte("password123\n"))
+	waitFor("Any key to return.")
+	_, _ = stdin.Write([]byte("x"))
 	waitFor("Enter selection:")
 	_, _ = stdin.Write([]byte("Q\n"))
 
 	_ = session.Wait()
 	<-done
+}
+
+func TestSSHBoardPostFlow(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	boardRepo := repository.NewInMemoryBoardRepository()
+	msgRepo := repository.NewInMemoryMessageRepository()
+	mailRepo := repository.NewInMemoryPrivateMailRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
+
+	authSvc := auth.NewService(userRepo)
+	user, err := authSvc.Register("poster", "password123")
+	if err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	if err := boardRepo.Create(&domain.Board{Name: "General", Description: "General board", CreatedBy: user.ID}); err != nil {
+		t.Fatalf("seed board: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := sshserver.New("127.0.0.1:0", logger, authSvc)
+	srv.SetRepositories(userRepo, boardRepo, msgRepo, mailRepo, adminRepo)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() { _ = srv.Serve(ln) }()
+	defer srv.Shutdown(context.Background())
+
+	cfg := &ssh.ClientConfig{
+		User:            "ignored",
+		Auth:            []ssh.AuthMethod{ssh.Password("ignored")},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         5 * time.Second,
+	}
+	client, err := ssh.Dial("tcp", ln.Addr().String(), cfg)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client.Close()
+
+	session, err := client.NewSession()
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	defer session.Close()
+	if err := session.RequestPty("xterm", 25, 80, ssh.TerminalModes{ssh.ECHO: 1}); err != nil {
+		t.Fatalf("request pty: %v", err)
+	}
+
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		t.Fatalf("stdin pipe: %v", err)
+	}
+	if err := session.Shell(); err != nil {
+		t.Fatalf("shell: %v", err)
+	}
+
+	var out bytes.Buffer
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = io.Copy(&out, stdout)
+	}()
+
+	lastIdx := 0
+	waitFor := func(substr string) {
+		t.Helper()
+		deadline := time.Now().Add(6 * time.Second)
+		for time.Now().Before(deadline) {
+			time.Sleep(20 * time.Millisecond)
+			curr := out.String()
+			if lastIdx > len(curr) {
+				lastIdx = len(curr)
+			}
+			next := curr[lastIdx:]
+			if idx := strings.Index(next, substr); idx >= 0 {
+				lastIdx += idx + len(substr)
+				return
+			}
+		}
+		t.Fatalf("timed out waiting for %q", substr)
+	}
+
+	waitFor("Press any key to continue")
+	_, _ = stdin.Write([]byte("x"))
+	waitFor("Handle:")
+	_, _ = stdin.Write([]byte("poster\n"))
+	waitFor("Password:")
+	_, _ = stdin.Write([]byte("password123\n"))
+	waitFor("Any key to return.")
+	_, _ = stdin.Write([]byte("x"))
+	waitFor("Enter selection:")
+	_, _ = stdin.Write([]byte("M"))
+	waitFor("Select board ID")
+	_, _ = stdin.Write([]byte("1\n"))
+	waitFor("Commands: (N)ew")
+	_, _ = stdin.Write([]byte("N\n"))
+	waitFor("Subject:")
+	_, _ = stdin.Write([]byte("First threaded post\n"))
+	_, _ = stdin.Write([]byte("hello world\n.\n"))
+	waitFor("Commands: (N)ew")
+	_, _ = stdin.Write([]byte("Q\n"))
+	waitFor("Select board ID")
+	_, _ = stdin.Write([]byte("Q\n"))
+	waitFor("Enter selection:")
+	_, _ = stdin.Write([]byte("Q"))
+
+	_ = session.Wait()
+	<-done
+
+	msgs, err := msgRepo.ListByBoard(1)
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	if msgs[0].Subject != "First threaded post" {
+		t.Fatalf("unexpected subject: %q", msgs[0].Subject)
+	}
 }

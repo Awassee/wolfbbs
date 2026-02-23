@@ -34,6 +34,8 @@ type Message struct {
 	ID        int64
 	BoardID   int64
 	AuthorID  int64
+	ParentID  int64
+	ThreadID  int64
 	Subject   string
 	Body      string
 	CreatedAt time.Time

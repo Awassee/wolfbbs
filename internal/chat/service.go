@@ -2,8 +2,8 @@ package chat
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
-	_ "github.com/lib/pq"
 	"os"
 	"sort"
 	"strconv"
@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lib/pq"
 	"wolfbbs/internal/repository"
 )
 
@@ -19,6 +20,7 @@ const (
 	defaultChatRateLimitBurst  = 8
 	defaultChatHistoryLimit    = 200
 	defaultChatRetentionHours  = 24
+	dbNotifyChannel            = "wolfbbs_chat_events"
 )
 
 type Message struct {
@@ -72,6 +74,9 @@ type Service struct {
 	retention    time.Duration
 	node         string
 	db           *sql.DB
+	dsn          string
+	listener     *pq.Listener
+	listenerDone chan struct{}
 	audit        []ModerationAction
 	pollInterval time.Duration
 }
@@ -114,6 +119,8 @@ func newServiceWithStorage(dsn string) *Service {
 		retention:    defaultChatRetentionHours * time.Hour,
 		node:         "bbs-node",
 		pollInterval: 500 * time.Millisecond,
+		dsn:          strings.TrimSpace(dsn),
+		listenerDone: make(chan struct{}),
 	}
 
 	if dsn == "" {
@@ -155,6 +162,8 @@ func newServiceWithStorage(dsn string) *Service {
 	}
 	s.db = db
 	_ = s.ensureSchema()
+	_ = s.loadModerationState()
+	s.startDBFanout()
 	_ = s.cleanupOldMessages()
 	return s
 }
@@ -239,6 +248,34 @@ func (s *Service) ensureSchema() error {
   login_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   last_seen TIMESTAMPTZ NOT NULL DEFAULT now()
 )`,
+		`CREATE TABLE IF NOT EXISTS chat_moderation_state (
+  channel TEXT NOT NULL,
+  nick TEXT NOT NULL,
+  action TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  expires_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY(channel, nick, action)
+)`,
+		`CREATE TABLE IF NOT EXISTS chat_moderation_actions (
+  id BIGSERIAL PRIMARY KEY,
+  action TEXT NOT NULL,
+  channel TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  target TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)`,
+		`CREATE TABLE IF NOT EXISTS chat_rate_events (
+  id BIGSERIAL PRIMARY KEY,
+  nick TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)`,
+		`CREATE INDEX IF NOT EXISTS idx_chat_rate_events_nick_created ON chat_rate_events(nick, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_chat_mod_actions_created ON chat_moderation_actions(created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_chat_mod_state_channel_nick ON chat_moderation_state(channel, nick, action)
+)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -247,6 +284,134 @@ func (s *Service) ensureSchema() error {
 	}
 	_, _ = s.db.Exec("INSERT INTO chat_channels(name) VALUES('#lobby') ON CONFLICT(name) DO NOTHING")
 	return nil
+}
+
+func (s *Service) loadModerationState() error {
+	if s.db == nil {
+		return nil
+	}
+	rows, err := s.db.Query(`SELECT channel, nick, action, actor, reason, expires_at FROM chat_moderation_state`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.bans = map[string]map[string]moderationState{}
+	s.mutes = map[string]map[string]moderationState{}
+	for rows.Next() {
+		var channel string
+		var nick string
+		var action string
+		var actor string
+		var reason string
+		var expires sql.NullTime
+		if err := rows.Scan(&channel, &nick, &action, &actor, &reason, &expires); err != nil {
+			return err
+		}
+		state := moderationState{Actor: actor, Reason: reason}
+		if expires.Valid {
+			state.ExpiresAt = expires.Time
+		}
+		switch strings.ToLower(strings.TrimSpace(action)) {
+		case "ban":
+			if s.bans[channel] == nil {
+				s.bans[channel] = map[string]moderationState{}
+			}
+			s.bans[channel][nick] = state
+		case "mute":
+			if s.mutes[channel] == nil {
+				s.mutes[channel] = map[string]moderationState{}
+			}
+			s.mutes[channel][nick] = state
+		}
+	}
+	return rows.Err()
+}
+
+type dbNotifyMessage struct {
+	ID        int64     `json:"id"`
+	Channel   string    `json:"channel"`
+	From      string    `json:"from"`
+	To        string    `json:"to,omitempty"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func (s *Service) startDBFanout() {
+	if s.db == nil || s.dsn == "" {
+		return
+	}
+	listener := pq.NewListener(s.dsn, 5*time.Second, time.Minute, nil)
+	if listener == nil {
+		return
+	}
+	if err := listener.Listen(dbNotifyChannel); err != nil {
+		_ = listener.Close()
+		return
+	}
+	s.listener = listener
+	go s.listenDBNotifications()
+}
+
+func (s *Service) listenDBNotifications() {
+	if s.listener == nil {
+		return
+	}
+	defer close(s.listenerDone)
+	for {
+		select {
+		case event := <-s.listener.Notify:
+			if event == nil {
+				continue
+			}
+			var payload dbNotifyMessage
+			if err := json.Unmarshal([]byte(event.Extra), &payload); err != nil {
+				continue
+			}
+			msg := Message{
+				ID:        payload.ID,
+				Channel:   normalizeChannel(payload.Channel),
+				From:      payload.From,
+				To:        payload.To,
+				Body:      payload.Body,
+				CreatedAt: payload.CreatedAt,
+			}
+			s.dispatchDBMessage(msg)
+		case <-time.After(2 * time.Minute):
+			// keep goroutine alive while the listener reconnects.
+		}
+	}
+}
+
+func (s *Service) dispatchDBMessage(msg Message) {
+	channel := normalizeChannel(msg.Channel)
+	s.mu.Lock()
+	s.ensureChannel(channel)
+	subs := make([]*chatSubscription, 0, len(s.subscribers[channel]))
+	for _, sub := range s.subscribers[channel] {
+		subs = append(subs, sub)
+	}
+	s.mu.Unlock()
+	for _, sub := range subs {
+		if sub == nil {
+			continue
+		}
+		if msg.ID <= sub.lastID {
+			continue
+		}
+		sub.lastID = msg.ID
+		func(ch chan Message) {
+			defer func() {
+				_ = recover()
+			}()
+			select {
+			case ch <- msg:
+			default:
+			}
+		}(sub.messages)
+	}
 }
 
 func (s *Service) cleanupOldMessages() error {
@@ -279,6 +444,9 @@ func (s *Service) cleanExpiredModeration() {
 		if len(users) == 0 {
 			delete(s.mutes, c)
 		}
+	}
+	if s.db != nil {
+		_, _ = s.db.Exec(`DELETE FROM chat_moderation_state WHERE expires_at IS NOT NULL AND expires_at < NOW()`)
 	}
 }
 
@@ -383,7 +551,7 @@ func (s *Service) Subscribe(channel, nick string) (chan Message, func()) {
 		lastID:   s.latestMessageID(channel),
 	}
 	s.subscribers[channel][id] = sub
-	if s.db != nil {
+	if s.db != nil && s.listener == nil {
 		go s.watchSubscription(sub)
 	}
 
@@ -443,6 +611,9 @@ func (s *Service) watchSubscription(sub *chatSubscription) {
 }
 
 func (s *Service) rateLimited(nick string) bool {
+	if s.db != nil {
+		return s.rateLimitedDB(nick)
+	}
 	window := s.rateWindow[nick]
 	now := time.Now()
 	cutoff := now.Add(-s.rateWindowSz)
@@ -458,6 +629,20 @@ func (s *Service) rateLimited(nick string) bool {
 	}
 	kept = append(kept, now)
 	s.rateWindow[nick] = kept
+	return false
+}
+
+func (s *Service) rateLimitedDB(nick string) bool {
+	cutoff := time.Now().Add(-s.rateWindowSz)
+	var count int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM chat_rate_events WHERE nick = $1 AND created_at >= $2`, nick, cutoff).Scan(&count); err != nil {
+		return false
+	}
+	if count >= s.rateBurst {
+		return true
+	}
+	_, _ = s.db.Exec(`INSERT INTO chat_rate_events(nick, created_at) VALUES($1, NOW())`, nick)
+	_, _ = s.db.Exec(`DELETE FROM chat_rate_events WHERE created_at < $1`, cutoff.Add(-2*s.rateWindowSz))
 	return false
 }
 
@@ -485,6 +670,9 @@ func (s *Service) Post(nick, channel, body string) (Message, error) {
 	}
 
 	s.mu.Lock()
+	if s.db != nil {
+		s.refreshModerationStateLocked(channel, nick)
+	}
 	s.cleanExpiredModeration()
 	if bans, ok := s.bans[channel]; ok {
 		if state, exists := bans[nick]; exists {
@@ -535,16 +723,21 @@ func (s *Service) Post(nick, channel, body string) (Message, error) {
 	s.channels[channel][nick] = true
 	s.setPresenceLocked(nick, channel)
 
-	subs := make([]chan Message, 0, len(s.subscribers[channel]))
+	subs := make([]*chatSubscription, 0, len(s.subscribers[channel]))
 	for _, subscriber := range s.subscribers[channel] {
-		subs = append(subs, subscriber.messages)
+		if subscriber == nil {
+			continue
+		}
+		if msg.ID > subscriber.lastID {
+			subscriber.lastID = msg.ID
+		}
+		subs = append(subs, subscriber)
 	}
 	s.mu.Unlock()
 
 	if s.db != nil {
-		return msg, nil
+		s.sendDBNotify(msg)
 	}
-
 	for _, subscriber := range subs {
 		func(ch chan Message) {
 			defer func() {
@@ -554,9 +747,68 @@ func (s *Service) Post(nick, channel, body string) (Message, error) {
 			case ch <- msg:
 			default:
 			}
-		}(subscriber)
+		}(subscriber.messages)
 	}
 	return msg, nil
+}
+
+func (s *Service) sendDBNotify(msg Message) {
+	if s.db == nil {
+		return
+	}
+	payload, err := json.Marshal(dbNotifyMessage{
+		ID:        msg.ID,
+		Channel:   msg.Channel,
+		From:      msg.From,
+		To:        msg.To,
+		Body:      msg.Body,
+		CreatedAt: msg.CreatedAt,
+	})
+	if err != nil {
+		return
+	}
+	_, _ = s.db.Exec(`SELECT pg_notify($1, $2)`, dbNotifyChannel, string(payload))
+}
+
+func (s *Service) refreshModerationStateLocked(channel, nick string) {
+	if s.db == nil {
+		return
+	}
+	rows, err := s.db.Query(`SELECT action, actor, reason, expires_at
+FROM chat_moderation_state
+WHERE channel = $1 AND nick = $2`, channel, nick)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	delete(s.bans[channel], nick)
+	delete(s.mutes[channel], nick)
+	for rows.Next() {
+		var action string
+		var actor string
+		var reason string
+		var expires sql.NullTime
+		if err := rows.Scan(&action, &actor, &reason, &expires); err != nil {
+			continue
+		}
+		state := moderationState{Actor: actor, Reason: reason}
+		if expires.Valid {
+			state.ExpiresAt = expires.Time
+		}
+		switch strings.ToLower(strings.TrimSpace(action)) {
+		case "ban":
+			if s.bans[channel] == nil {
+				s.bans[channel] = map[string]moderationState{}
+			}
+			s.bans[channel][nick] = state
+		case "mute":
+			if s.mutes[channel] == nil {
+				s.mutes[channel] = map[string]moderationState{}
+			}
+			s.mutes[channel][nick] = state
+		}
+	}
 }
 
 func (s *Service) History(channel string, limit int) []Message {
@@ -808,6 +1060,8 @@ func (s *Service) Ban(channel, nick, actor, reason, duration string) {
 	if p, ok := s.presence[nick]; ok && p.Area == channel {
 		p.Area = ""
 	}
+	s.persistModerationStateLocked("ban", channel, nick, state)
+	s.persistModerationActionLocked("ban", channel, actor, nick, reason)
 }
 
 func (s *Service) Unban(channel, nick string) {
@@ -816,6 +1070,8 @@ func (s *Service) Unban(channel, nick string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.bans[channel], nick)
+	s.removeModerationStateLocked("ban", channel, nick)
+	s.persistModerationActionLocked("unban", channel, "system", nick, "")
 }
 
 func (s *Service) Mute(channel, nick, actor, reason, duration string) {
@@ -840,6 +1096,8 @@ func (s *Service) Mute(channel, nick, actor, reason, duration string) {
 		Reason:    reason,
 		CreatedAt: time.Now(),
 	})
+	s.persistModerationStateLocked("mute", channel, nick, state)
+	s.persistModerationActionLocked("mute", channel, actor, nick, reason)
 }
 
 func (s *Service) Unmute(channel, nick string) {
@@ -848,6 +1106,8 @@ func (s *Service) Unmute(channel, nick string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.mutes[channel], nick)
+	s.removeModerationStateLocked("mute", channel, nick)
+	s.persistModerationActionLocked("unmute", channel, "system", nick, "")
 }
 
 func (s *Service) Kick(channel, actor, target, reason string) {
@@ -869,9 +1129,28 @@ func (s *Service) Kick(channel, actor, target, reason string) {
 		Reason:    reason,
 		CreatedAt: time.Now(),
 	})
+	s.persistModerationActionLocked("kick", channel, actor, target, reason)
 }
 
 func (s *Service) ModerationLog(limit int) []ModerationAction {
+	if s.db != nil {
+		rows, err := s.db.Query(`SELECT action, channel, actor, target, reason, created_at
+FROM chat_moderation_actions
+ORDER BY created_at DESC
+LIMIT $1`, max(limit, 200))
+		if err == nil {
+			defer rows.Close()
+			out := make([]ModerationAction, 0)
+			for rows.Next() {
+				var row ModerationAction
+				if err := rows.Scan(&row.Type, &row.Channel, &row.Actor, &row.Target, &row.Reason, &row.CreatedAt); err != nil {
+					continue
+				}
+				out = append(out, row)
+			}
+			return out
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if limit <= 0 || limit >= len(s.audit) {
@@ -882,4 +1161,44 @@ func (s *Service) ModerationLog(limit int) []ModerationAction {
 	out := make([]ModerationAction, limit)
 	copy(out, s.audit[len(s.audit)-limit:])
 	return out
+}
+
+func (s *Service) persistModerationStateLocked(action, channel, nick string, state moderationState) {
+	if s.db == nil {
+		return
+	}
+	var expires interface{}
+	if !state.ExpiresAt.IsZero() {
+		expires = state.ExpiresAt
+	}
+	_, _ = s.db.Exec(`INSERT INTO chat_moderation_state(channel, nick, action, actor, reason, expires_at, updated_at)
+VALUES($1, $2, $3, $4, $5, $6, NOW())
+ON CONFLICT (channel, nick, action) DO UPDATE
+SET actor = EXCLUDED.actor,
+    reason = EXCLUDED.reason,
+    expires_at = EXCLUDED.expires_at,
+    updated_at = NOW()`,
+		channel, nick, action, state.Actor, state.Reason, expires)
+}
+
+func (s *Service) removeModerationStateLocked(action, channel, nick string) {
+	if s.db == nil {
+		return
+	}
+	_, _ = s.db.Exec(`DELETE FROM chat_moderation_state WHERE channel = $1 AND nick = $2 AND action = $3`, channel, nick, action)
+}
+
+func (s *Service) persistModerationActionLocked(action, channel, actor, target, reason string) {
+	if s.db != nil {
+		_, _ = s.db.Exec(`INSERT INTO chat_moderation_actions(action, channel, actor, target, reason, created_at)
+VALUES($1, $2, $3, $4, $5, NOW())`,
+			action, channel, actor, target, reason)
+	}
+}
+
+func max(value, fallback int) int {
+	if value <= 0 {
+		return fallback
+	}
+	return value
 }

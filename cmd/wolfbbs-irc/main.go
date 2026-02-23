@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"crypto/tls"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"log"
@@ -22,8 +24,11 @@ type ircState struct {
 	nick        string
 	user        string
 	pass        string
+	saslReq     bool
+	awaitSASL   bool
 	authed      bool
 	registered  bool
+	canModerate bool
 	channel     string
 	hitTimes    []time.Time
 	lastMessage int64
@@ -44,13 +49,17 @@ var (
 	maxPerIP      = 16
 	floodWindow   = 1500 * time.Millisecond
 	floodBurst    = 8
+	ipFloodWindow = 2 * time.Second
+	ipFloodBurst  = 20
 	requirePass   = true
 	allowAlias    = false
 	pollInterval  = 1200 * time.Millisecond
 	bannedIPNets  = map[string]struct{}{}
 	activeByIP    = map[string]int{}
+	ipHits        = map[string][]time.Time{}
 	activeTotal   = 0
 	connectionMu  sync.Mutex
+	ipFloodMu     sync.Mutex
 	clientsMu     sync.Mutex
 	clientsByNick = map[string]*ircClient{}
 	channelPeers  = map[string]map[string]*ircClient{}
@@ -58,6 +67,9 @@ var (
 
 func main() {
 	listen := flag.String("listen", ":6667", "IRC listen address")
+	tlsListen := flag.String("tls-listen", strings.TrimSpace(os.Getenv("WOLFBBS_IRC_TLS_LISTEN")), "IRC TLS listen address")
+	tlsCert := flag.String("tls-cert", strings.TrimSpace(os.Getenv("WOLFBBS_IRC_TLS_CERT")), "TLS cert file")
+	tlsKey := flag.String("tls-key", strings.TrimSpace(os.Getenv("WOLFBBS_IRC_TLS_KEY")), "TLS key file")
 	dbURL := flag.String("db", "", "PostgreSQL DSN (defaults to WOLFBBS_DATABASE_URL / DATABASE_URL / PG* env)")
 	flag.Parse()
 	if *dbURL == "" {
@@ -78,6 +90,28 @@ func main() {
 		log.Fatal(err)
 	}
 	fmt.Println("WolfBBS IRC on", *listen)
+	go serveIRCListener(ln, chatSvc, authSvc)
+
+	if *tlsListen != "" && *tlsCert != "" && *tlsKey != "" {
+		certificate, err := tls.LoadX509KeyPair(*tlsCert, *tlsKey)
+		if err != nil {
+			log.Fatalf("tls key pair: %v", err)
+		}
+		tlsCfg := &tls.Config{
+			Certificates: []tls.Certificate{certificate},
+			MinVersion:   tls.VersionTLS12,
+		}
+		tlsLn, err := tls.Listen("tcp", *tlsListen, tlsCfg)
+		if err != nil {
+			log.Fatalf("tls listen: %v", err)
+		}
+		fmt.Println("WolfBBS IRC TLS on", *tlsListen)
+		go serveIRCListener(tlsLn, chatSvc, authSvc)
+	}
+	select {}
+}
+
+func serveIRCListener(ln net.Listener, chatSvc *chat.Service, authSvc *auth.Service) {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -112,6 +146,16 @@ func loadIRCTuning() {
 	if v := strings.TrimSpace(os.Getenv("WOLFBBS_IRC_MSG_BURST")); v != "" {
 		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
 			floodBurst = parsed
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("WOLFBBS_IRC_IP_MSG_WINDOW_MS")); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			ipFloodWindow = time.Duration(parsed) * time.Millisecond
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("WOLFBBS_IRC_IP_MSG_BURST")); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			ipFloodBurst = parsed
 		}
 	}
 	if v := strings.TrimSpace(os.Getenv("WOLFBBS_IRC_POLL_MS")); v != "" {
@@ -212,6 +256,10 @@ func handleIRCConn(conn net.Conn, svc *chat.Service, authSvc *auth.Service, ip s
 		if line == "" {
 			continue
 		}
+		if !checkFloodIP(ip) {
+			_ = replyfConn(client, ":%s 439 %s :Target change too fast", serverName, nickOrStar(state.nick))
+			continue
+		}
 		parts := strings.SplitN(line, " ", 2)
 		if len(parts) == 0 {
 			continue
@@ -223,6 +271,67 @@ func handleIRCConn(conn net.Conn, svc *chat.Service, authSvc *auth.Service, ip s
 		}
 
 		switch cmd {
+		case "CAP":
+			sub := strings.ToUpper(strings.TrimSpace(raw))
+			switch {
+			case strings.HasPrefix(sub, "LS"):
+				_ = replyfConn(client, ":%s CAP %s LS :sasl", serverName, nickOrStar(state.nick))
+			case strings.HasPrefix(sub, "REQ"):
+				if strings.Contains(strings.ToLower(sub), "sasl") {
+					state.saslReq = true
+					_ = replyfConn(client, ":%s CAP %s ACK :sasl", serverName, nickOrStar(state.nick))
+				} else {
+					_ = replyfConn(client, ":%s CAP %s NAK :%s", serverName, nickOrStar(state.nick), strings.TrimSpace(raw))
+				}
+			case strings.HasPrefix(sub, "END"):
+				// end capability negotiation.
+			default:
+				_ = replyfConn(client, ":%s CAP %s LS :sasl", serverName, nickOrStar(state.nick))
+			}
+			continue
+		case "AUTHENTICATE":
+			if !state.saslReq {
+				_ = replyfConn(client, ":%s 904 %s :SASL authentication failed", serverName, nickOrStar(state.nick))
+				continue
+			}
+			chunk := strings.TrimSpace(strings.TrimPrefix(raw, ":"))
+			if strings.EqualFold(chunk, "PLAIN") {
+				state.awaitSASL = true
+				_ = replyfConn(client, "AUTHENTICATE +")
+				continue
+			}
+			if chunk == "+" {
+				continue
+			}
+			if !state.awaitSASL {
+				_ = replyfConn(client, ":%s 905 %s :SASL message too long", serverName, nickOrStar(state.nick))
+				continue
+			}
+			decoded, err := base64.StdEncoding.DecodeString(chunk)
+			if err != nil {
+				_ = replyfConn(client, ":%s 904 %s :SASL authentication failed", serverName, nickOrStar(state.nick))
+				continue
+			}
+			parts := strings.Split(string(decoded), "\x00")
+			if len(parts) < 3 {
+				_ = replyfConn(client, ":%s 904 %s :SASL authentication failed", serverName, nickOrStar(state.nick))
+				continue
+			}
+			authUser := strings.TrimSpace(parts[len(parts)-2])
+			authPass := strings.TrimSpace(parts[len(parts)-1])
+			if authUser == "" {
+				authUser = state.nick
+			}
+			state.user = authUser
+			state.pass = authPass
+			state.awaitSASL = false
+			tryAuthenticate(client, authSvc)
+			if state.authed {
+				_ = replyfConn(client, ":%s 903 %s :SASL authentication successful", serverName, nickOrStar(state.nick))
+			} else {
+				_ = replyfConn(client, ":%s 904 %s :SASL authentication failed", serverName, nickOrStar(state.nick))
+			}
+			continue
 		case "PASS":
 			if state.registered {
 				_ = replyfConn(client, ":%s 462 %s :You may not reregister", serverName, nickOrStar(state.nick))
@@ -442,8 +551,12 @@ func handleIRCConn(conn net.Conn, svc *chat.Service, authSvc *auth.Service, ip s
 				_ = replyfConn(client, ":%s 461 %s KICK :Not enough parameters", serverName, nickOrStar(state.nick))
 				continue
 			}
+			if !state.canModerate {
+				_ = replyfConn(client, ":%s 482 %s %s :You're not channel operator", serverName, nickOrStar(state.nick), channel)
+				continue
+			}
 			svc.Kick(channel, state.nick, target, "irc kick")
-			_ = replyfConn(client, ":%s 442 %s %s :You are not channel operator", serverName, nickOrStar(state.nick), channel)
+			_ = replyfConn(client, ":%s KICK %s %s :irc kick", nickOrStar(state.nick), channel, target)
 		case "QUIT":
 			reason := strings.TrimLeft(strings.TrimPrefix(raw, ":"), " ")
 			if reason == "" {
@@ -477,12 +590,16 @@ func tryAuthenticate(client *ircClient, authSvc *auth.Service) {
 	if userHandle == "" {
 		userHandle = state.nick
 	}
-	_, err := authSvc.Authenticate(userHandle, state.pass, "")
+	user, err := authSvc.Authenticate(userHandle, state.pass, "")
 	if err != nil {
 		_ = replyfConn(client, ":%s 464 %s :Password incorrect", serverName, nickOrStar(state.nick))
 		return
 	}
 	state.authed = true
+	if user != nil {
+		role := strings.ToLower(strings.TrimSpace(user.Role))
+		state.canModerate = role == "moderator" || role == "admin" || role == "sysop"
+	}
 	if state.nick == "" {
 		state.nick = userHandle
 		client.nick = userHandle
@@ -653,21 +770,57 @@ func noticeLine(from, target, body string) string {
 func startChatPoller(client *ircClient, svc *chat.Service, channelUpdate <-chan string, done <-chan struct{}) {
 	state := client.state
 	current := state.channel
+	var stream <-chan chat.Message
+	var closeStream func()
+	subscribe := func(channel string) {
+		if closeStream != nil {
+			closeStream()
+			closeStream = nil
+		}
+		stream = nil
+		if channel == "" {
+			return
+		}
+		ch, closeFn := svc.Subscribe(channel, state.nick)
+		stream = ch
+		closeStream = closeFn
+	}
+	subscribe(current)
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
+	defer func() {
+		if closeStream != nil {
+			closeStream()
+		}
+	}()
 
 	for {
 		select {
 		case ch := <-channelUpdate:
 			current = ch
+			subscribe(current)
+		case msg, ok := <-stream:
+			if !ok {
+				stream = nil
+				continue
+			}
+			if !state.authed || current == "" {
+				continue
+			}
+			if msg.Channel != current {
+				continue
+			}
+			if msg.ID <= state.lastMessage {
+				continue
+			}
+			state.lastMessage = msg.ID
+			line := fmt.Sprintf(":%s PRIVMSG %s :%s", msg.From, msg.Channel, msg.Body)
+			_ = replyfConn(client, "%s", line)
 		case <-ticker.C:
 			if !state.authed || current == "" {
 				continue
 			}
 			messages := svc.HistorySince(current, state.lastMessage, 20)
-			if len(messages) == 0 {
-				continue
-			}
 			for _, msg := range messages {
 				if msg.ID <= state.lastMessage {
 					continue
@@ -697,6 +850,27 @@ func checkFlood(state *ircState) bool {
 	}
 	kept = append(kept, now)
 	state.hitTimes = kept
+	return true
+}
+
+func checkFloodIP(ip string) bool {
+	ipFloodMu.Lock()
+	defer ipFloodMu.Unlock()
+	now := time.Now()
+	cutoff := now.Add(-ipFloodWindow)
+	window := ipHits[ip]
+	kept := window[:0]
+	for _, t := range window {
+		if t.After(cutoff) {
+			kept = append(kept, t)
+		}
+	}
+	if len(kept) >= ipFloodBurst {
+		ipHits[ip] = kept
+		return false
+	}
+	kept = append(kept, now)
+	ipHits[ip] = kept
 	return true
 }
 

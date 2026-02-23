@@ -1,7 +1,7 @@
 # Admin Interface (MVP)
 
 ## Scope
-This version ships a read/write web-first control panel with role-aware routes. It is intentionally read-focused for this milestone, with mutating actions added behind RBAC checks.
+This version ships a read/write web-first control panel with role-aware routes and DB-backed state for boards, file areas, gateway settings, outbound-mail policy, and admin audit entries.
 
 ## Roles
 - `user`: standard read-only web companion access.
@@ -49,6 +49,15 @@ This version ships a read/write web-first control panel with role-aware routes. 
 ## Read-only Mode Toggle
 - Runtime toggle keeps all mutating writes disabled.
 - In read-only mode, destructive operations return 403 with a short reason.
-- MVP web route currently implemented:
-  - `/admin` dashboard
-  - `/admin/users` for users list + disable/enable/ban/unban/reset actions.
+
+## Implemented Routes
+- `/admin/login`
+- `/admin`
+- `/admin/users` (search + enable/disable + ban/unban + reset + role + verify/unverify)
+- `/admin/boards` (create/delete boards)
+- `/admin/mail` (per-user outbound email policy)
+- `/admin/files` (file area metadata create/delete)
+- `/admin/gateways` (SMTP/web gateway limit settings)
+- `/admin/chat` (channel list)
+- `/admin/system` (system summary)
+- `/admin/audit` (persisted audit trail)

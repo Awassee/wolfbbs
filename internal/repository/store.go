@@ -61,7 +61,10 @@ func ResolveDatabaseURL() string {
 
 type Storage struct {
 	Users    UserRepository
+	Boards   BoardRepository
 	Messages MessageRepository
+	Mail     PrivateMailRepository
+	Admin    AdminRepository
 	Close    func()
 }
 
@@ -73,7 +76,10 @@ func OpenStorageFromEnv(override string) (*Storage, error) {
 	if dsn == "" {
 		return &Storage{
 			Users:    NewInMemoryUserRepository(),
+			Boards:   NewInMemoryBoardRepository(),
 			Messages: NewInMemoryMessageRepository(),
+			Mail:     NewInMemoryPrivateMailRepository(),
+			Admin:    NewInMemoryAdminRepository(),
 			Close:    func() {},
 		}, nil
 	}
@@ -83,7 +89,10 @@ func OpenStorageFromEnv(override string) (*Storage, error) {
 	}
 	return &Storage{
 		Users:    NewPostgresUserRepository(db),
+		Boards:   NewPostgresBoardRepository(db),
 		Messages: NewPostgresMessageRepository(db),
+		Mail:     NewPostgresPrivateMailRepository(db),
+		Admin:    NewPostgresAdminRepository(db),
 		Close: func() {
 			_ = db.Close()
 		},

@@ -27,7 +27,10 @@ func Run(cfg Config) error {
 			logger.Warn("storage init failed; using in-memory repositories", "error", err)
 			storage = &repository.Storage{
 				Users:    repository.NewInMemoryUserRepository(),
+				Boards:   repository.NewInMemoryBoardRepository(),
 				Messages: repository.NewInMemoryMessageRepository(),
+				Mail:     repository.NewInMemoryPrivateMailRepository(),
+				Admin:    repository.NewInMemoryAdminRepository(),
 				Close:    func() {},
 			}
 		} else {
@@ -38,6 +41,7 @@ func Run(cfg Config) error {
 
 	authSvc := auth.NewService(storage.Users)
 	server := sshserver.New(cfg.ListenAddr, logger, authSvc)
+	server.SetRepositories(storage.Users, storage.Boards, storage.Messages, storage.Mail, storage.Admin)
 	if cfg.DBURL != "" {
 		logger.Info("using configured database", "url", cfg.DBURL)
 	} else {

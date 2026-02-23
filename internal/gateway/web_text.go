@@ -19,10 +19,10 @@ import (
 
 const (
 	defaultTimeoutSeconds = 10
-	defaultMaxBytes      = 2 * 1024 * 1024
-	defaultRedirectLimit = 4
-	defaultUserAgent     = "WolfBBS text gateway"
-	defaultLineWidth     = 78
+	defaultMaxBytes       = 2 * 1024 * 1024
+	defaultRedirectLimit  = 4
+	defaultUserAgent      = "WolfBBS text gateway"
+	defaultLineWidth      = 78
 )
 
 var (
@@ -38,11 +38,11 @@ var (
 )
 
 type FetchConfig struct {
-	Timeout           time.Duration
-	MaxBodyBytes      int64
-	MaxRedirects      int
-	UserAgent         string
-	AllowedTypes      []string
+	Timeout      time.Duration
+	MaxBodyBytes int64
+	MaxRedirects int
+	UserAgent    string
+	AllowedTypes []string
 }
 
 // DefaultFetchConfig mirrors the initial MVP web gateway safety defaults.

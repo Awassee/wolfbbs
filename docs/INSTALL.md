@@ -57,6 +57,7 @@ bash install.sh --uninstall
 - `--web-port <port>`: default `8080`
 - `--irc-port <port>`: default `6667`
 - `--irc-tls-port <port>`: default `6697`
+- `--mailin-port <port>`: default `8091`
 - `--uninstall`: stop services
 - `--purge`: with `--uninstall`, remove docker volumes and data
 - `--upgrade`: pull images and restart
@@ -81,6 +82,7 @@ By default, `install.sh` prompts for potentially disruptive actions. Use `--yes`
   - `bbs`
   - `web`
   - `irc`
+  - `mailin` webhook adapter
 - Verifies reachable services after startup
 
 ## macOS notes

@@ -15,11 +15,18 @@ func TestInMemoryMessageRepository(t *testing.T) {
 	if msg.ID == 0 {
 		t.Fatalf("expected id")
 	}
+	reply := &domain.Message{BoardID: 1, AuthorID: 2, ParentID: msg.ID, Subject: "Re: Welcome", Body: "reply"}
+	if err := repo.CreateMessage(reply); err != nil {
+		t.Fatalf("create reply: %v", err)
+	}
+	if reply.ThreadID != msg.ID {
+		t.Fatalf("reply thread id = %d, want %d", reply.ThreadID, msg.ID)
+	}
 	out, err := repo.ListByBoard(1)
 	if err != nil {
 		t.Fatalf("list board: %v", err)
 	}
-	if len(out) != 1 || out[0].ID != msg.ID {
+	if len(out) != 2 || out[0].ID != msg.ID || out[1].ID != reply.ID {
 		t.Fatalf("unexpected list output: %#v", out)
 	}
 	_, err = repo.GetMessage(msg.ID)

@@ -4,6 +4,7 @@
 - `NICK`
 - `USER`
 - `PASS`
+- `CAP` / `AUTHENTICATE` (SASL PLAIN)
 - `JOIN`, `PART`
 - `PRIVMSG`, `NOTICE`
 - `QUIT`
@@ -24,13 +25,15 @@ NICK changes are guarded by collision checks.
 ## Authentication mapping
 - IRC PASS/NICK should map to existing WolfBBS user handles.
 - Unauthenticated sockets cannot JOIN or send PRIVMSG.
+- SASL PLAIN is supported via `CAP REQ :sasl` + `AUTHENTICATE`.
 
 ## Known limitations
-- No SASL PLAIN in this milestone; PASS maps to existing password flow.
 - CTCP and advanced WHOIS fields are not implemented.
 - Away messages and channel operators are minimal.
 
 ## Security
 - Connection limits and per-user flood caps
+- Per-IP flood caps and throttling
 - IP bans and temporary throttles
+- Optional TLS listener (`WOLFBBS_IRC_TLS_LISTEN`, cert/key env vars)
 - All moderation actions logged to audit log

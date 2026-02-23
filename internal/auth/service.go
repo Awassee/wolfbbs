@@ -230,6 +230,15 @@ func (s *Service) SetRole(handle string, role string) error {
 	return s.users.Update(user)
 }
 
+func (s *Service) SetVerified(handle string, verified bool) error {
+	user, err := s.users.GetByHandle(handle)
+	if err != nil {
+		return err
+	}
+	user.Verified = verified
+	return s.users.Update(user)
+}
+
 func (s *Service) SetTOTPSecret(handle, secret string) error {
 	user, err := s.users.GetByHandle(handle)
 	if err != nil {

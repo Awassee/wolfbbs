@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -21,10 +22,10 @@ const (
 	FgWhite   = "\x1b[37m"
 	FgOrange  = "\x1b[38;5;208m"
 
-	BgBlack  = "\x1b[40m"
-	BgBlue   = "\x1b[44m"
-	BgCyan   = "\x1b[46m"
-	BgGray   = "\x1b[100m"
+	BgBlack = "\x1b[40m"
+	BgBlue  = "\x1b[44m"
+	BgCyan  = "\x1b[46m"
+	BgGray  = "\x1b[100m"
 )
 
 type BorderSet struct {
@@ -83,10 +84,11 @@ func CenterText(width int, text string) string {
 		return text
 	}
 	text = strings.TrimRight(text, "\r\n")
-	if len(text) >= width {
+	text = trimRunes(text, width)
+	if runeLen(text) >= width {
 		return text
 	}
-	pad := width - len(text)
+	pad := width - runeLen(text)
 	left := pad / 2
 	return strings.Repeat(" ", left) + text + strings.Repeat(" ", pad-left)
 }
@@ -105,22 +107,18 @@ func DrawBox(width, height int, title string, content []string, b BorderSet, fg,
 	innerWidth := width - 2
 	var lines []string
 	header := " " + strings.TrimSpace(title) + " "
-	if len(header) > innerWidth {
-		header = header[:innerWidth]
-	}
-	headerPad := innerWidth - len(header)
+	header = trimRunes(header, innerWidth)
+	headerPad := innerWidth - runeLen(header)
 	headerLeft := headerPad / 2
-	headerLine := b.TopLeft + strings.Repeat(b.Horizontal, headerLeft) + header + strings.Repeat(b.Horizontal, innerWidth-len(header)-headerLeft) + b.TopRight
+	headerLine := b.TopLeft + strings.Repeat(b.Horizontal, headerLeft) + header + strings.Repeat(b.Horizontal, innerWidth-runeLen(header)-headerLeft) + b.TopRight
 	lines = append(lines, Color(fg, bg, headerLine))
 	for i := 0; i < height-2; i++ {
 		contentLine := ""
 		if i < len(content) {
 			contentLine = content[i]
 		}
-		if len(contentLine) > innerWidth {
-			contentLine = contentLine[:innerWidth]
-		}
-		lines = append(lines, Color(fg, bg, b.Vertical+contentLine+strings.Repeat(" ", innerWidth-len(contentLine))+b.Vertical))
+		contentLine = trimRunes(contentLine, innerWidth)
+		lines = append(lines, Color(fg, bg, b.Vertical+contentLine+strings.Repeat(" ", innerWidth-runeLen(contentLine))+b.Vertical))
 	}
 	lines = append(lines, Color(fg, bg, b.BottomLeft+strings.Repeat(b.Horizontal, innerWidth)+b.BottomRight))
 	return strings.Join(lines, "\r\n") + "\r\n"
@@ -131,14 +129,28 @@ func FooterPrompt(width int, text string) string {
 		width = 80
 	}
 	strip := strings.TrimRight(text, "\r\n")
-	if len(strip) > width {
-		strip = strip[:width]
-	}
+	strip = trimRunes(strip, width)
 	label := "-- " + strip + " --"
-	if len(label) > width {
-		label = label[:width]
-	}
-	pad := width - len(label)
+	label = trimRunes(label, width)
+	pad := width - runeLen(label)
 	left := pad / 2
 	return strings.Repeat(" ", left) + label + strings.Repeat(" ", pad-left)
+}
+
+func runeLen(value string) int {
+	return utf8.RuneCountInString(value)
+}
+
+func trimRunes(value string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if runeLen(value) <= width {
+		return value
+	}
+	r := []rune(value)
+	if width >= len(r) {
+		return value
+	}
+	return string(r[:width])
 }

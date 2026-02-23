@@ -78,3 +78,22 @@ func TestSubscribeAndPresence(t *testing.T) {
 	}
 }
 
+func TestModerationBlocksAndAllows(t *testing.T) {
+	svc := NewServiceForTest()
+	svc.Ban("#lobby", "bob", "mod", "spam", "")
+	if _, err := svc.Post("bob", "#lobby", "blocked"); err == nil {
+		t.Fatalf("expected banned user post to fail")
+	}
+	svc.Unban("#lobby", "bob")
+	if _, err := svc.Post("bob", "#lobby", "allowed"); err != nil {
+		t.Fatalf("expected unbanned user post to pass: %v", err)
+	}
+	svc.Mute("#lobby", "bob", "mod", "flood", "")
+	if _, err := svc.Post("bob", "#lobby", "muted"); err == nil {
+		t.Fatalf("expected muted user post to fail")
+	}
+	svc.Unmute("#lobby", "bob")
+	if _, err := svc.Post("bob", "#lobby", "allowed again"); err != nil {
+		t.Fatalf("expected unmuted user post to pass: %v", err)
+	}
+}

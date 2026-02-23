@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/mail"
 	"os"
 	"strconv"
 	"strings"
@@ -80,15 +81,20 @@ type adminLogEntry struct {
 }
 
 type webApp struct {
-	authSvc  *auth.Service
-	sessions map[string]sessionState
+	authSvc   *auth.Service
+	userRepo  repository.UserRepository
+	boardRepo repository.BoardRepository
+	msgRepo   repository.MessageRepository
+	mailRepo  repository.PrivateMailRepository
+	adminRepo repository.AdminRepository
+	email     *gateway.EmailGateway
+	sessions  map[string]sessionState
 	sync.Mutex
-	boards     []boardRow
-	chatSvc    *chat.Service
-	offlineDir string
-	readOnly   bool
-	adminLog   []adminLogEntry
-	mailLimits map[string]bool
+	chatSvc      *chat.Service
+	offlineDir   string
+	readOnly     bool
+	inboundToken string
+	inboundAllow map[string]struct{}
 }
 
 var seedUsers = []struct {
@@ -98,6 +104,7 @@ var seedUsers = []struct {
 }{
 	{"admin", "wolfbbs-admin", "admin"},
 	{"guest", "wolfbbs", "user"},
+	{"mailbot", "wolfbbs-mailbot", "user"},
 }
 
 func seedWebUsers(authSvc *auth.Service) {
@@ -131,14 +138,20 @@ func main() {
 		log.Fatalf("repository init: %v", err)
 	}
 	defer storage.Close()
-	repo := storage.Users
-	authSvc := auth.NewService(repo)
+	authSvc := auth.NewService(storage.Users)
 	seedWebUsers(authSvc)
+	seedDefaultBoards(storage.Boards)
 
 	app := &webApp{
-		authSvc:  authSvc,
-		sessions: map[string]sessionState{},
-		chatSvc:  chat.NewService(),
+		authSvc:   authSvc,
+		userRepo:  storage.Users,
+		boardRepo: storage.Boards,
+		msgRepo:   storage.Messages,
+		mailRepo:  storage.Mail,
+		adminRepo: storage.Admin,
+		email:     gateway.NewEmailGateway(gateway.LoadEmailConfigFromEnv()),
+		sessions:  map[string]sessionState{},
+		chatSvc:   chat.NewService(),
 		offlineDir: func() string {
 			dir := strings.TrimSpace(os.Getenv("WOLFBBS_OFFLINE_DIR"))
 			if dir == "" {
@@ -146,13 +159,9 @@ func main() {
 			}
 			return dir
 		}(),
-		readOnly: strings.EqualFold(strings.TrimSpace(os.Getenv("WOLFBBS_READ_ONLY")), "1") || strings.EqualFold(strings.TrimSpace(os.Getenv("WOLFBBS_READ_ONLY")), "true"),
-		boards: []boardRow{
-			{ID: 1, Title: "General", Topics: 21, LastAt: time.Now().Add(-90 * time.Minute).Format("15:04"), LastSub: "Welcome to WolfBBS"},
-			{ID: 2, Title: "Node Talk", Topics: 12, LastAt: time.Now().Add(-22 * time.Minute).Format("15:04"), LastSub: "ANSI renderer update"},
-			{ID: 3, Title: "Tooling", Topics: 9, LastAt: time.Now().Add(-4 * time.Hour).Format("15:04"), LastSub: "Gateway limits"},
-		},
-		mailLimits: map[string]bool{},
+		readOnly:     strings.EqualFold(strings.TrimSpace(os.Getenv("WOLFBBS_READ_ONLY")), "1") || strings.EqualFold(strings.TrimSpace(os.Getenv("WOLFBBS_READ_ONLY")), "true"),
+		inboundToken: strings.TrimSpace(os.Getenv("WOLFBBS_INBOUND_TOKEN")),
+		inboundAllow: parseAllowDomains(strings.TrimSpace(os.Getenv("WOLFBBS_MAILIN_ALLOW_DOMAINS"))),
 	}
 
 	http.HandleFunc("/", app.handleRoot)
@@ -181,6 +190,7 @@ func main() {
 	http.Handle("/chat/online", app.authRequired(http.HandlerFunc(app.handleChatOnline)))
 	http.Handle("/chat/moderation", app.mustBeRole(roleModerator, http.HandlerFunc(app.handleChatModeration)))
 	http.Handle("/gateway", app.authRequired(http.HandlerFunc(app.handleGateway)))
+	http.HandleFunc("/mail/inbound", app.handleMailInbound)
 	http.HandleFunc("/healthz", app.handleHealthz)
 
 	fmt.Printf("WolfBBS web companion on %s\n", *listen)
@@ -269,17 +279,116 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
-	rows := strings.Builder{}
-	for _, b := range a.boards {
-		rows.WriteString(fmt.Sprintf(`<tr><td>%d</td><td>%s</td><td>%d</td><td>%s</td><td>%s</td></tr>`, b.ID, b.Title, b.Topics, b.LastAt, b.LastSub))
+	if r.Method == http.MethodPost {
+		if !a.requireCSRF(w, r) {
+			return
+		}
+		boardID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("board_id")), 10, 64)
+		parentID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("parent_id")), 10, 64)
+		subject := strings.TrimSpace(r.FormValue("subject"))
+		body := strings.TrimSpace(r.FormValue("body"))
+		if boardID <= 0 || subject == "" || body == "" {
+			http.Error(w, "board/subject/body required", http.StatusBadRequest)
+			return
+		}
+		if err := a.msgRepo.CreateMessage(&domain.Message{
+			BoardID:  boardID,
+			AuthorID: user.ID,
+			ParentID: parentID,
+			Subject:  subject,
+			Body:     body,
+		}); err != nil {
+			http.Error(w, "could not create message", http.StatusInternalServerError)
+			return
+		}
+		http.Redirect(w, r, fmt.Sprintf("/boards?board=%d", boardID), http.StatusFound)
+		return
 	}
-	page := fmt.Sprintf(`<html><body>
-	<p>Signed in as %s</p>
-	<p><a href="/mail">mail</a> | <a href="/settings">settings</a> | <a href="/chat">chat</a> | <a href="/gateway">gateway</a> | <a href="/logout">logout</a></p>
-	<h1>Message Boards (read-only)</h1>
-	<table border="1">
-	<tr><th>ID</th><th>Board</th><th>Topics</th><th>Last</th><th>Last subject</th></tr>%s</table>
-	</body></html>`, user.Handle, rows.String())
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	boardID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("board")), 10, 64)
+	if boardID <= 0 {
+		boards, err := a.boardRepo.List()
+		if err != nil {
+			http.Error(w, "failed to load boards", http.StatusInternalServerError)
+			return
+		}
+		rows := strings.Builder{}
+		for _, board := range boards {
+			msgs, _ := a.msgRepo.ListByBoard(board.ID)
+			lastAt := ""
+			lastSub := ""
+			if len(msgs) > 0 {
+				last := msgs[len(msgs)-1]
+				lastAt = last.CreatedAt.Format("2006-01-02 15:04")
+				lastSub = last.Subject
+			}
+			rows.WriteString(fmt.Sprintf(`<tr><td>%d</td><td><a href="/boards?board=%d">%s</a></td><td>%d</td><td>%s</td><td>%s</td></tr>`,
+				board.ID, board.ID, board.Name, len(msgs), lastAt, htmlEscape(lastSub)))
+		}
+		page := fmt.Sprintf(`<html><body>
+<p>Signed in as %s</p>
+<p><a href="/mail">mail</a> | <a href="/settings">settings</a> | <a href="/chat">chat</a> | <a href="/gateway">gateway</a> | <a href="/logout">logout</a></p>
+<h1>Message Boards</h1>
+<table border="1">
+<tr><th>ID</th><th>Board</th><th>Topics</th><th>Last</th><th>Last subject</th></tr>%s</table>
+</body></html>`, user.Handle, rows.String())
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(page))
+		return
+	}
+
+	board, err := a.boardRepo.Get(boardID)
+	if err != nil {
+		http.Error(w, "board not found", http.StatusNotFound)
+		return
+	}
+	msgs, err := a.msgRepo.ListByBoard(boardID)
+	if err != nil {
+		http.Error(w, "failed to load messages", http.StatusInternalServerError)
+		return
+	}
+	handleByID := a.userHandleLookup()
+	csrf := a.csrfHiddenInput(r)
+	messageID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("id")), 10, 64)
+	view := strings.Builder{}
+	if messageID > 0 {
+		msg, err := a.msgRepo.GetMessage(messageID)
+		if err == nil && msg.BoardID == boardID {
+			view.WriteString(`<h2>Reader</h2>`)
+			view.WriteString(`<p><strong>Subject:</strong> ` + htmlEscape(msg.Subject) + `<br>`)
+			view.WriteString(`<strong>From:</strong> ` + htmlEscape(handleByID[msg.AuthorID]) + `<br>`)
+			if msg.ParentID > 0 {
+				view.WriteString(`<strong>Reply-To:</strong> #` + strconv.FormatInt(msg.ParentID, 10) + `<br>`)
+			}
+			view.WriteString(`<strong>When:</strong> ` + msg.CreatedAt.Format("2006-01-02 15:04:05") + `</p>`)
+			view.WriteString(`<pre>` + htmlEscape(msg.Body) + `</pre>`)
+			view.WriteString(`<h3>Reply</h3>`)
+			view.WriteString(`<form method="POST" action="/boards"><input type="hidden" name="board_id" value="` + strconv.FormatInt(boardID, 10) + `"><input type="hidden" name="parent_id" value="` + strconv.FormatInt(msg.ID, 10) + `">` + csrf)
+			view.WriteString(`<label>Subject: <input name="subject" value="Re: ` + htmlEscape(msg.Subject) + `" size="60"></label><br>`)
+			view.WriteString(`<label>Body:<br><textarea name="body" rows="10" cols="80">` + htmlEscape(quoteBody(msg.Body)) + `</textarea></label><br>`)
+			view.WriteString(`<button type="submit">Post Reply</button></form>`)
+		}
+	}
+
+	rows := strings.Builder{}
+	for _, msg := range msgs {
+		subject := msg.Subject
+		if msg.ParentID > 0 {
+			subject = "> " + subject
+		}
+		rows.WriteString(fmt.Sprintf(`<tr><td>%d</td><td><a href="/boards?board=%d&id=%d">%s</a></td><td>%s</td><td>%s</td></tr>`,
+			msg.ID, boardID, msg.ID, htmlEscape(subject), htmlEscape(handleByID[msg.AuthorID]), msg.CreatedAt.Format("2006-01-02 15:04")))
+	}
+	page := `<html><body><h1>Board: ` + htmlEscape(board.Name) + `</h1>` +
+		`<p><a href="/boards">all boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/logout">logout</a></p>` +
+		`<table border="1"><tr><th>ID</th><th>Subject</th><th>Author</th><th>When</th></tr>` + rows.String() + `</table>` +
+		`<h2>New Post</h2><form method="POST" action="/boards"><input type="hidden" name="board_id" value="` + strconv.FormatInt(boardID, 10) + `">` + csrf +
+		`<label>Subject: <input name="subject" size="60"></label><br><label>Body:<br><textarea name="body" rows="10" cols="80"></textarea></label><br><button type="submit">Post</button></form>` +
+		view.String() + `</body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
 }
@@ -290,16 +399,123 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
-	inbox := seedMailRows(user.Handle)
-	rows := strings.Builder{}
-	for _, m := range inbox {
+	if r.Method == http.MethodPost {
+		if !a.requireCSRF(w, r) {
+			return
+		}
+		toRaw := strings.TrimSpace(r.FormValue("to"))
+		subject := strings.TrimSpace(r.FormValue("subject"))
+		body := strings.TrimSpace(r.FormValue("body"))
+		if toRaw == "" || subject == "" || body == "" {
+			http.Error(w, "to/subject/body required", http.StatusBadRequest)
+			return
+		}
+
+		msg := &domain.PrivateMail{
+			FromUserID: user.ID,
+			Subject:    subject,
+			Body:       body,
+		}
+		if strings.Contains(toRaw, "@") {
+			if !user.Verified {
+				http.Error(w, "verified account required for external email", http.StatusForbidden)
+				return
+			}
+			if a.adminRepo != nil {
+				policy, err := a.adminRepo.GetMailOutboundPolicy(user.Handle)
+				if err == nil && policy != nil && policy.OutboundDisabled {
+					http.Error(w, "outbound email disabled for this account", http.StatusForbidden)
+					return
+				}
+			}
+			recipient := toRaw
+			msg.ExternalTo = &recipient
+			if err := a.email.SendOutbound(user.Handle, []string{recipient}, subject, body); err != nil {
+				http.Error(w, "email relay error: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+		} else {
+			target, err := a.authSvc.GetUser(toRaw)
+			if err != nil || target == nil {
+				http.Error(w, "unknown recipient handle", http.StatusBadRequest)
+				return
+			}
+			msg.ToUserID = target.ID
+		}
+		if err := a.mailRepo.CreateMail(msg); err != nil {
+			http.Error(w, "could not save mail", http.StatusInternalServerError)
+			return
+		}
+		http.Redirect(w, r, "/mail", http.StatusFound)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	if id := strings.TrimSpace(r.URL.Query().Get("id")); id != "" {
+		mailID, _ := strconv.ParseInt(id, 10, 64)
+		item, err := a.mailRepo.GetMail(mailID)
+		if err != nil || item == nil {
+			http.Error(w, "mail not found", http.StatusNotFound)
+			return
+		}
+		if item.ToUserID != user.ID && item.FromUserID != user.ID {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if item.ToUserID == user.ID && item.ReadAt == nil {
+			_ = a.mailRepo.MarkRead(item.ID, time.Now().UTC())
+		}
+		handleByID := a.userHandleLookup()
+		to := ""
+		if item.ExternalTo != nil {
+			to = *item.ExternalTo
+		} else {
+			to = handleByID[item.ToUserID]
+		}
+		page := `<html><body><h1>Mail #` + strconv.FormatInt(item.ID, 10) + `</h1><p><a href="/mail">back</a></p>` +
+			`<p><strong>From:</strong> ` + htmlEscape(handleByID[item.FromUserID]) + `<br>` +
+			`<strong>To:</strong> ` + htmlEscape(to) + `<br>` +
+			`<strong>Subject:</strong> ` + htmlEscape(item.Subject) + `<br>` +
+			`<strong>Sent:</strong> ` + item.CreatedAt.Format("2006-01-02 15:04:05") + `</p>` +
+			`<pre>` + htmlEscape(item.Body) + `</pre></body></html>`
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(page))
+		return
+	}
+
+	inbox, _ := a.mailRepo.ListInbox(user.ID, 100)
+	outbox, _ := a.mailRepo.ListOutbox(user.ID, 100)
+	handleByID := a.userHandleLookup()
+	inRows := strings.Builder{}
+	for _, row := range inbox {
 		status := "unread"
-		if m.Read {
+		if row.ReadAt != nil {
 			status = "read"
 		}
-		rows.WriteString(fmt.Sprintf(`<tr><td>%d</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>`, m.ID, m.From, m.To, m.Subject, m.SentAt, status))
+		inRows.WriteString(fmt.Sprintf(`<tr><td><a href="/mail?id=%d">%d</a></td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>`,
+			row.ID, row.ID, htmlEscape(handleByID[row.FromUserID]), htmlEscape(row.Subject), row.CreatedAt.Format("2006-01-02 15:04"), status))
 	}
-	page := `<html><body><h1>Private Mail (read-only)</h1><table border="1"><tr><th>ID</th><th>From</th><th>To</th><th>Subject</th><th>Sent</th><th>Status</th></tr>` + rows.String() + `</table></body></html>`
+	outRows := strings.Builder{}
+	for _, row := range outbox {
+		target := handleByID[row.ToUserID]
+		if row.ExternalTo != nil {
+			target = *row.ExternalTo
+		}
+		outRows.WriteString(fmt.Sprintf(`<tr><td><a href="/mail?id=%d">%d</a></td><td>%s</td><td>%s</td><td>%s</td></tr>`,
+			row.ID, row.ID, htmlEscape(target), htmlEscape(row.Subject), row.CreatedAt.Format("2006-01-02 15:04")))
+	}
+	csrf := a.csrfHiddenInput(r)
+	page := `<html><body><h1>Private Mail</h1><p><a href="/boards">boards</a> | <a href="/chat">chat</a> | <a href="/logout">logout</a></p>` +
+		`<h2>Compose</h2><form method="POST" action="/mail">` + csrf +
+		`<label>To (handle or email): <input name="to" size="40"></label><br>` +
+		`<label>Subject: <input name="subject" size="60"></label><br>` +
+		`<label>Body:<br><textarea name="body" rows="10" cols="80"></textarea></label><br><button type="submit">Send</button></form>` +
+		`<h2>Inbox</h2><table border="1"><tr><th>ID</th><th>From</th><th>Subject</th><th>Sent</th><th>Status</th></tr>` + inRows.String() + `</table>` +
+		`<h2>Outbox</h2><table border="1"><tr><th>ID</th><th>To</th><th>Subject</th><th>Sent</th></tr>` + outRows.String() + `</table>` +
+		`</body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
 }
@@ -499,6 +715,12 @@ func (a *webApp) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("reset password for " + target + " to " + pw))
 			return
+		case "verify":
+			_ = a.authSvc.SetVerified(target, true)
+			a.recordAdminAction(user.Handle, target, "verify_user", "")
+		case "unverify":
+			_ = a.authSvc.SetVerified(target, false)
+			a.recordAdminAction(user.Handle, target, "unverify_user", "")
 		}
 		http.Redirect(w, r, "/admin/users", http.StatusFound)
 		return
@@ -525,7 +747,11 @@ func (a *webApp) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		if u.Banned {
 			status = "banned"
 		}
-		rows.WriteString(`<tr><td>` + u.Handle + `</td><td>` + status + `</td><td>` + u.Role + `</td><td>`)
+		verified := "no"
+		if u.Verified {
+			verified = "yes"
+		}
+		rows.WriteString(`<tr><td>` + u.Handle + `</td><td>` + status + `</td><td>` + u.Role + `</td><td>` + verified + `</td><td>`)
 		rows.WriteString(fmt.Sprintf(`<form method="POST" action="/admin/users">
 			<input type="hidden" name="handle" value="%s">
 			%s
@@ -549,6 +775,14 @@ func (a *webApp) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		rows.WriteString(fmt.Sprintf(`<form method="POST" action="/admin/users">
 			<input type="hidden" name="handle" value="%s">
 			%s
+			<input type="hidden" name="action" value="verify"><button type="submit">Verify</button></form>`, u.Handle, csrf))
+		rows.WriteString(fmt.Sprintf(`<form method="POST" action="/admin/users">
+			<input type="hidden" name="handle" value="%s">
+			%s
+			<input type="hidden" name="action" value="unverify"><button type="submit">Unverify</button></form>`, u.Handle, csrf))
+		rows.WriteString(fmt.Sprintf(`<form method="POST" action="/admin/users">
+			<input type="hidden" name="handle" value="%s">
+			%s
 			<input type="hidden" name="action" value="set_role">
 			<select name="role">
 				<option value="user"%s>User</option>
@@ -560,7 +794,7 @@ func (a *webApp) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 
 	page := `<html><body><h1>Users</h1><p><a href="/admin">back</a></p>` +
 		`<form method="GET"><label>Search: <input name="q" value="` + filter + `"></label><button type="submit">filter</button></form>` +
-		`<table border="1"><tr><th>Handle</th><th>Status</th><th>Role</th><th>Actions</th></tr>` + rows.String() + `</table>` +
+		`<table border="1"><tr><th>Handle</th><th>Status</th><th>Role</th><th>Verified</th><th>Actions</th></tr>` + rows.String() + `</table>` +
 		`</body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -570,6 +804,10 @@ func (a *webApp) handleAdminBoards(w http.ResponseWriter, r *http.Request) {
 	user, ok := a.currentUser(r)
 	if !ok {
 		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if a.boardRepo == nil {
+		http.Error(w, "board repository unavailable", http.StatusInternalServerError)
 		return
 	}
 	if r.Method == http.MethodPost {
@@ -584,43 +822,45 @@ func (a *webApp) handleAdminBoards(w http.ResponseWriter, r *http.Request) {
 				http.Redirect(w, r, "/admin/boards", http.StatusFound)
 				return
 			}
-			newID := 1
-			if len(a.boards) > 0 {
-				newID = a.boards[len(a.boards)-1].ID + 1
-			}
-			a.Lock()
-			a.boards = append(a.boards, boardRow{ID: newID, Title: title})
-			a.Unlock()
+			desc := strings.TrimSpace(r.FormValue("description"))
+			_ = a.boardRepo.Create(&domain.Board{Name: title, Description: desc, CreatedBy: user.ID})
 			a.recordAdminAction(user.Handle, title, "create_board", "")
 		case "delete":
 			id := strings.TrimSpace(r.FormValue("id"))
-			var deleted *boardRow
-			a.Lock()
-			for i, b := range a.boards {
-				if fmt.Sprintf("%d", b.ID) == id {
-					a.boards = append(a.boards[:i], a.boards[i+1:]...)
-					deleted = &boardRow{ID: b.ID, Title: b.Title, Topics: b.Topics, LastAt: b.LastAt, LastSub: b.LastSub}
-					break
+			if boardID, err := strconv.ParseInt(id, 10, 64); err == nil {
+				board, _ := a.boardRepo.Get(boardID)
+				if err := a.boardRepo.Delete(boardID); err == nil {
+					target := id
+					if board != nil {
+						target = board.Name
+					}
+					a.recordAdminAction(user.Handle, target, "delete_board", "")
 				}
-			}
-			a.Unlock()
-			if deleted != nil {
-				a.recordAdminAction(user.Handle, deleted.Title, "delete_board", "")
 			}
 		}
 		http.Redirect(w, r, "/admin/boards", http.StatusFound)
 		return
 	}
 
+	boards, err := a.boardRepo.List()
+	if err != nil {
+		http.Error(w, "failed to load boards", http.StatusInternalServerError)
+		return
+	}
 	rows := strings.Builder{}
 	csrf := a.csrfHiddenInput(r)
-	for _, b := range a.boards {
-		rows.WriteString(fmt.Sprintf(`<tr><td>%d</td><td>%s</td><td>%d</td><td>%s</td>`, b.ID, b.Title, b.Topics, b.LastAt))
+	for _, b := range boards {
+		msgs, _ := a.msgRepo.ListByBoard(b.ID)
+		last := ""
+		if len(msgs) > 0 {
+			last = msgs[len(msgs)-1].CreatedAt.Format("2006-01-02 15:04")
+		}
+		rows.WriteString(fmt.Sprintf(`<tr><td>%d</td><td>%s</td><td>%d</td><td>%s</td>`, b.ID, htmlEscape(b.Name), len(msgs), last))
 		rows.WriteString(fmt.Sprintf(`<td><form method="POST" action="/admin/boards"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="%d">`+csrf+`<button type="submit">delete</button></form></td>`, b.ID))
 		rows.WriteString(`</tr>`)
 	}
 	page := `<html><body><h1>Boards</h1><p><a href="/admin">back</a></p>` +
-		`<form method="POST"><label>Title <input name="title"></label>` + csrf + `<input type="hidden" name="action" value="create"><button type="submit">add</button></form>` +
+		`<form method="POST"><label>Title <input name="title"></label> <label>Description <input name="description" size="50"></label>` + csrf + `<input type="hidden" name="action" value="create"><button type="submit">add</button></form>` +
 		`<table border="1"><tr><th>ID</th><th>Title</th><th>Topics</th><th>Last</th><th>Actions</th></tr>` + rows.String() + `</table>` +
 		`</body></html>`
 	w.WriteHeader(http.StatusOK)
@@ -641,9 +881,9 @@ func (a *webApp) handleAdminMail(w http.ResponseWriter, r *http.Request) {
 		action := strings.ToLower(strings.TrimSpace(r.FormValue("action")))
 		if target != "" {
 			disabled := action == "disable_outbound"
-			a.Lock()
-			a.mailLimits[target] = disabled
-			a.Unlock()
+			if a.adminRepo != nil {
+				_ = a.adminRepo.SetMailOutboundPolicy(target, disabled)
+			}
 			detail := "enabled outbound"
 			if disabled {
 				detail = "disabled outbound"
@@ -655,12 +895,16 @@ func (a *webApp) handleAdminMail(w http.ResponseWriter, r *http.Request) {
 	}
 	rows := strings.Builder{}
 	csrf := a.csrfHiddenInput(r)
-	for handle, blocked := range a.mailLimits {
-		rows.WriteString(fmt.Sprintf(`<tr><td>%s</td><td>%t</td>`, handle, blocked))
+	policies := []domain.MailOutboundPolicy{}
+	if a.adminRepo != nil {
+		policies, _ = a.adminRepo.ListMailOutboundPolicies()
+	}
+	for _, row := range policies {
+		rows.WriteString(fmt.Sprintf(`<tr><td>%s</td><td>%t</td>`, htmlEscape(row.Handle), row.OutboundDisabled))
 		rows.WriteString(`<td><form method="POST" action="/admin/mail">`)
-		rows.WriteString(`<input type="hidden" name="handle" value="` + handle + `">`)
+		rows.WriteString(`<input type="hidden" name="handle" value="` + row.Handle + `">`)
 		rows.WriteString(csrf)
-		if blocked {
+		if row.OutboundDisabled {
 			rows.WriteString(`<input type="hidden" name="action" value="enable_outbound"><button type="submit">enable</button>`)
 		} else {
 			rows.WriteString(`<input type="hidden" name="action" value="disable_outbound"><button type="submit">disable</button>`)
@@ -677,16 +921,118 @@ func (a *webApp) handleAdminMail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *webApp) handleAdminFiles(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if r.Method == http.MethodPost {
+		if !a.requireAdminWrite(w, r) {
+			return
+		}
+		action := strings.ToLower(strings.TrimSpace(r.FormValue("action")))
+		switch action {
+		case "create":
+			area := &domain.FileArea{
+				Name:        strings.TrimSpace(r.FormValue("name")),
+				Path:        strings.TrimSpace(r.FormValue("path")),
+				Description: strings.TrimSpace(r.FormValue("description")),
+			}
+			if a.adminRepo != nil {
+				if err := a.adminRepo.CreateFileArea(area); err == nil {
+					a.recordAdminAction(user.Handle, area.Name, "create_file_area", area.Path)
+				}
+			}
+		case "delete":
+			id, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("id")), 10, 64)
+			if a.adminRepo != nil && id > 0 {
+				_ = a.adminRepo.DeleteFileArea(id)
+				a.recordAdminAction(user.Handle, strconv.FormatInt(id, 10), "delete_file_area", "")
+			}
+		}
+		http.Redirect(w, r, "/admin/files", http.StatusFound)
+		return
+	}
+
+	areas := []domain.FileArea{}
+	if a.adminRepo != nil {
+		areas, _ = a.adminRepo.ListFileAreas()
+	}
+	csrf := a.csrfHiddenInput(r)
+	rows := strings.Builder{}
+	for _, area := range areas {
+		rows.WriteString(fmt.Sprintf(`<tr><td>%d</td><td>%s</td><td>%s</td><td>%s</td>`, area.ID, htmlEscape(area.Name), htmlEscape(area.Path), htmlEscape(area.Description)))
+		rows.WriteString(`<td><form method="POST" action="/admin/files">` + csrf + `<input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="` + strconv.FormatInt(area.ID, 10) + `"><button type="submit">delete</button></form></td></tr>`)
+	}
+	if rows.Len() == 0 {
+		rows.WriteString(`<tr><td colspan="5">No file areas configured</td></tr>`)
+	}
 	page := `<html><body><h1>Files</h1><p><a href="/admin">back</a></p>` +
-		`<ul><li>File area metadata UI placeholder</li><li>Integrate storage scanner</li><li>Delete and audit controls</li></ul></body></html>`
+		`<form method="POST"><input type="hidden" name="action" value="create">` + csrf +
+		`<label>Name <input name="name"></label> <label>Path <input name="path" size="30"></label> <label>Description <input name="description" size="40"></label> <button type="submit">add</button></form>` +
+		`<table border="1"><tr><th>ID</th><th>Name</th><th>Path</th><th>Description</th><th>Action</th></tr>` + rows.String() + `</table></body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
 }
 
 func (a *webApp) handleAdminGateways(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if r.Method == http.MethodPost {
+		if !a.requireAdminWrite(w, r) {
+			return
+		}
+		cfg := &domain.GatewaySettings{
+			SMTPHost:        strings.TrimSpace(r.FormValue("smtp_host")),
+			SMTPPort:        parseInt(r.FormValue("smtp_port"), 587),
+			SMTPUser:        strings.TrimSpace(r.FormValue("smtp_user")),
+			SMTPPass:        strings.TrimSpace(r.FormValue("smtp_pass")),
+			FromDomain:      strings.TrimSpace(r.FormValue("from_domain")),
+			MaxRecipients:   parseInt(r.FormValue("max_recipients"), 3),
+			MaxMessageBytes: parseInt(r.FormValue("max_message_bytes"), 65536),
+			WebTimeoutSec:   parseInt(r.FormValue("web_timeout_sec"), 10),
+			WebMaxBytes:     parseInt(r.FormValue("web_max_bytes"), 2*1024*1024),
+		}
+		if a.adminRepo != nil {
+			if err := a.adminRepo.UpsertGatewaySettings(cfg); err == nil {
+				a.recordAdminAction(user.Handle, "gateway_settings", "update_gateway_settings", "saved")
+			}
+		}
+		http.Redirect(w, r, "/admin/gateways", http.StatusFound)
+		return
+	}
+	cfg := &domain.GatewaySettings{
+		SMTPHost:        strings.TrimSpace(os.Getenv("SMTP_HOST")),
+		SMTPPort:        parseInt(os.Getenv("SMTP_PORT"), 587),
+		SMTPUser:        strings.TrimSpace(os.Getenv("SMTP_USER")),
+		SMTPPass:        strings.TrimSpace(os.Getenv("SMTP_PASS")),
+		FromDomain:      strings.TrimSpace(os.Getenv("FROM_DOMAIN")),
+		MaxRecipients:   parseInt(os.Getenv("WOLFBBS_MAIL_MAX_RECIPIENTS"), 3),
+		MaxMessageBytes: parseInt(os.Getenv("WOLFBBS_MAIL_MAX_BYTES"), 65536),
+		WebTimeoutSec:   10,
+		WebMaxBytes:     2 * 1024 * 1024,
+	}
+	if a.adminRepo != nil {
+		if dbCfg, err := a.adminRepo.GetGatewaySettings(); err == nil && dbCfg != nil {
+			cfg = dbCfg
+		}
+	}
+	csrf := a.csrfHiddenInput(r)
 	page := `<html><body><h1>Gateway Controls</h1><p><a href="/admin">back</a></p>` +
-		`<ul><li>Email relay env: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, FROM_DOMAIN</li>` +
-		`<li>Web gateway timeout: 10s, max body: 2MiB, SSRF denylist</li></ul>` +
+		`<form method="POST">` + csrf +
+		`<label>SMTP Host <input name="smtp_host" value="` + htmlEscape(cfg.SMTPHost) + `"></label><br>` +
+		`<label>SMTP Port <input name="smtp_port" value="` + strconv.Itoa(cfg.SMTPPort) + `"></label><br>` +
+		`<label>SMTP User <input name="smtp_user" value="` + htmlEscape(cfg.SMTPUser) + `"></label><br>` +
+		`<label>SMTP Pass <input type="password" name="smtp_pass" value="` + htmlEscape(cfg.SMTPPass) + `"></label><br>` +
+		`<label>From Domain <input name="from_domain" value="` + htmlEscape(cfg.FromDomain) + `"></label><br>` +
+		`<label>Max Recipients <input name="max_recipients" value="` + strconv.Itoa(cfg.MaxRecipients) + `"></label><br>` +
+		`<label>Max Message Bytes <input name="max_message_bytes" value="` + strconv.Itoa(cfg.MaxMessageBytes) + `"></label><br>` +
+		`<label>Web Timeout Sec <input name="web_timeout_sec" value="` + strconv.Itoa(cfg.WebTimeoutSec) + `"></label><br>` +
+		`<label>Web Max Bytes <input name="web_max_bytes" value="` + strconv.Itoa(cfg.WebMaxBytes) + `"></label><br>` +
+		`<button type="submit">Save</button></form>` +
 		`<p>Use docs/web-gateway.md and docs/email-gateway.md for full policy.</p></body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -716,9 +1062,13 @@ func (a *webApp) handleAdminSystem(w http.ResponseWriter, r *http.Request) {
 
 func (a *webApp) handleAdminAudit(w http.ResponseWriter, r *http.Request) {
 	rows := strings.Builder{}
-	for _, entry := range a.adminLog {
+	entries := []domain.AdminAudit{}
+	if a.adminRepo != nil {
+		entries, _ = a.adminRepo.ListAudit(500)
+	}
+	for _, entry := range entries {
 		rows.WriteString(fmt.Sprintf(`<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>`,
-			entry.Time.Format("2006-01-02 15:04:05"), entry.Actor, entry.Target, entry.Action, entry.Details))
+			entry.CreatedAt.Format("2006-01-02 15:04:05"), htmlEscape(entry.Actor), htmlEscape(entry.Target), htmlEscape(entry.Action), htmlEscape(entry.Details)))
 	}
 	if rows.Len() == 0 {
 		rows.WriteString(`<tr><td colspan="5">No admin actions yet</td></tr>`)
@@ -867,18 +1217,14 @@ func selectedIf(active bool) string {
 }
 
 func (a *webApp) recordAdminAction(actor, target, action, details string) {
-	a.Lock()
-	a.adminLog = append(a.adminLog, adminLogEntry{
-		Time:    time.Now(),
-		Actor:   actor,
-		Target:  target,
-		Action:  action,
-		Details: details,
-	})
-	if len(a.adminLog) > 200 {
-		a.adminLog = a.adminLog[len(a.adminLog)-200:]
+	if a.adminRepo != nil {
+		_ = a.adminRepo.AddAudit(&domain.AdminAudit{
+			Actor:   actor,
+			Target:  target,
+			Action:  action,
+			Details: details,
+		})
 	}
-	a.Unlock()
 }
 
 func randomPassword(length int) string {
@@ -1442,6 +1788,157 @@ func parseBodyFromForm(r *http.Request, out interface{}) error {
 		return nil
 	}
 	return nil
+}
+
+func (a *webApp) handleMailInbound(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if strings.TrimSpace(a.inboundToken) == "" {
+		http.Error(w, "inbound disabled", http.StatusNotFound)
+		return
+	}
+	if !secureEquals(strings.TrimSpace(r.Header.Get("X-Inbound-Token")), a.inboundToken) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	var payload struct {
+		From       string `json:"from"`
+		To         string `json:"to"`
+		Subject    string `json:"subject"`
+		Body       string `json:"body"`
+		RawHeaders string `json:"raw_headers"`
+	}
+	if err := parseJSONBody(r, &payload); err != nil {
+		http.Error(w, "invalid payload", http.StatusBadRequest)
+		return
+	}
+	if len(a.inboundAllow) > 0 {
+		domain := senderDomain(payload.From)
+		if domain == "" {
+			http.Error(w, "invalid sender", http.StatusBadRequest)
+			return
+		}
+		if _, ok := a.inboundAllow[domain]; !ok {
+			http.Error(w, "sender domain blocked", http.StatusForbidden)
+			return
+		}
+	}
+	targetHandle := gateway.ParseInboundRecipient(payload.To)
+	if targetHandle == "" {
+		http.Error(w, "target recipient missing", http.StatusBadRequest)
+		return
+	}
+	target, err := a.authSvc.GetUser(targetHandle)
+	if err != nil || target == nil {
+		http.Error(w, "target recipient not found", http.StatusNotFound)
+		return
+	}
+	fromUser, err := a.authSvc.GetUser("mailbot")
+	if err != nil || fromUser == nil {
+		http.Error(w, "mailbot account unavailable", http.StatusInternalServerError)
+		return
+	}
+	body := strings.TrimSpace(payload.Body)
+	if body == "" {
+		http.Error(w, "body required", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(payload.RawHeaders) != "" {
+		body += "\n\n--- RAW HEADERS ---\n" + payload.RawHeaders
+	}
+	if err := a.mailRepo.CreateMail(&domain.PrivateMail{
+		FromUserID: fromUser.ID,
+		ToUserID:   target.ID,
+		Subject:    strings.TrimSpace(payload.Subject),
+		Body:       body,
+	}); err != nil {
+		http.Error(w, "could not store inbound mail", http.StatusInternalServerError)
+		return
+	}
+	_ = writeJSON(w, http.StatusCreated, map[string]string{"status": "ok", "recipient": target.Handle})
+}
+
+func (a *webApp) userHandleLookup() map[int64]string {
+	users, _ := a.authSvc.ListUsers()
+	out := make(map[int64]string, len(users))
+	for _, user := range users {
+		out[user.ID] = user.Handle
+	}
+	return out
+}
+
+func htmlEscape(value string) string {
+	value = strings.ReplaceAll(value, "&", "&amp;")
+	value = strings.ReplaceAll(value, "<", "&lt;")
+	value = strings.ReplaceAll(value, ">", "&gt;")
+	value = strings.ReplaceAll(value, `"`, "&quot;")
+	return value
+}
+
+func quoteBody(body string) string {
+	lines := strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		out = append(out, "> "+line)
+	}
+	return strings.Join(out, "\n")
+}
+
+func seedDefaultBoards(repo repository.BoardRepository) {
+	if repo == nil {
+		return
+	}
+	boards, err := repo.List()
+	if err != nil || len(boards) > 0 {
+		return
+	}
+	seed := []domain.Board{
+		{Name: "General", Description: "General system discussion", CreatedBy: 1},
+		{Name: "Node Talk", Description: "Node status and operator chat", CreatedBy: 1},
+		{Name: "Tooling", Description: "Build scripts and deployment", CreatedBy: 1},
+	}
+	for i := range seed {
+		_ = repo.Create(&seed[i])
+	}
+}
+
+func parseInt(raw string, fallback int) int {
+	parsed, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func parseAllowDomains(raw string) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.ToLower(strings.TrimSpace(part))
+		if part == "" {
+			continue
+		}
+		out[part] = struct{}{}
+	}
+	return out
+}
+
+func senderDomain(from string) string {
+	from = strings.TrimSpace(from)
+	if from == "" {
+		return ""
+	}
+	if strings.Contains(from, "<") {
+		if addr, err := mail.ParseAddress(from); err == nil {
+			from = addr.Address
+		}
+	}
+	at := strings.LastIndex(from, "@")
+	if at <= 0 || at+1 >= len(from) {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(from[at+1:]))
 }
 
 func writeJSON(w http.ResponseWriter, status int, body interface{}) error {

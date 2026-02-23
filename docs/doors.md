@@ -26,6 +26,12 @@ A door is an external executable attached to a menu entry that receives a PTY st
   - `hotkey`
   - `auth_required`
 - Doors are displayed in the Main Menu with a single hotkey.
+- Env registration:
+  - `WOLFBBS_DOORS="T|Trivia|/opt/wolfbbs/doors/trivia|;B|Bash|/bin/bash|"`
+  - Format: `HOTKEY|NAME|COMMAND|arg1,arg2` (entries separated by `;`)
+- Optional allow-list:
+  - `WOLFBBS_DOOR_ALLOW_DIR=/opt/wolfbbs/doors`
+  - When set, door binaries must resolve under this directory.
 
 ## Sample Door
 - Trivia game:

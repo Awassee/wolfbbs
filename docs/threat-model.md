@@ -12,6 +12,8 @@
 - Privilege abuse in admin operations.
 - Unauthorized access to shared chat and IRC relay.
 - Email outbound abuse and SSRF via web gateway fetch.
+- Inbound mail spoofing or replay against webhook ingest endpoint.
+- IRC credential sniffing without TLS and brute-force auth attempts.
 - Command injection via malformed escape and terminal sequences.
 
 ## Controls in Place
@@ -26,3 +28,5 @@
 - 2FA enforcement for admin paths.
 - Postgres-backed storage and transaction boundaries.
 - Gateway kill-switches, allowlists, and immutable audit logs.
+- Inbound token authentication and sender-domain allowlists for `/mail/inbound`.
+- Optional IRC TLS listener with cert/key config and SASL PLAIN support.

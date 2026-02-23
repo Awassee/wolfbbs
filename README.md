@@ -5,7 +5,7 @@ WolfBBS is an SSH-first BBS with a Wildcat-inspired ANSI/TUI flow and companion 
 ## Stack
 - Go
 - SSH (gliderlabs/ssh)
-- Read-only web companion + admin surfaces
+- Web companion + admin surfaces
 - Shared chat core with optional Postgres persistence
 
 ## Installation
@@ -30,10 +30,11 @@ bash install.sh --with-docker
 ### Quick connect
 
 - SSH: `ssh localhost -p 2222`
-- Web read-only companion: `http://localhost:8080/login`
+- Web companion: `http://localhost:8080/login`
 - Web admin: `http://localhost:8080/admin`
 - Chat: `http://localhost:8080/chat`
 - IRC: connect with any IRC client to `localhost:6667`
+- Mail ingest webhook: `http://localhost:8091/ingest`
 
 ## Local run
 
@@ -43,6 +44,12 @@ go run ./cmd/wolfbbs -listen :2222
 
 ```bash
 docker-compose up --build
+```
+
+Compose smoke check:
+
+```bash
+bash scripts/integration-smoke.sh
 ```
 
 ## Current Runtime Surface
@@ -55,23 +62,31 @@ docker-compose up --build
   - Small ANSI screen router and input helper
 - Screen language
   - `internal/ui` contains ANSI renderer helpers and classic mockups in `docs/screens.md`
-- Web read-only companion
+- Web companion
   - Login
-  - Message boards list
-  - Private mail list
+  - Message boards (list/read/post/reply)
+  - Private mail (inbox/outbox/read/compose)
+  - Optional external email send via SMTP relay
+  - Optional inbound mail ingestion endpoint
   - Settings and admin landing pages
   - Admin user actions at `/admin/users` (read/write unless read-only mode)
+- Admin DB-backed panels
+  - `/admin/boards`, `/admin/mail`, `/admin/files`, `/admin/gateways`, `/admin/audit`
 - Shared chat core
   - `internal/chat` (shared in web/IRC, DB-backed when configured)
+  - moderation actions, moderation state, and flood/rate events persisted in DB mode
 - Text web gateway at `/gateway` with SSRF deny rules and offline saves
-- Doors option in main menu (`/wolfbbs-trivia` sample)
+- Doors option in main menu with env-based registration (`/wolfbbs-trivia` sample)
 - IRC compatibility endpoint
   - `cmd/wolfbbs-irc`
 
 ### Environment Variables
 - `WOLFBBS_OFFLINE_DIR` : path for gateway offline cache (default `.wolfbbs/offline`)
 - `WOLFBBS_TRIVIA_BINARY` : path to trivia door binary (default `wolfbbs-trivia`)
+- `WOLFBBS_DOORS` : semicolon-separated door config entries (`HOTKEY|NAME|COMMAND|arg1,arg2`)
+- `WOLFBBS_DOOR_ALLOW_DIR` : optional allow-list path for door binaries
 - `WOLFBBS_READ_ONLY` : set to `1` or `true` to block admin mutating actions
+- `WOLFBBS_INBOUND_TOKEN` : shared secret for `POST /mail/inbound`
 - `WOLFBBS_DATABASE_URL` : PostgreSQL DSN, e.g. `postgres://wolfbbs:wolfbbs@postgres:5432/wolfbbs?sslmode=disable`
 - `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` can also be used when URL is not set
 - When a PostgreSQL DSN is configured, `cmd/wolfbbs` and `cmd/wolfbbs-web` open shared DB repos and apply startup migrations from `migrations/0001_init.sql` if needed.
@@ -93,8 +108,8 @@ docker-compose up --build
 - [x] Secure password hashing via bcrypt for local auth store
 - [x] Welcome -> Login -> Main menu flow
 - [x] Replace in-memory repositories with Postgres adapter when database config is present
-- [ ] Implement full board/mail flows in SSH and web
-- [ ] Full doors plugin system
-- [ ] Message/chat moderation in admin tools
-- [ ] Shared persistence and moderation-aware chat across SSH/Web/IRC
-- [ ] Test gateway implementations for file/web/email paths
+- [x] Implement board/mail flows in SSH and web
+- [x] Doors registry with env-based plugin registration and optional allow-list directory
+- [x] Message/chat moderation controls with persisted state in DB mode
+- [x] Shared persistence and moderation-aware chat across SSH/Web/IRC
+- [ ] Complete end-to-end production hardening for email/file gateway pipelines

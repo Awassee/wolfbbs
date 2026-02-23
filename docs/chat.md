@@ -7,6 +7,13 @@ In DB mode the service writes messages and presence into:
 - `chat_channels`
 - `chat_messages`
 - `chat_presence`
+- `chat_moderation_state`
+- `chat_moderation_actions`
+- `chat_rate_events`
+
+Cross-process realtime fanout:
+- Uses Postgres `LISTEN/NOTIFY` on channel `wolfbbs_chat_events` when DB mode is enabled.
+- Falls back to periodic history polling for clients if notify subscription is unavailable.
 
 In-memory mode is used automatically when DB configuration is not present.
 

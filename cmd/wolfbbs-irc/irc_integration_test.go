@@ -20,12 +20,13 @@ func TestIRCGatewayFlow(t *testing.T) {
 	}
 	defer ln.Close()
 
+	svc := chat.NewServiceForTest()
+	repo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(repo)
+	_, _ = authSvc.Register("ircuser", "ircpass1")
+	_, _ = authSvc.Register("ircviewer", "ircpass2")
+
 	go func() {
-		svc := chat.NewService()
-		repo := repository.NewInMemoryUserRepository()
-		authSvc := auth.NewService(repo)
-		_, _ = authSvc.Register("ircuser", "ircpass1")
-		_, _ = authSvc.Register("ircviewer", "ircpass2")
 		for i := 0; i < 2; i++ {
 			conn, err := ln.Accept()
 			if err != nil {
@@ -73,6 +74,13 @@ func TestIRCGatewayFlow(t *testing.T) {
 	_, _ = sender.Write([]byte("PRIVMSG #lobby :integration test\r\n"))
 	if !waitForLineContains(receiver, "integration test", 3*time.Second) {
 		t.Fatal("receiver did not receive integrated message")
+	}
+	history := svc.History("#lobby", 20)
+	if len(history) == 0 {
+		t.Fatal("chat history should include irc message")
+	}
+	if history[len(history)-1].Body != "integration test" {
+		t.Fatalf("unexpected history last message: %+v", history[len(history)-1])
 	}
 
 	_, _ = sender.Write([]byte("QUIT :done\r\n"))

@@ -13,11 +13,22 @@
   - actor id, recipient count, subject, status, error, relay response, timestamp
 
 ## Inbound (preferred optional)
-- Dedicated SMTP ingestion endpoint is recommended as a separate small service.
+- HTTP ingestion route is available:
+  - `POST /mail/inbound`
+  - Requires `X-Inbound-Token` matching `WOLFBBS_INBOUND_TOKEN`
+  - JSON payload: `from`, `to`, `subject`, `body`, `raw_headers`
+- Companion daemon (`cmd/wolfbbs-mailin`):
+  - Receives inbound JSON on `/ingest`
+  - Applies sender-domain allowlist (`WOLFBBS_MAILIN_ALLOW_DOMAINS`)
+  - Forwards to `/mail/inbound` with token auth
+- Recipient mapping:
+  - `user@example.com` -> `user`
+  - `user+wolfbbs@example.com` -> `user`
+- Inbound messages are stored as private mail using `mailbot` as sender.
 - Anti-abuse:
-  - allowlist domains and/or plus-address mapping
-  - DKIM/SPF checks by host policy
-  - store raw headers + body preview for operator review
+  - shared-secret token required
+  - plus-address mapping support
+  - store raw headers/body preview for operator review
 
 ## Admin Controls
 - Global allowlist/denylist
