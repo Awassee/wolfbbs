@@ -1,0 +1,36 @@
+{
+  "id": "oracle-door",
+  "display_name": "Oracle Door",
+  "short_description": "Contained AI hint bot with explicit labels and quotas.",
+  "category": "utility",
+  "version": "0.1.0",
+  "entry_type": "native",
+  "entrypoint": "native:oracle-door",
+  "hotkey": "0",
+  "concurrency_mode": "per_user",
+  "requires": {
+    "ansi": true,
+    "min_cols": 80,
+    "min_rows": 25
+  },
+  "capabilities": {
+    "needs_network": false,
+    "needs_filesystem_write": false,
+    "needs_sound": false
+  },
+  "data_retention": {
+    "messages_days": 30,
+    "logs_days": 30
+  },
+  "admin_defaults": {
+    "enabled": false,
+    "daily_turns": 10,
+    "time_bank_max": 0,
+    "reset_hour": 0,
+    "max_run_seconds": 120,
+    "max_output_rate": 4096
+  },
+  "required_role": "any",
+  "help_text": "Contained AI assistant. Responses are labeled and rate-limited.",
+  "rules_text": "Use for hints and drafting ideas only. Human callers and human posts remain primary."
+}

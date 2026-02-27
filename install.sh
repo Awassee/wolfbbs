@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEFAULT_PREFIX="/opt/wolfbbs"
+DEFAULT_PREFIX_LINUX="/opt/wolfbbs"
+DEFAULT_PREFIX_MACOS="${HOME}/.local/share/wolfbbs"
 DEFAULT_SSH_PORT=2222
 DEFAULT_WEB_PORT=8080
 DEFAULT_IRC_PORT=6667
 DEFAULT_IRC_TLS_PORT=6697
 DEFAULT_MAILIN_PORT=8091
+DEFAULT_REPO_URL="https://github.com/seanheiney/New-project.git"
 
-PREFIX="$DEFAULT_PREFIX"
+PREFIX=""
 WITH_DOCKER=true
 DRY_RUN=false
 NON_INTERACTIVE=false
@@ -18,29 +20,38 @@ WEB_PORT="$DEFAULT_WEB_PORT"
 IRC_PORT="$DEFAULT_IRC_PORT"
 IRC_TLS_PORT="$DEFAULT_IRC_TLS_PORT"
 MAILIN_PORT="$DEFAULT_MAILIN_PORT"
+INSTALL_BREW=false
 UNINSTALL=false
 UPGRADE=false
 STATUS=false
-REPO_URL="${WOLFBBS_REPO_URL:-}"
+REPO_URL="${WOLFBBS_REPO_URL:-${WOLFBBS_GH:-}}"
+OS=""
+DISTRO=""
+ID_LIKE=""
+PKG_MGR=""
+ARCH=""
 
 SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)"
 LOG_FILE="${SCRIPT_PATH}/install.log"
 WORK_DIR="${SCRIPT_PATH}"
 PURGE=false
 ENV_FILE=""
+DOCKER_BIN="docker"
 
 usage() {
   cat <<'USAGE'
 WolfBBS installer
+Supports Linux (apt/dnf/yum/pacman) and macOS (Docker Desktop or Colima).
 
 Usage:
   bash install.sh [options]
 
 Options:
-  --prefix <dir>            install directory (default: /opt/wolfbbs)
+  --prefix <dir>            install directory (default: Linux=/opt/wolfbbs, macOS=$HOME/.local/share/wolfbbs)
   --with-docker             use docker mode (default)
   --dry-run                 print actions without applying
   --yes, --non-interactive  run non-interactively
+  --install-brew            on macOS, install Homebrew when missing (requires explicit flag)
   --force                   overwrite existing generated config
   --ssh-port <port>         SSH BBS port (default: 2222)
   --web-port <port>         web port (default: 8080)
@@ -51,8 +62,14 @@ Options:
   --upgrade                 pull/restart services in existing install
   --status                  show service status and endpoints
   --purge                   remove docker volumes/instance on uninstall
-  --repo-url <url>          git URL to clone if installer is run standalone
+  --repo <owner/repo|url>   GitHub slug or git URL to clone if installer is run standalone
+  --repo-url <url>          alias of --repo
   -h, --help                show this help
+
+Environment shortcuts:
+  WOLFBBS_GH=<owner/repo>         e.g. seanheiney/New-project
+  WOLFBBS_REPO_URL=<git-url>      e.g. https://github.com/seanheiney/New-project.git
+  WOLFBBS_REPO_URL defaults to:   https://github.com/seanheiney/New-project.git
 USAGE
 }
 
@@ -71,11 +88,75 @@ prompt_repo_url() {
   if [[ "$NON_INTERACTIVE" == "true" ]]; then
     return
   fi
-  printf "No local docker-compose file found. Enter repository URL to clone: "
+  printf "No local docker-compose file found. Enter repository (owner/repo or git URL): "
   read -r input
   if [[ -n "$input" ]]; then
-    REPO_URL="$input"
+    REPO_URL="$(normalize_repo_input "$input")"
   fi
+}
+
+trim() {
+  local value="${1:-}"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+normalize_repo_input() {
+  local raw
+  raw="$(trim "${1:-}")"
+  if [[ -z "$raw" ]]; then
+    printf '%s' ""
+    return 0
+  fi
+
+  # Accept owner/repo shorthand and expand to GitHub HTTPS clone URL.
+  if [[ "$raw" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+    printf 'https://github.com/%s.git' "$raw"
+    return 0
+  fi
+  if [[ "$raw" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+\.git$ ]]; then
+    printf 'https://github.com/%s' "$raw"
+    return 0
+  fi
+
+  if [[ "$raw" == github.com/* ]]; then
+    raw="https://${raw}"
+  fi
+
+  # Keep canonical GitHub clone URLs untouched.
+  if [[ "$raw" =~ ^https?://github\.com/[^/]+/[^/]+\.git/?$ ]]; then
+    raw="${raw%/}"
+    printf '%s' "$raw"
+    return 0
+  fi
+
+  # Normalize bare GitHub https URLs to include .git suffix.
+  if [[ "$raw" =~ ^https?://github\.com/[^/]+/[^/]+/?$ ]]; then
+    raw="${raw%/}.git"
+  fi
+
+  printf '%s' "$raw"
+}
+
+resolve_repo_url() {
+  if [[ -n "$REPO_URL" ]]; then
+    REPO_URL="$(normalize_repo_input "$REPO_URL")"
+    return
+  fi
+
+  # If installer is executed from a git checkout, prefer that remote.
+  if [[ -d "${WORK_DIR}/.git" ]] && command -v git >/dev/null 2>&1; then
+    local origin
+    origin="$(git -C "$WORK_DIR" remote get-url origin 2>/dev/null || true)"
+    if [[ -n "$origin" ]]; then
+      REPO_URL="$(normalize_repo_input "$origin")"
+      return
+    fi
+  fi
+
+  # Fallback to project default so curl|bash stays one-command.
+  REPO_URL="$(normalize_repo_input "$DEFAULT_REPO_URL")"
 }
 
 log() {
@@ -90,6 +171,19 @@ run() {
   fi
   log "RUN: $*"
   eval "$*"
+}
+
+run_root() {
+  local cmd="$*"
+  if [[ "$(id -u)" -eq 0 ]]; then
+    run "$cmd"
+    return
+  fi
+  if ! command -v sudo >/dev/null 2>&1; then
+    echo "This step requires elevated privileges, but sudo is not available."
+    exit 1
+  fi
+  run "sudo $cmd"
 }
 
 confirm() {
@@ -177,6 +271,21 @@ detect_platform() {
   DISTRO="unknown"
 }
 
+set_default_prefix() {
+  if [[ -n "$PREFIX" ]]; then
+    return
+  fi
+  if is_macos; then
+    PREFIX="$DEFAULT_PREFIX_MACOS"
+    return
+  fi
+  PREFIX="$DEFAULT_PREFIX_LINUX"
+}
+
+detect_arch() {
+  ARCH="$(uname -m 2>/dev/null || echo unknown)"
+}
+
 detect_package_manager() {
   if is_linux; then
     if command -v apt-get >/dev/null 2>&1; then
@@ -198,6 +307,22 @@ detect_package_manager() {
   fi
 }
 
+check_macos_prereqs() {
+  if ! is_macos; then
+    return
+  fi
+  if ! command -v xcode-select >/dev/null 2>&1; then
+    echo "xcode-select is not available. Install Xcode Command Line Tools first:"
+    echo "  xcode-select --install"
+    exit 1
+  fi
+  if ! xcode-select -p >/dev/null 2>&1; then
+    echo "Xcode Command Line Tools are required on macOS."
+    echo "Run: xcode-select --install"
+    exit 1
+  fi
+}
+
 require_ports_free() {
   local ports=("$@")
   local port
@@ -212,7 +337,7 @@ require_ports_free() {
         in_use=1
       fi
     elif command -v lsof >/dev/null 2>&1; then
-      if lsof -iTCP -sTCP:LISTEN -P -n | grep -qE "[:.]$port[[:space:]]"; then
+      if lsof -iTCP -sTCP:LISTEN -P -n | grep -qE "[:.]${port}[[:space:]]"; then
         in_use=1
       fi
     elif command -v nc >/dev/null 2>&1; then
@@ -238,13 +363,13 @@ check_space() {
   if [[ ! -d "$dir" ]]; then
     dir="$(dirname "$dir")"
   fi
-  local free_gb
-  free_gb=$(df -Pm "$dir" | awk 'NR==2 {print $4}')
-  if [[ -z "${free_gb}" ]]; then
+  local free_kb
+  free_kb=$(df -Pk "$dir" 2>/dev/null | awk 'NR==2 {print $4}')
+  if [[ -z "${free_kb}" ]]; then
     return
   fi
-  if (( free_gb < 2048 )); then
-    echo "Low disk in $dir: ${free_gb}MB free. At least 2GB is recommended."
+  if (( free_kb < 2097152 )); then
+    echo "Low disk in $dir: $((free_kb / 1024))MB free. At least 2GB is recommended."
     if [[ "$NON_INTERACTIVE" == "true" ]]; then
       exit 1
     fi
@@ -254,10 +379,150 @@ check_space() {
   fi
 }
 
+linux_pkg_for_cmd() {
+  local cmd="$1"
+  case "$PKG_MGR" in
+    apt)
+      case "$cmd" in
+        nc) echo "netcat-openbsd" ;;
+        *) echo "$cmd" ;;
+      esac
+      ;;
+    dnf|yum)
+      case "$cmd" in
+        nc) echo "nmap-ncat" ;;
+        *) echo "$cmd" ;;
+      esac
+      ;;
+    pacman)
+      case "$cmd" in
+        nc) echo "openbsd-netcat" ;;
+        awk) echo "gawk" ;;
+        *) echo "$cmd" ;;
+      esac
+      ;;
+    *)
+      echo "$cmd"
+      ;;
+  esac
+}
+
+macos_pkg_for_cmd() {
+  local cmd="$1"
+  case "$cmd" in
+    openssl) echo "openssl@3" ;;
+    nc) echo "netcat" ;;
+    *) echo "$cmd" ;;
+  esac
+}
+
+ensure_brew() {
+  if ! is_macos; then
+    return
+  fi
+  if command -v brew >/dev/null 2>&1; then
+    return
+  fi
+  if [[ "$INSTALL_BREW" != "true" ]]; then
+    if [[ "$NON_INTERACTIVE" != "true" ]] && confirm "Homebrew not found. Install Homebrew now?"; then
+      INSTALL_BREW=true
+    else
+      echo "Homebrew not found."
+      echo "Install Homebrew manually, or rerun with --install-brew."
+      echo "  /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+      exit 1
+    fi
+  fi
+  run "/bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+  if [[ -x /opt/homebrew/bin/brew ]]; then
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+  elif [[ -x /usr/local/bin/brew ]]; then
+    eval "$(/usr/local/bin/brew shellenv)"
+  fi
+  if ! command -v brew >/dev/null 2>&1; then
+    echo "Failed to install Homebrew automatically."
+    exit 1
+  fi
+}
+
+install_base_prereqs() {
+  local missing_cmds=("$@")
+  if (( ${#missing_cmds[@]} == 0 )); then
+    return
+  fi
+
+  log "Missing prerequisites: ${missing_cmds[*]}"
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "DRY-RUN: would install missing prerequisites via ${PKG_MGR}"
+    return
+  fi
+
+  local packages=()
+  local cmd pkg
+  for cmd in "${missing_cmds[@]}"; do
+    if is_macos; then
+      pkg="$(macos_pkg_for_cmd "$cmd")"
+    else
+      pkg="$(linux_pkg_for_cmd "$cmd")"
+    fi
+    packages+=("$pkg")
+  done
+
+  if is_macos; then
+    ensure_brew
+    run "brew install ${packages[*]}"
+    return
+  fi
+
+  case "$PKG_MGR" in
+    apt)
+      run_root "apt-get update"
+      run_root "apt-get install -y ${packages[*]}"
+      ;;
+    dnf)
+      run_root "dnf -y install ${packages[*]}"
+      ;;
+    yum)
+      run_root "yum -y install ${packages[*]}"
+      ;;
+    pacman)
+      run_root "pacman -Sy --noconfirm --needed ${packages[*]}"
+      ;;
+    *)
+      echo "Unsupported package manager for automated dependency install."
+      exit 1
+      ;;
+  esac
+}
+
+ensure_base_prereqs() {
+  local required=(curl git sed awk grep openssl)
+  if [[ "$DRY_RUN" == "false" ]]; then
+    required+=(nc)
+  fi
+  local missing=()
+  local cmd
+  for cmd in "${required[@]}"; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+      missing+=("$cmd")
+    fi
+  done
+  if (( ${#missing[@]} == 0 )); then
+    return
+  fi
+  install_base_prereqs "${missing[@]}"
+  for cmd in "${required[@]}"; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+      echo "Missing required command after install attempt: $cmd"
+      exit 1
+    fi
+  done
+}
+
 compose_cmd() {
   if command -v docker >/dev/null 2>&1; then
-    if docker compose version >/dev/null 2>&1; then
-      echo "docker compose"
+    if eval "$DOCKER_BIN compose version" >/dev/null 2>&1; then
+      echo "$DOCKER_BIN compose"
       return
     fi
   fi
@@ -268,65 +533,193 @@ compose_cmd() {
   echo ""
 }
 
+install_colima_stack() {
+  ensure_brew
+  run "brew install docker docker-compose colima"
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "DRY-RUN: would start Colima runtime"
+    return
+  fi
+  if ! colima status >/dev/null 2>&1; then
+    run "colima start"
+  fi
+}
+
 ensure_docker_linux() {
   if command -v docker >/dev/null 2>&1; then
     return
   fi
   echo "Docker is not installed."
-  if [[ "$NON_INTERACTIVE" == "true" ]]; then
-    echo "Install Docker manually or pass a mode not implemented in this script."
+  if [[ "$NON_INTERACTIVE" != "true" ]] && ! confirm "Install Docker Engine and compose plugin now?"; then
+    echo "Install Docker manually: https://docs.docker.com/engine/install/"
     exit 1
   fi
-  if is_linux; then
-    case "$PKG_MGR" in
-      apt)
-        if confirm "Install Docker Engine and compose plugin now using APT?"; then
-          run "sudo apt-get update"
-          run "sudo apt-get install -y ca-certificates curl gnupg lsb-release"
-          run "sudo mkdir -p /etc/apt/keyrings"
-          run "curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg"
-          run "echo \"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \\$(lsb_release -cs) stable\" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null"
-          run "sudo apt-get update"
-          run "sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
-          return
-        fi
-        ;;
-      dnf|yum)
-        if confirm "Install Docker using ${PKG_MGR}?"; then
-          if [[ "$PKG_MGR" == "dnf" ]]; then
-            run "sudo dnf -y install dnf-plugins-core"
-            run "sudo dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo"
-          else
-            run "sudo yum -y install yum-utils"
-            run "sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo"
-          fi
-          run "sudo ${PKG_MGR} -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
-          return
-        fi
-        ;;
-      pacman)
-        if confirm "Install Docker now using pacman?"; then
-          run "sudo pacman -Sy --noconfirm docker docker-compose"
-          return
-        fi
-        ;;
-    esac
-  elif is_macos; then
-    if confirm "Install Docker Desktop via Homebrew now?"; then
-      if command -v brew >/dev/null 2>&1; then
-        run "brew install --cask docker"
-        echo "Start Docker Desktop before continuing."
-        echo "Press Enter when Docker is running."
-        if [[ "$NON_INTERACTIVE" != "true" ]]; then
-          read -r
-        fi
+
+  case "$PKG_MGR" in
+    apt)
+      run_root "apt-get update"
+      run_root "apt-get install -y ca-certificates curl gnupg lsb-release"
+      run_root "mkdir -p /etc/apt/keyrings"
+      local docker_repo_distro="ubuntu"
+      if [[ "$DISTRO" == "debian" ]] || [[ "$ID_LIKE" == *"debian"* && "$DISTRO" != "ubuntu" ]]; then
+        docker_repo_distro="debian"
+      fi
+      run_root "bash -c 'curl -fsSL https://download.docker.com/linux/${docker_repo_distro}/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg'"
+      local codename="${VERSION_CODENAME:-}"
+      local apt_arch
+      if [[ -z "$codename" ]] && command -v lsb_release >/dev/null 2>&1; then
+        codename="$(lsb_release -cs)"
+      fi
+      if [[ -z "$codename" ]]; then
+        echo "Could not determine Linux codename for Docker apt repo."
+        exit 1
+      fi
+      apt_arch="$(dpkg --print-architecture)"
+      run_root "bash -c 'echo \"deb [arch=${apt_arch} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/${docker_repo_distro} ${codename} stable\" > /etc/apt/sources.list.d/docker.list'"
+      run_root "apt-get update"
+      run_root "apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
+      ;;
+    dnf|yum)
+      if [[ "$PKG_MGR" == "dnf" ]]; then
+        run_root "dnf -y install dnf-plugins-core"
+        run_root "dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo"
+      else
+        run_root "yum -y install yum-utils"
+        run_root "yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo"
+      fi
+      run_root "${PKG_MGR} -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
+      ;;
+    pacman)
+      run_root "pacman -Sy --noconfirm docker docker-compose"
+      ;;
+    *)
+      echo "Please install Docker manually and rerun the installer."
+      echo "Linux docs: https://docs.docker.com/engine/install/"
+      exit 1
+      ;;
+  esac
+
+  if command -v systemctl >/dev/null 2>&1; then
+    run_root "systemctl enable --now docker"
+  fi
+}
+
+ensure_docker_macos() {
+  check_macos_prereqs
+  if command -v docker >/dev/null 2>&1; then
+    if docker info >/dev/null 2>&1; then
+      return
+    fi
+    if command -v colima >/dev/null 2>&1; then
+      if colima status >/dev/null 2>&1; then
+        log "Docker CLI present and Colima is running."
         return
       fi
+      if [[ "$NON_INTERACTIVE" == "true" ]]; then
+        run "colima start"
+      elif confirm "Docker daemon is down. Start Colima now?"; then
+        run "colima start"
+      else
+        echo "Start Colima with: colima start"
+        exit 1
+      fi
+      return
+    fi
+    echo "Docker CLI is present but Docker daemon is not reachable."
+    echo "Start Docker Desktop (open -a Docker) or install Colima."
+    exit 1
+  fi
+
+  echo "Docker is missing on macOS."
+  if [[ "$NON_INTERACTIVE" == "true" ]]; then
+    if [[ "$INSTALL_BREW" != "true" ]]; then
+      echo "Rerun with --install-brew for automatic dependency setup on macOS."
+      echo "Or install manually:"
+      echo "  brew install docker colima docker-compose && colima start"
+      exit 1
+    fi
+    install_colima_stack
+    return
+  fi
+
+  if confirm "Install recommended Colima Docker stack now (docker + colima)?"; then
+    install_colima_stack
+    return
+  fi
+  if confirm "Install Docker Desktop via Homebrew cask instead?"; then
+    ensure_brew
+    run "brew install --cask docker"
+    echo "Start Docker Desktop: open -a Docker"
+    exit 1
+  fi
+  echo "Please install Docker Desktop or Colima and rerun."
+  exit 1
+}
+
+ensure_compose_runtime() {
+  if [[ -n "$(compose_cmd)" ]]; then
+    return
+  fi
+  log "Docker Compose not found; installing compose runtime."
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "DRY-RUN: would install Docker Compose runtime"
+    return
+  fi
+  if is_macos; then
+    ensure_brew
+    run "brew install docker-compose"
+  else
+    case "$PKG_MGR" in
+      apt)
+        run_root "apt-get update"
+        run_root "apt-get install -y docker-compose-plugin"
+        ;;
+      dnf|yum)
+        run_root "${PKG_MGR} -y install docker-compose-plugin"
+        ;;
+      pacman)
+        run_root "pacman -Sy --noconfirm docker-compose"
+        ;;
+      *)
+        echo "Unsupported package manager for compose install."
+        exit 1
+        ;;
+    esac
+  fi
+  if [[ -z "$(compose_cmd)" ]]; then
+    echo "Docker Compose still unavailable after install attempt."
+    exit 1
+  fi
+}
+
+ensure_docker_access() {
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "DRY-RUN: skip docker daemon accessibility check"
+    return
+  fi
+  if docker info >/dev/null 2>&1; then
+    DOCKER_BIN="docker"
+    return
+  fi
+  if is_linux && command -v systemctl >/dev/null 2>&1; then
+    run_root "systemctl start docker" || true
+    if docker info >/dev/null 2>&1; then
+      DOCKER_BIN="docker"
+      return
     fi
   fi
-  echo "Please install Docker manually and rerun the installer."
-  echo "Linux: https://docs.docker.com/engine/install"
-  echo "macOS: https://docs.docker.com/desktop/"
+  if command -v sudo >/dev/null 2>&1; then
+    if sudo -n docker info >/dev/null 2>&1; then
+      DOCKER_BIN="sudo docker"
+      return
+    fi
+    if [[ "$NON_INTERACTIVE" != "true" ]] && confirm "Docker requires elevated permissions. Use sudo for Docker commands?"; then
+      DOCKER_BIN="sudo docker"
+      return
+    fi
+  fi
+  echo "Docker daemon is not reachable for the current user."
+  echo "Start Docker and/or add this user to the docker group (Linux), then rerun."
   exit 1
 }
 
@@ -335,10 +728,17 @@ ensure_docker() {
     log "DRY-RUN: skip Docker install checks"
     return 0
   fi
-  if command -v docker >/dev/null 2>&1; then
-    return
+  if is_macos; then
+    ensure_docker_macos
+  else
+    ensure_docker_linux
   fi
-  ensure_docker_linux
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "docker command still unavailable after setup."
+    exit 1
+  fi
+  ensure_docker_access
+  ensure_compose_runtime
 }
 
 resolve_env_file() {
@@ -358,6 +758,7 @@ ensure_compose_file() {
   fi
 
   if [[ -z "$REPO_URL" ]]; then
+    resolve_repo_url
     prompt_repo_url
   fi
 
@@ -377,6 +778,9 @@ ensure_compose_file() {
     log "No local compose file found. Cloning repository from ${REPO_URL}."
     init_install_dir
     if [[ "$DRY_RUN" == "true" ]]; then
+      WORK_DIR="$PREFIX"
+      compose_file="${PREFIX}/docker-compose.yml"
+      log "DRY-RUN: would clone repository to ${PREFIX} and use ${compose_file}"
       return
     fi
     if [[ -d "$PREFIX/.git" ]]; then
@@ -395,17 +799,22 @@ ensure_compose_file() {
   fi
 
   echo "Could not find docker-compose.yml or compose.yml."
-  echo "Run from repository root, or pass --repo-url."
+  echo "Run from repository root, or pass --repo/--repo-url."
+  echo "Examples:"
+  echo "  bash install.sh --with-docker --repo seanheiney/New-project --yes"
+  echo "  WOLFBBS_GH=seanheiney/New-project bash install.sh --with-docker --yes"
   exit 1
 }
 
 write_env_file() {
   ENV_FILE="${PREFIX}/.env"
-  local db_pass db_user db_name db_seed
+  local db_pass db_user db_name db_seed bootstrap_admin_handle bootstrap_admin_password
   db_user="wolfbbs"
   db_name="wolfbbs"
   db_pass="$(random_secret)"
   db_seed="$(random_secret)"
+  bootstrap_admin_handle="sysop"
+  bootstrap_admin_password="$(random_secret)"
 
   if [[ -f "$ENV_FILE" && "$FORCE" != "true" ]]; then
     log "Using existing env file: $ENV_FILE"
@@ -437,6 +846,12 @@ WOLFBBS_IRC_PORT=${IRC_PORT}
 WOLFBBS_IRC_TLS_PORT=${IRC_TLS_PORT}
 WOLFBBS_MAILIN_PORT=${MAILIN_PORT}
 WOLFBBS_READ_ONLY=false
+WOLFBBS_BOOTSTRAP_ADMIN_HANDLE=${bootstrap_admin_handle}
+WOLFBBS_BOOTSTRAP_ADMIN_PASSWORD=${bootstrap_admin_password}
+WOLFBBS_BOOTSTRAP_MODERATOR_HANDLE=
+WOLFBBS_BOOTSTRAP_MODERATOR_PASSWORD=
+WOLFBBS_BOOTSTRAP_USER_HANDLE=
+WOLFBBS_BOOTSTRAP_USER_PASSWORD=
 EOF
   chmod 600 "$ENV_FILE"
   log "Wrote ${ENV_FILE}"
@@ -511,11 +926,19 @@ docker_compose_status() {
 
 seed_admin_check() {
   if [[ "$DRY_RUN" == "true" ]]; then
-    log "DRY-RUN: skipping admin user seeding check"
+    log "DRY-RUN: skipping sysop user seeding check"
     return
   fi
-  if ! grep -q "admin" "$compose_file" 2>/dev/null; then
-    log "No explicit admin seed override in compose. Web app may seed defaults."
+  if [[ ! -f "$ENV_FILE" ]]; then
+    log "No .env file found for sysop bootstrap check."
+    return
+  fi
+  local handle
+  handle="$(grep '^WOLFBBS_BOOTSTRAP_ADMIN_HANDLE=' "$ENV_FILE" | head -n1 | cut -d= -f2-)"
+  if [[ -z "$handle" ]]; then
+    log "Warning: no bootstrap sysop configured in ${ENV_FILE}."
+  else
+    log "Bootstrap sysop account configured: ${handle}"
   fi
 }
 
@@ -571,12 +994,16 @@ status_view() {
     exit 1
   fi
   echo "WolfBBS install status: ${PREFIX}"
+  # shellcheck disable=SC1090
   . "$ENV_FILE"
   echo "SSH: ssh ${HOSTNAME:-localhost} -p ${WOLFBBS_SSH_PORT:-$SSH_PORT}"
   echo "Web: http://localhost:${WOLFBBS_WEB_PORT:-$WEB_PORT}/admin"
   echo "Chat: http://localhost:${WOLFBBS_WEB_PORT:-$WEB_PORT}/chat"
   echo "IRC: localhost:${WOLFBBS_IRC_PORT:-$IRC_PORT} (TLS: localhost:${WOLFBBS_IRC_TLS_PORT:-$IRC_TLS_PORT})"
   echo "Mail Ingest: http://localhost:${WOLFBBS_MAILIN_PORT:-$MAILIN_PORT}/ingest"
+  if [[ -n "${WOLFBBS_BOOTSTRAP_ADMIN_HANDLE:-}" ]]; then
+    echo "Bootstrap sysop handle: ${WOLFBBS_BOOTSTRAP_ADMIN_HANDLE} (password stored in ${ENV_FILE})"
+  fi
   local cmd
   cmd="$(compose_cmd)"
   if [[ -n "$cmd" ]]; then
@@ -603,6 +1030,10 @@ parse_args() {
         ;;
       --yes|--non-interactive)
         NON_INTERACTIVE=true
+        shift
+        ;;
+      --install-brew)
+        INSTALL_BREW=true
         shift
         ;;
       --force)
@@ -650,7 +1081,7 @@ parse_args() {
         STATUS=true
         shift
         ;;
-      --repo-url)
+      --repo|--repo-url)
         require_value "$1" "${2:-}"
         REPO_URL="$2"
         shift 2
@@ -670,10 +1101,15 @@ parse_args() {
 
 main() {
   parse_args "$@"
+  resolve_repo_url
   detect_platform
+  detect_arch
+  set_default_prefix
   detect_package_manager
+  check_macos_prereqs
   if [[ "$OS" == "unknown" || ( "$OS" == "linux" && "$PKG_MGR" == "" ) || ( "$OS" == "linux" && "$DISTRO" == "unknown" ) ]]; then
     echo "Unsupported operating system. Supported: Linux (Debian/Ubuntu, Fedora/RHEL/CentOS, Arch) and macOS."
+    echo "Required commands for manual install: curl, git, openssl, sed, awk, grep, docker, docker compose."
     exit 1
   fi
 
@@ -683,17 +1119,11 @@ main() {
     LOG_FILE="${SCRIPT_PATH}/install.log"
   fi
   touch "$LOG_FILE"
+  log "Detected platform: os=${OS} distro=${DISTRO} like=${ID_LIKE:-n/a} arch=${ARCH} pkg=${PKG_MGR:-none}"
 
   ensure_rootless_permissions
 
-  require_cmd sed
-  require_cmd awk
-  require_cmd grep
-  require_cmd openssl
-
-  if [[ -z "$compose_file" && "$STATUS" != "true" ]]; then
-    require_cmd git
-  fi
+  ensure_base_prereqs
 
   if [[ "$DRY_RUN" == "false" ]]; then
     ensure_rootless_permissions
@@ -781,13 +1211,24 @@ main() {
   require_ports_free "$SSH_PORT" "$WEB_PORT" "$IRC_PORT" "$MAILIN_PORT"
   init_install_dir
 
-  compose_file="$(find_compose_file || true)"
-  if [[ -z "$compose_file" ]]; then
-    if [[ ! -f "$PREFIX/docker-compose.yml" ]]; then
-      echo "No compose file found after setup."
-      exit 1
+  if [[ "$DRY_RUN" == "true" ]]; then
+    if [[ -z "${compose_file:-}" ]]; then
+      compose_file="$(find_compose_file || true)"
     fi
-    compose_file="$PREFIX/docker-compose.yml"
+    if [[ -z "$compose_file" ]]; then
+      compose_file="${PREFIX}/docker-compose.yml"
+      WORK_DIR="$PREFIX"
+      log "DRY-RUN: would use compose file ${compose_file}"
+    fi
+  else
+    compose_file="$(find_compose_file || true)"
+    if [[ -z "$compose_file" ]]; then
+      if [[ ! -f "$PREFIX/docker-compose.yml" ]]; then
+        echo "No compose file found after setup."
+        exit 1
+      fi
+      compose_file="$PREFIX/docker-compose.yml"
+    fi
   fi
 
   write_env_file
@@ -801,6 +1242,13 @@ main() {
   echo "Web Chat: http://localhost:${WEB_PORT}/chat"
   echo "IRC: localhost:${IRC_PORT} (TLS: ${IRC_TLS_PORT})"
   echo "Mail Ingest: http://localhost:${MAILIN_PORT}/ingest"
+  if [[ -f "$ENV_FILE" ]]; then
+    bootstrap_handle="$(grep '^WOLFBBS_BOOTSTRAP_ADMIN_HANDLE=' "$ENV_FILE" | head -n1 | cut -d= -f2-)"
+    if [[ -n "$bootstrap_handle" ]]; then
+      echo "Bootstrap sysop handle: ${bootstrap_handle}"
+      echo "Bootstrap sysop password is stored in ${ENV_FILE}"
+    fi
+  fi
 }
 
 main "$@"

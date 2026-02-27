@@ -26,6 +26,9 @@ type Board struct {
 	ID          int64
 	Name        string
 	Description string
+	Conference  string
+	ReadACS     string
+	WriteACS    string
 	CreatedBy   int64
 	CreatedAt   time.Time
 }
@@ -39,6 +42,14 @@ type Message struct {
 	Subject   string
 	Body      string
 	CreatedAt time.Time
+}
+
+type MessagePointer struct {
+	UserID     int64
+	BoardID    int64
+	LastReadID int64
+	LastReadAt time.Time
+	UpdatedAt  time.Time
 }
 
 type PrivateMail struct {
@@ -58,6 +69,49 @@ type FileArea struct {
 	Path        string
 	Description string
 	CreatedAt   time.Time
+}
+
+type FileEntry struct {
+	ID          int64
+	AreaID       int64
+	Name         string
+	Path         string
+	Description  string
+	Tags         []string
+	SHA256       string
+	SizeBytes    int64
+	UploaderID   int64
+	UploadedAt   time.Time
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	RatingAvg    float64
+	RatingCount  int
+}
+
+type FileFilter struct {
+	ID        int64
+	UserID    int64
+	Name      string
+	Query     string
+	Tags      []string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type DownloadQueueItem struct {
+	ID        int64
+	UserID    int64
+	FileID    int64
+	CreatedAt time.Time
+}
+
+type DownloadTicket struct {
+	Token     string
+	UserID    int64
+	FileID    int64
+	ExpiresAt time.Time
+	CreatedAt time.Time
+	UsedAt    *time.Time
 }
 
 type GatewaySettings struct {
@@ -86,4 +140,36 @@ type AdminAudit struct {
 	Action    string
 	Details   string
 	CreatedAt time.Time
+}
+
+type PasswordResetToken struct {
+	TokenHash  string
+	Handle     string
+	ExpiresAt  time.Time
+	ConsumedAt *time.Time
+	CreatedAt  time.Time
+}
+
+type NodeSession struct {
+	SessionID    string
+	NodeID       int
+	Username     string
+	Area         string
+	RemoteAddr   string
+	LoginAt      time.Time
+	LastActivity time.Time
+	UpdatedAt    time.Time
+}
+
+type CallerHistory struct {
+	ID              int64
+	SessionID       string
+	NodeID          int
+	Username        string
+	Area            string
+	RemoteAddr      string
+	LoginAt         time.Time
+	LogoutAt        time.Time
+	DurationSeconds int64
+	CreatedAt       time.Time
 }

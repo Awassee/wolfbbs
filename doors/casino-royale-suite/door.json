@@ -1,0 +1,37 @@
+{
+  "id": "casino-royale-suite",
+  "display_name": "Casino Royale Suite",
+  "short_description": "Blackjack, poker, slots, and roulette with house limits.",
+  "category": "arcade",
+  "version": "1.0.0",
+  "entry_type": "native",
+  "entrypoint": "native:casino-royale-suite",
+  "hotkey": "P",
+  "concurrency_mode": "per_user",
+  "requires": {
+    "ansi": true,
+    "min_cols": 80,
+    "min_rows": 25
+  },
+  "capabilities": {
+    "needs_network": false,
+    "needs_filesystem_write": false,
+    "needs_sound": false
+  },
+  "data_retention": {
+    "messages_days": 30,
+    "logs_days": 90
+  },
+  "admin_defaults": {
+    "enabled": true,
+    "daily_turns": 30,
+    "time_bank_max": 200,
+    "reset_hour": 0,
+    "max_run_seconds": 180,
+    "max_output_rate": 4096
+  },
+  "required_role": "user",
+  "help_text": "Casino Royale Suite: pick table games and track daily bankroll.",
+  "rules_text": "Daily loss caps are enforced by policy for safety.",
+  "args": []
+}

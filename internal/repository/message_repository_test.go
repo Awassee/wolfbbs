@@ -33,4 +33,17 @@ func TestInMemoryMessageRepository(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get message: %v", err)
 	}
+	if _, err := repo.GetPointer(1, 1); err == nil {
+		t.Fatalf("expected pointer not found before set")
+	}
+	if err := repo.SetPointer(1, 1, reply.ID, reply.CreatedAt); err != nil {
+		t.Fatalf("set pointer: %v", err)
+	}
+	ptr, err := repo.GetPointer(1, 1)
+	if err != nil {
+		t.Fatalf("get pointer: %v", err)
+	}
+	if ptr.LastReadID != reply.ID {
+		t.Fatalf("pointer last read id = %d, want %d", ptr.LastReadID, reply.ID)
+	}
 }

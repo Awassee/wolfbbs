@@ -9,16 +9,26 @@ import (
 	"log"
 	"net/http"
 	"net/mail"
+	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"wolfbbs/internal/acs"
 	"wolfbbs/internal/auth"
 	"wolfbbs/internal/chat"
+	"wolfbbs/internal/config"
+	"wolfbbs/internal/content"
+	"wolfbbs/internal/discovery"
 	"wolfbbs/internal/domain"
+	"wolfbbs/internal/doors"
+	"wolfbbs/internal/events"
 	"wolfbbs/internal/gateway"
+	"wolfbbs/internal/menu"
+	"wolfbbs/internal/rbac"
 	"wolfbbs/internal/repository"
 )
 
@@ -61,15 +71,16 @@ type sessionState struct {
 }
 
 const (
-	roleUser      = "user"
-	roleModerator = "moderator"
-	roleAdmin     = "admin"
+	roleUser      = rbac.RoleUser
+	roleModerator = rbac.RoleModerator
+	roleAdmin     = rbac.RoleSysop
 )
 
 var roleWeight = map[string]int{
 	roleUser:      1,
 	roleModerator: 2,
 	roleAdmin:     3,
+	"admin":       3,
 }
 
 type adminLogEntry struct {
@@ -80,6 +91,27 @@ type adminLogEntry struct {
 	Details string
 }
 
+type appErrorEntry struct {
+	Time    time.Time
+	Area    string
+	Message string
+}
+
+const (
+	sysSettingMOTD           = "site.motd"
+	sysSettingAnnouncement   = "site.announcement"
+	sysSettingReadOnly       = "site.read_only"
+	sysSettingWebOnRamp      = "site.web_onramp_enable"
+	sysSettingGuestTour      = "site.guest_tour_enable"
+	sysSettingDiscover       = "site.discover_enable"
+	sysSettingQuickJump      = "site.quick_jump_enable"
+	sysSettingClassicSearch  = "site.classic_search_enable"
+	sysSettingMenuEnabled    = "menu.enabled"
+	sysSettingMenuFile       = "menu.file"
+	sysSettingLockedChannels = "chat.locked_channels"
+	maxAdminErrorEntries     = 300
+)
+
 type webApp struct {
 	authSvc   *auth.Service
 	userRepo  repository.UserRepository
@@ -87,42 +119,99 @@ type webApp struct {
 	msgRepo   repository.MessageRepository
 	mailRepo  repository.PrivateMailRepository
 	adminRepo repository.AdminRepository
+	doorRepo  repository.DoorRepository
 	email     *gateway.EmailGateway
 	sessions  map[string]sessionState
 	sync.Mutex
-	chatSvc      *chat.Service
-	offlineDir   string
-	readOnly     bool
-	inboundToken string
-	inboundAllow map[string]struct{}
-}
-
-var seedUsers = []struct {
-	handle string
-	pass   string
-	role   string
-}{
-	{"admin", "wolfbbs-admin", "admin"},
-	{"guest", "wolfbbs", "user"},
-	{"mailbot", "wolfbbs-mailbot", "user"},
+	chatSvc       *chat.Service
+	doorRegistry  *doors.Registry
+	eventBus      *events.Bus
+	offlineDir    string
+	readOnly      bool
+	inboundToken  string
+	inboundAllow  map[string]struct{}
+	resetTTL      time.Duration
+	showResetDev  bool
+	apEnabled     bool
+	apBaseURL     string
+	publicBaseURL string
+	resetNotifier func(handle, token string, r *http.Request) error
+	startedAt     time.Time
+	runtimeCfg    config.Runtime
+	modernOnRamp  bool
+	guestTour     bool
+	discover      bool
+	quickJump     bool
+	classicSearch bool
+	wsTerminalURL string
+	menuRoot      string
+	savedSearches map[string][]string
+	motd          string
+	announcement  string
+	errorLog      []appErrorEntry
+	lockedChat    map[string]bool
 }
 
 func seedWebUsers(authSvc *auth.Service) {
-	for _, seed := range seedUsers {
-		existing, err := authSvc.GetUser(seed.handle)
+	entries := []struct {
+		handle string
+		pass   string
+		role   string
+	}{
+		{
+			handle: strings.TrimSpace(os.Getenv("WOLFBBS_BOOTSTRAP_ADMIN_HANDLE")),
+			pass:   strings.TrimSpace(os.Getenv("WOLFBBS_BOOTSTRAP_ADMIN_PASSWORD")),
+			role:   roleAdmin,
+		},
+		{
+			handle: strings.TrimSpace(os.Getenv("WOLFBBS_BOOTSTRAP_MODERATOR_HANDLE")),
+			pass:   strings.TrimSpace(os.Getenv("WOLFBBS_BOOTSTRAP_MODERATOR_PASSWORD")),
+			role:   roleModerator,
+		},
+		{
+			handle: strings.TrimSpace(os.Getenv("WOLFBBS_BOOTSTRAP_USER_HANDLE")),
+			pass:   strings.TrimSpace(os.Getenv("WOLFBBS_BOOTSTRAP_USER_PASSWORD")),
+			role:   roleUser,
+		},
+	}
+	for _, entry := range entries {
+		if entry.handle == "" || entry.pass == "" {
+			continue
+		}
+		existing, err := authSvc.GetUser(entry.handle)
 		if err == nil && existing != nil {
-			if existing.Role != seed.role {
-				_ = authSvc.SetRole(seed.handle, seed.role)
+			if existing.Role != entry.role {
+				_ = authSvc.SetRole(entry.handle, entry.role)
 			}
 			continue
 		}
-		u, err := authSvc.Register(seed.handle, seed.pass)
+		u, err := authSvc.Register(entry.handle, entry.pass)
 		if err != nil {
 			continue
 		}
-		u.Role = seed.role
-		_ = authSvc.SetRole(seed.handle, seed.role)
+		u.Role = entry.role
+		_ = authSvc.SetRole(entry.handle, entry.role)
 	}
+}
+
+func seedServiceUsers(authSvc *auth.Service) {
+	const serviceHandle = "mailbot"
+	if authSvc == nil {
+		return
+	}
+	existing, err := authSvc.GetUser(serviceHandle)
+	if err == nil && existing != nil {
+		_ = authSvc.SetEnabled(serviceHandle, false)
+		_ = authSvc.SetVerified(serviceHandle, true)
+		_ = authSvc.SetRole(serviceHandle, roleUser)
+		return
+	}
+	if _, err := authSvc.Register(serviceHandle, randomPassword(28)); err != nil {
+		return
+	}
+	_ = authSvc.SetEnabled(serviceHandle, false)
+	_ = authSvc.SetVerified(serviceHandle, true)
+	_ = authSvc.SetRole(serviceHandle, roleUser)
 }
 
 func main() {
@@ -132,6 +221,10 @@ func main() {
 	if *dbURL == "" {
 		*dbURL = repository.ResolveDatabaseURL()
 	}
+	runtimeCfg, cfgErr := config.LoadRuntimeFromEnv()
+	if cfgErr != nil {
+		log.Fatalf("config init: %v", cfgErr)
+	}
 
 	storage, err := repository.OpenStorageFromEnv(*dbURL)
 	if err != nil {
@@ -139,7 +232,14 @@ func main() {
 	}
 	defer storage.Close()
 	authSvc := auth.NewService(storage.Users)
+	authSvc.SetPasswordResetRepository(storage.Resets)
+	bus := events.NewBus()
+	bus.Subscribe("*", func(ev events.Event) {
+		log.Printf("event=%s fields=%v", ev.Name, ev.Fields)
+	})
+	authSvc.SetEventBus(bus)
 	seedWebUsers(authSvc)
+	seedServiceUsers(authSvc)
 	seedDefaultBoards(storage.Boards)
 
 	app := &webApp{
@@ -149,9 +249,23 @@ func main() {
 		msgRepo:   storage.Messages,
 		mailRepo:  storage.Mail,
 		adminRepo: storage.Admin,
+		doorRepo:  storage.Doors,
 		email:     gateway.NewEmailGateway(gateway.LoadEmailConfigFromEnv()),
 		sessions:  map[string]sessionState{},
-		chatSvc:   chat.NewService(),
+		chatSvc: func() *chat.Service {
+			svc := chat.NewService()
+			svc.SetEventBus(bus)
+			return svc
+		}(),
+		doorRegistry: func() *doors.Registry {
+			reg := doors.NewRegistry()
+			reg.SetRepository(storage.Doors)
+			if triviaBinary := strings.TrimSpace(os.Getenv("WOLFBBS_TRIVIA_BINARY")); triviaBinary != "" {
+				doors.SeedTrivia(reg, triviaBinary)
+			}
+			doors.SeedFromEnv(reg)
+			return reg
+		}(),
 		offlineDir: func() string {
 			dir := strings.TrimSpace(os.Getenv("WOLFBBS_OFFLINE_DIR"))
 			if dir == "" {
@@ -162,15 +276,54 @@ func main() {
 		readOnly:     strings.EqualFold(strings.TrimSpace(os.Getenv("WOLFBBS_READ_ONLY")), "1") || strings.EqualFold(strings.TrimSpace(os.Getenv("WOLFBBS_READ_ONLY")), "true"),
 		inboundToken: strings.TrimSpace(os.Getenv("WOLFBBS_INBOUND_TOKEN")),
 		inboundAllow: parseAllowDomains(strings.TrimSpace(os.Getenv("WOLFBBS_MAILIN_ALLOW_DOMAINS"))),
+		resetTTL: func() time.Duration {
+			raw := strings.TrimSpace(os.Getenv("WOLFBBS_RESET_TTL_MINUTES"))
+			if raw == "" {
+				return 30 * time.Minute
+			}
+			minutes, err := strconv.Atoi(raw)
+			if err != nil || minutes <= 0 {
+				return 30 * time.Minute
+			}
+			return time.Duration(minutes) * time.Minute
+		}(),
+		showResetDev: strings.EqualFold(strings.TrimSpace(os.Getenv("WOLFBBS_DEV_SHOW_RESET_TOKEN")), "1") ||
+			strings.EqualFold(strings.TrimSpace(os.Getenv("WOLFBBS_DEV_SHOW_RESET_TOKEN")), "true"),
+		apEnabled:     runtimeCfg.ActivityPub.Enabled,
+		apBaseURL:     runtimeCfg.ActivityPub.BaseURL,
+		publicBaseURL: strings.TrimSpace(os.Getenv("WOLFBBS_PUBLIC_BASE_URL")),
+		eventBus:      bus,
+		startedAt:     time.Now().UTC(),
+		runtimeCfg:    runtimeCfg,
+		modernOnRamp:  envEnabledDefault("WOLFBBS_WEB_ONRAMP_ENABLE", false),
+		guestTour:     envEnabledDefault("WOLFBBS_GUEST_TOUR_ENABLE", false),
+		discover:      envEnabledDefault("WOLFBBS_DISCOVER_ENABLE", false),
+		quickJump:     envEnabledDefault("WOLFBBS_QUICK_JUMP_ENABLE", false),
+		classicSearch: envEnabledDefault("WOLFBBS_CLASSIC_SEARCH_ENABLE", false),
+		wsTerminalURL: strings.TrimSpace(envFirst("WOLFBBS_WS_TERMINAL_URL", "WOLFBBS_WS_URL", "WOLFBBS_WSS_URL")),
+		menuRoot:      strings.TrimSpace(os.Getenv("WOLFBBS_MENU_ROOT")),
+		savedSearches: map[string][]string{},
+		lockedChat:    map[string]bool{},
 	}
+	app.loadPersistedAdminSettings()
 
 	http.HandleFunc("/", app.handleRoot)
+	http.HandleFunc("/connect", app.handleConnect)
+	http.HandleFunc("/tour", app.handleGuestTour)
 	http.HandleFunc("/login", app.handleLogin)
 	http.HandleFunc("/admin/login", app.handleLogin)
+	http.HandleFunc("/help", app.handleHelp)
+	http.HandleFunc("/reset/request", app.handlePasswordResetRequest)
+	http.HandleFunc("/reset/complete", app.handlePasswordResetComplete)
 	http.HandleFunc("/logout", app.handleLogout)
+	http.HandleFunc("/.well-known/webfinger", app.handleActivityPubWebFinger)
+	http.HandleFunc("/ap/users/", app.handleActivityPubUsers)
 	http.Handle("/boards", app.authRequired(http.HandlerFunc(app.handleBoards)))
 	http.Handle("/mail", app.authRequired(http.HandlerFunc(app.handleMail)))
 	http.Handle("/settings", app.authRequired(http.HandlerFunc(app.handleSettings)))
+	http.Handle("/status", app.authRequired(http.HandlerFunc(app.handleStatusCenter)))
+	http.Handle("/config", app.authRequired(http.HandlerFunc(app.handleConfigCenter)))
+	http.Handle("/discover", app.authRequired(http.HandlerFunc(app.handleDiscover)))
 	http.Handle("/admin", app.mustBeRole(roleAdmin, app.handleAdmin))
 	http.Handle("/admin/users", app.mustBeRole(roleAdmin, app.handleAdminUsers))
 	http.Handle("/admin/boards", app.mustBeRole(roleAdmin, app.handleAdminBoards))
@@ -178,8 +331,14 @@ func main() {
 	http.Handle("/admin/files", app.mustBeRole(roleAdmin, app.handleAdminFiles))
 	http.Handle("/admin/gateways", app.mustBeRole(roleAdmin, app.handleAdminGateways))
 	http.Handle("/admin/chat", app.mustBeRole(roleAdmin, app.handleAdminChat))
+	http.Handle("/admin/doors", app.mustBeRole(roleAdmin, app.handleAdminDoors))
+	http.Handle("/admin/setup", app.mustBeRole(roleAdmin, app.handleAdminSetup))
+	http.Handle("/admin/config", app.mustBeRole(roleAdmin, app.handleAdminConfig))
+	http.Handle("/admin/errors", app.mustBeRole(roleAdmin, app.handleAdminErrors))
 	http.Handle("/admin/system", app.mustBeRole(roleAdmin, app.handleAdminSystem))
+	http.Handle("/admin/node-state", app.mustBeRole(roleAdmin, app.handleAdminNodeState))
 	http.Handle("/admin/audit", app.mustBeRole(roleAdmin, app.handleAdminAudit))
+	http.Handle("/scores", app.authRequired(http.HandlerFunc(app.handleScores)))
 	http.Handle("/chat", app.authRequired(http.HandlerFunc(app.handleChat)))
 	http.Handle("/chat/send", app.authRequired(http.HandlerFunc(app.handleChatSend)))
 	http.Handle("/chat/stream", app.authRequired(http.HandlerFunc(app.handleChatStream)))
@@ -192,14 +351,55 @@ func main() {
 	http.Handle("/gateway", app.authRequired(http.HandlerFunc(app.handleGateway)))
 	http.HandleFunc("/mail/inbound", app.handleMailInbound)
 	http.HandleFunc("/healthz", app.handleHealthz)
+	http.HandleFunc("/readyz", app.handleReadyz)
+	http.HandleFunc("/metrics", app.handleMetrics)
+
+	startOptionalContentServers(runtimeCfg, storage.Boards, storage.Messages)
 
 	fmt.Printf("WolfBBS web companion on %s\n", *listen)
 	log.Fatal(http.ListenAndServe(*listen, nil))
 }
 
+func startOptionalContentServers(runtimeCfg config.Runtime, boardRepo repository.BoardRepository, msgRepo repository.MessageRepository) {
+	publicHost := strings.TrimSpace(runtimeCfg.Content.Host)
+	if publicHost == "" {
+		publicHost = "localhost"
+	}
+	if listen := strings.TrimSpace(runtimeCfg.Content.GopherListen); listen != "" {
+		gopherServer := content.NewGopherServer(listen, publicHost, boardRepo, msgRepo)
+		if err := gopherServer.Start(); err != nil {
+			log.Printf("gopher server failed to start on %s: %v", listen, err)
+		} else {
+			log.Printf("gopher server listening on %s", gopherServer.Addr())
+		}
+	}
+	if listen := strings.TrimSpace(runtimeCfg.Content.NNTPListen); listen != "" {
+		nntpServer := content.NewNNTPServer(listen, boardRepo, msgRepo)
+		if err := nntpServer.Start(); err != nil {
+			log.Printf("nntp server failed to start on %s: %v", listen, err)
+		} else {
+			log.Printf("nntp server listening on %s", nntpServer.Addr())
+		}
+	}
+	if listen := strings.TrimSpace(runtimeCfg.Content.NNTPSListen); listen != "" {
+		certPath := strings.TrimSpace(runtimeCfg.Content.NNTPSCert)
+		keyPath := strings.TrimSpace(runtimeCfg.Content.NNTPSKey)
+		nntpsServer := content.NewNNTPTLSServer(listen, certPath, keyPath, boardRepo, msgRepo)
+		if err := nntpsServer.Start(); err != nil {
+			log.Printf("nntps server failed to start on %s: %v", listen, err)
+		} else {
+			log.Printf("nntps server listening on %s", nntpsServer.Addr())
+		}
+	}
+}
+
 func (a *webApp) handleRoot(w http.ResponseWriter, r *http.Request) {
 	if _, ok := a.currentUser(r); ok {
 		http.Redirect(w, r, "/boards", http.StatusFound)
+		return
+	}
+	if a.modernOnRamp {
+		http.Redirect(w, r, "/connect", http.StatusFound)
 		return
 	}
 	http.Redirect(w, r, "/login", http.StatusFound)
@@ -209,6 +409,406 @@ func (a *webApp) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	_ = r
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ok"))
+}
+
+func (a *webApp) handleReadyz(w http.ResponseWriter, r *http.Request) {
+	_ = r
+	if a.boardRepo != nil {
+		if _, err := a.boardRepo.List(); err != nil {
+			http.Error(w, "db unavailable", http.StatusServiceUnavailable)
+			return
+		}
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ready"))
+}
+
+func (a *webApp) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	_ = r
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	a.Lock()
+	sessionCount := len(a.sessions)
+	a.Unlock()
+	channelCount := 0
+	if a.chatSvc != nil {
+		channelCount = len(a.chatSvc.ListChannels())
+	}
+	_, _ = fmt.Fprintf(w, "wolfbbs_sessions %d\n", sessionCount)
+	_, _ = fmt.Fprintf(w, "wolfbbs_chat_channels %d\n", channelCount)
+	_, _ = fmt.Fprintln(w, "wolfbbs_build_info{version=\"dev\"} 1")
+}
+
+func (a *webApp) handleActivityPubWebFinger(w http.ResponseWriter, r *http.Request) {
+	if !a.apEnabled {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	resource := strings.TrimSpace(r.URL.Query().Get("resource"))
+	if resource == "" || !strings.HasPrefix(strings.ToLower(resource), "acct:") {
+		http.Error(w, "resource query is required", http.StatusBadRequest)
+		return
+	}
+	acct := strings.TrimPrefix(resource, "acct:")
+	parts := strings.SplitN(acct, "@", 2)
+	if len(parts) != 2 {
+		http.Error(w, "invalid acct resource", http.StatusBadRequest)
+		return
+	}
+	handle := strings.TrimSpace(parts[0])
+	if handle == "" {
+		http.Error(w, "invalid acct resource", http.StatusBadRequest)
+		return
+	}
+	user, err := a.authSvc.GetUser(handle)
+	if err != nil || user == nil {
+		http.NotFound(w, r)
+		return
+	}
+	base := a.activityPubBase(r)
+	actorURL := base + "/ap/users/" + url.PathEscape(user.Handle)
+	subjectHost := parts[1]
+	if strings.TrimSpace(subjectHost) == "" {
+		subjectHost = r.Host
+	}
+	_ = writeJSON(w, http.StatusOK, map[string]interface{}{
+		"subject": fmt.Sprintf("acct:%s@%s", user.Handle, subjectHost),
+		"links": []map[string]string{
+			{
+				"rel":  "self",
+				"type": "application/activity+json",
+				"href": actorURL,
+			},
+		},
+	})
+}
+
+func (a *webApp) handleActivityPubUsers(w http.ResponseWriter, r *http.Request) {
+	if !a.apEnabled {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/ap/users/")
+	path = strings.Trim(path, "/")
+	if path == "" {
+		http.NotFound(w, r)
+		return
+	}
+	parts := strings.Split(path, "/")
+	handle, err := url.PathUnescape(strings.TrimSpace(parts[0]))
+	if err != nil || handle == "" {
+		http.NotFound(w, r)
+		return
+	}
+	user, err := a.authSvc.GetUser(handle)
+	if err != nil || user == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if len(parts) == 1 {
+		a.handleActivityPubActor(w, r, user)
+		return
+	}
+	switch strings.ToLower(strings.TrimSpace(parts[1])) {
+	case "outbox":
+		a.handleActivityPubOutbox(w, r, user)
+	case "inbox":
+		http.Error(w, "activitypub inbox is disabled", http.StatusNotImplemented)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (a *webApp) handleActivityPubActor(w http.ResponseWriter, r *http.Request, user *domain.User) {
+	base := a.activityPubBase(r)
+	actorURL := base + "/ap/users/" + url.PathEscape(user.Handle)
+	_ = writeJSON(w, http.StatusOK, map[string]interface{}{
+		"@context":          "https://www.w3.org/ns/activitystreams",
+		"id":                actorURL,
+		"type":              "Person",
+		"preferredUsername": user.Handle,
+		"name":              user.Handle,
+		"inbox":             actorURL + "/inbox",
+		"outbox":            actorURL + "/outbox",
+	})
+}
+
+func (a *webApp) handleActivityPubOutbox(w http.ResponseWriter, r *http.Request, user *domain.User) {
+	limit := 20
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			if parsed > 100 {
+				parsed = 100
+			}
+			limit = parsed
+		}
+	}
+	all := a.listMessagesByAuthor(user.ID)
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].CreatedAt.Equal(all[j].CreatedAt) {
+			return all[i].ID > all[j].ID
+		}
+		return all[i].CreatedAt.After(all[j].CreatedAt)
+	})
+	if len(all) > limit {
+		all = all[:limit]
+	}
+
+	base := a.activityPubBase(r)
+	actorURL := base + "/ap/users/" + url.PathEscape(user.Handle)
+	items := make([]map[string]interface{}, 0, len(all))
+	for _, msg := range all {
+		noteID := fmt.Sprintf("%s/outbox/%d", actorURL, msg.ID)
+		note := map[string]interface{}{
+			"id":           noteID,
+			"type":         "Note",
+			"attributedTo": actorURL,
+			"published":    msg.CreatedAt.UTC().Format(time.RFC3339),
+			"summary":      msg.Subject,
+			"content":      msg.Body,
+			"to":           []string{"https://www.w3.org/ns/activitystreams#Public"},
+		}
+		if msg.ParentID > 0 {
+			note["inReplyTo"] = fmt.Sprintf("%s/outbox/%d", actorURL, msg.ParentID)
+		}
+		items = append(items, map[string]interface{}{
+			"id":        noteID + "#create",
+			"type":      "Create",
+			"actor":     actorURL,
+			"object":    note,
+			"to":        []string{"https://www.w3.org/ns/activitystreams#Public"},
+			"published": msg.CreatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+
+	_ = writeJSON(w, http.StatusOK, map[string]interface{}{
+		"@context":     "https://www.w3.org/ns/activitystreams",
+		"id":           actorURL + "/outbox",
+		"type":         "OrderedCollection",
+		"totalItems":   len(items),
+		"orderedItems": items,
+	})
+}
+
+func (a *webApp) listMessagesByAuthor(userID int64) []domain.Message {
+	if userID <= 0 || a.boardRepo == nil || a.msgRepo == nil {
+		return nil
+	}
+	boards, err := a.boardRepo.List()
+	if err != nil {
+		return nil
+	}
+	out := make([]domain.Message, 0, 64)
+	for _, board := range boards {
+		msgs, listErr := a.msgRepo.ListByBoard(board.ID)
+		if listErr != nil {
+			continue
+		}
+		for _, msg := range msgs {
+			if msg.AuthorID == userID {
+				out = append(out, msg)
+			}
+		}
+	}
+	return out
+}
+
+func (a *webApp) activityPubBase(r *http.Request) string {
+	base := strings.TrimSpace(a.apBaseURL)
+	if base != "" {
+		return strings.TrimSuffix(base, "/")
+	}
+	scheme := "http"
+	if r != nil {
+		if proto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); proto != "" {
+			scheme = proto
+		} else if r.TLS != nil {
+			scheme = "https"
+		}
+		if host := strings.TrimSpace(r.Host); host != "" {
+			return scheme + "://" + host
+		}
+	}
+	return scheme + "://localhost"
+}
+
+func (a *webApp) deliverPasswordReset(r *http.Request, handle, token string) error {
+	if a.resetNotifier != nil {
+		return a.resetNotifier(handle, token, r)
+	}
+	if a.email == nil || !a.email.Enabled() {
+		return nil
+	}
+	recipient := passwordResetRecipient(handle)
+	if recipient == "" {
+		return nil
+	}
+	base := strings.TrimSpace(a.publicBaseURL)
+	if base == "" {
+		base = a.activityPubBase(r)
+	}
+	base = strings.TrimRight(base, "/")
+	resetURL := base + "/reset/complete?token=" + url.QueryEscape(strings.TrimSpace(token))
+	subject := "WolfBBS password reset"
+	body := "A password reset was requested for your WolfBBS account.\n\n" +
+		"If this was you, open this link to set a new password:\n" + resetURL + "\n\n" +
+		"If you did not request this reset, you can ignore this message."
+	return a.email.SendOutbound("wolfbbs-reset", []string{recipient}, subject, body)
+}
+
+func passwordResetRecipient(handle string) string {
+	handle = strings.TrimSpace(handle)
+	if handle == "" {
+		return ""
+	}
+	addr, err := mail.ParseAddress(handle)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(addr.Address)
+}
+
+func (a *webApp) handleConnect(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.currentUser(r); ok {
+		http.Redirect(w, r, "/boards", http.StatusFound)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	wsURL := strings.TrimSpace(a.wsTerminalURL)
+	if wsURL == "" {
+		wsURL = "ws://localhost:6080/ws-login"
+	}
+	termBlock := `<p>WebSocket terminal is configured for command-mode login server.</p>`
+	if a.modernOnRamp {
+		termBlock += `<pre id="term" style="height:220px; width:780px; border:1px solid #333; overflow:auto; background:#111; color:#9f9; padding:8px; font-family:monospace;"></pre>
+<form id="termForm">
+<label>Input: <input id="termInput" size="80" autocomplete="off"></label>
+<button type="submit">Send</button>
+</form>
+<script>
+(function(){
+const out = document.getElementById('term');
+const input = document.getElementById('termInput');
+const form = document.getElementById('termForm');
+let ws;
+function append(line){
+  out.textContent += line + "\n";
+  out.scrollTop = out.scrollHeight;
+}
+function connect(){
+  ws = new WebSocket(` + fmt.Sprintf("%q", wsURL) + `);
+  ws.onopen = function(){ append("[connected] " + ` + fmt.Sprintf("%q", wsURL) + `); };
+  ws.onmessage = function(evt){ append(evt.data); };
+  ws.onclose = function(){ append("[disconnected]"); };
+  ws.onerror = function(){ append("[error] websocket failure"); };
+}
+form.addEventListener('submit', function(evt){
+  evt.preventDefault();
+  if (!ws || ws.readyState !== 1) { append("[offline] reconnecting"); connect(); return; }
+  const v = input.value;
+  if (!v) return;
+  ws.send(v);
+  input.value = "";
+});
+connect();
+})();
+</script>`
+	}
+
+	tourLink := ""
+	if a.guestTour {
+		tourLink = `<p><a href="/tour">Enter guided guest tour (read-only)</a></p>`
+	}
+	motdBlock := ""
+	if strings.TrimSpace(a.motd) != "" {
+		motdBlock = `<p><strong>MOTD:</strong> ` + htmlEscape(a.motd) + `</p>`
+	}
+	announcementBlock := ""
+	if strings.TrimSpace(a.announcement) != "" {
+		announcementBlock = `<p><strong>Announcement:</strong> ` + htmlEscape(a.announcement) + `</p>`
+	}
+
+	page := `<html><body>
+<h1>WolfBBS Connect</h1>
+<p>Terminal-first remains the primary UX.</p>
+` + motdBlock + `
+` + announcementBlock + `
+<ul>
+<li>SSH (recommended): <code>ssh localhost -p 2222</code></li>
+<li>Telnet (optional): <code>telnet localhost 2323</code></li>
+<li>WebSocket login endpoint: <code>` + htmlEscape(wsURL) + `</code></li>
+</ul>
+<p><a href="/login">Sign in with account</a> | <a href="/help">help</a></p>
+` + tourLink + `
+` + termBlock + `
+</body></html>`
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(page))
+}
+
+func (a *webApp) handleGuestTour(w http.ResponseWriter, r *http.Request) {
+	if !a.guestTour {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	lastCallers := a.latestLogins(6)
+	if len(lastCallers) == 0 {
+		lastCallers = append(lastCallers, "No caller history yet.")
+	}
+	oneLiners := []string{}
+	if a.chatSvc != nil {
+		for _, row := range a.chatSvc.History("#lobby", 5) {
+			oneLiners = append(oneLiners, fmt.Sprintf("[%s] %s: %s",
+				row.CreatedAt.Local().Format("15:04"),
+				row.From,
+				cleanOneLiner(row.Body, 70)))
+		}
+	}
+	if len(oneLiners) == 0 {
+		oneLiners = append(oneLiners, "No one-liners yet.")
+	}
+
+	feature := "No featured thread yet."
+	if headline := a.featuredThreadLine(); headline != "" {
+		feature = headline
+	}
+	downloadPick := a.filebaseDownloadPick()
+
+	rows := strings.Builder{}
+	for _, line := range lastCallers {
+		rows.WriteString(`<li>` + htmlEscape(line) + `</li>`)
+	}
+	chatRows := strings.Builder{}
+	for _, line := range oneLiners {
+		chatRows.WriteString(`<li>` + htmlEscape(line) + `</li>`)
+	}
+
+	page := `<html><body>
+<h1>WolfBBS Guided Tour (Read-Only)</h1>
+<p><a href="/connect">connect</a> | <a href="/login">login</a> | <a href="/help">help</a></p>
+<h2>Last Callers</h2><ul>` + rows.String() + `</ul>
+<h2>One-Liners</h2><ul>` + chatRows.String() + `</ul>
+<h2>Featured Thread</h2><p>` + htmlEscape(feature) + `</p>
+<h2>Today's Download Pick</h2><p>` + htmlEscape(downloadPick) + `</p>
+</body></html>`
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(page))
 }
 
 func (a *webApp) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -222,7 +822,7 @@ func (a *webApp) handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(loginPage()))
+		_, _ = w.Write([]byte(loginPage(r.URL.Path, a.modernOnRamp, a.guestTour)))
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -263,6 +863,59 @@ func (a *webApp) handleLogin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, redirectTo, http.StatusFound)
 }
 
+func (a *webApp) handlePasswordResetRequest(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(resetRequestPage("")))
+		return
+	case http.MethodPost:
+		handle := strings.TrimSpace(r.FormValue("handle"))
+		token, err := a.authSvc.IssuePasswordReset(handle, a.resetTTL)
+		message := "If the account exists, a password reset token has been issued."
+		if err != nil && err != auth.ErrInvalidCredentials {
+			message = "Password reset is currently unavailable."
+		}
+		if err == nil && token != "" {
+			if notifyErr := a.deliverPasswordReset(r, handle, token); notifyErr != nil {
+				log.Printf("password reset delivery failed for handle=%s: %v", handle, notifyErr)
+			}
+		}
+		if a.showResetDev && token != "" {
+			message = message + " Dev token: " + token
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(resetRequestPage(htmlEscape(message))))
+		return
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+}
+
+func (a *webApp) handlePasswordResetComplete(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		token := strings.TrimSpace(r.URL.Query().Get("token"))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(resetCompletePage(token, "")))
+		return
+	case http.MethodPost:
+		token := strings.TrimSpace(r.FormValue("token"))
+		password := strings.TrimSpace(r.FormValue("password"))
+		if err := a.authSvc.ResetPasswordWithToken(token, password); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(resetCompletePage(token, "Reset token is invalid/expired or password is too short.")))
+			return
+		}
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+}
+
 func (a *webApp) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie("wolfbbs_session"); err == nil {
 		a.Lock()
@@ -271,6 +924,61 @@ func (a *webApp) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	deleteCookie(w, "wolfbbs_session")
 	http.Redirect(w, r, "/login", http.StatusFound)
+}
+
+func (a *webApp) handleHelp(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	user, _ := a.currentUser(r)
+	roleLabel := "guest"
+	nav := `<a href="/login">login</a> | <a href="/connect">connect</a>`
+	if user != nil {
+		roleLabel = rbac.NormalizeRole(user.Role)
+		nav = `<a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/settings">settings</a> | <a href="/status">status</a> | <a href="/config">config</a>`
+		if a.discover {
+			nav += ` | <a href="/discover">discover</a>`
+		}
+		if a.hasRole(user, roleAdmin) {
+			nav += ` | <a href="/admin">admin</a>`
+		}
+		nav += ` | <a href="/logout">logout</a>`
+	}
+
+	page := `<html><body>
+<h1>WolfBBS Help</h1>
+<p>` + nav + `</p>
+<p>Current role: ` + htmlEscape(roleLabel) + `</p>
+<h2>Terminal (SSH) quick keys</h2>
+<ul>
+<li>Main menu: M/P/F/C/G/D/N/S/A/L/W, Q quits, ? opens contextual help.</li>
+<li>Boards reader: R reply, N next, P previous, Q exit, Space/Enter for paging.</li>
+<li>Mail: C compose, R read by ID, Q return.</li>
+<li>Chat: S send, J join, O online, R refresh, Q return.</li>
+<li>Gateway: E email relay, W text web fetch, Q return.</li>
+</ul>
+<h2>Web routes</h2>
+<ul>
+<li>/boards, /mail, /chat, /settings, /gateway, /status, /config</li>
+<li>/scores for door leaderboards</li>
+<li>/healthz, /readyz, /metrics for health/ops checks</li>
+</ul>
+<h2>Admin routes (sysop only)</h2>
+<ul>
+<li>/admin/users, /admin/boards, /admin/mail, /admin/files, /admin/gateways</li>
+<li>/admin/chat, /admin/doors, /admin/setup, /admin/config, /admin/system, /admin/errors, /admin/audit</li>
+</ul>
+<h2>Reference docs</h2>
+<ul>
+<li><code>docs/help-guides.md</code></li>
+<li><code>docs/INSTALL.md</code></li>
+<li><code>docs/config-reference.md</code></li>
+<li><code>docs/feature-reference.md</code></li>
+</ul>
+</body></html>`
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(page))
 }
 
 func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
@@ -291,6 +999,15 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "board/subject/body required", http.StatusBadRequest)
 			return
 		}
+		board, err := a.boardRepo.Get(boardID)
+		if err != nil || board == nil {
+			http.Error(w, "board not found", http.StatusNotFound)
+			return
+		}
+		if !a.canWriteBoard(user, board) {
+			http.Error(w, "posting denied by board ACS", http.StatusForbidden)
+			return
+		}
 		if err := a.msgRepo.CreateMessage(&domain.Message{
 			BoardID:  boardID,
 			AuthorID: user.ID,
@@ -301,12 +1018,28 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "could not create message", http.StatusInternalServerError)
 			return
 		}
+		if a.eventBus != nil {
+			a.eventBus.Publish("message.posted", map[string]string{
+				"user":    user.Handle,
+				"board":   strconv.FormatInt(boardID, 10),
+				"subject": subject,
+			})
+		}
 		http.Redirect(w, r, fmt.Sprintf("/boards?board=%d", boardID), http.StatusFound)
 		return
 	}
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
+	}
+
+	if a.quickJump {
+		if jump := strings.TrimSpace(r.URL.Query().Get("jump")); jump != "" {
+			if dest := webQuickJumpPath(jump); dest != "" {
+				http.Redirect(w, r, dest, http.StatusFound)
+				return
+			}
+		}
 	}
 
 	boardID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("board")), 10, 64)
@@ -316,9 +1049,38 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "failed to load boards", http.StatusInternalServerError)
 			return
 		}
+		visibleBoards := make([]domain.Board, 0, len(boards))
+		for _, board := range boards {
+			if a.canReadBoard(user, &board) {
+				visibleBoards = append(visibleBoards, board)
+			}
+		}
+		boards = visibleBoards
 		rows := strings.Builder{}
+		motdBlock := ""
+		if strings.TrimSpace(a.motd) != "" {
+			motdBlock = `<p><strong>MOTD:</strong> ` + htmlEscape(a.motd) + `</p>`
+		}
+		announcementBlock := ""
+		if strings.TrimSpace(a.announcement) != "" {
+			announcementBlock = `<p><strong>Announcement:</strong> ` + htmlEscape(a.announcement) + `</p>`
+		}
+		discoverLink := ""
+		if a.discover {
+			discoverLink = ` | <a href="/discover">discover</a>`
+		}
 		for _, board := range boards {
 			msgs, _ := a.msgRepo.ListByBoard(board.ID)
+			pointerID := int64(0)
+			if ptr, ptrErr := a.msgRepo.GetPointer(user.ID, board.ID); ptrErr == nil && ptr != nil {
+				pointerID = ptr.LastReadID
+			}
+			newCount := 0
+			for _, msg := range msgs {
+				if msg.ID > pointerID {
+					newCount++
+				}
+			}
 			lastAt := ""
 			lastSub := ""
 			if len(msgs) > 0 {
@@ -326,16 +1088,23 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 				lastAt = last.CreatedAt.Format("2006-01-02 15:04")
 				lastSub = last.Subject
 			}
-			rows.WriteString(fmt.Sprintf(`<tr><td>%d</td><td><a href="/boards?board=%d">%s</a></td><td>%d</td><td>%s</td><td>%s</td></tr>`,
-				board.ID, board.ID, board.Name, len(msgs), lastAt, htmlEscape(lastSub)))
+			rows.WriteString(fmt.Sprintf(`<tr><td>%d</td><td><a href="/boards?board=%d">%s</a></td><td>%s</td><td>%d</td><td>%d</td><td>%s</td><td>%s</td></tr>`,
+				board.ID, board.ID, board.Name, htmlEscape(defaultConferenceValue(board.Conference)), len(msgs), newCount, lastAt, htmlEscape(lastSub)))
+		}
+		quickJumpBlock := ""
+		if a.quickJump {
+			quickJumpBlock = `<form method="GET" action="/boards"><label>Quick Jump <input name="jump" size="24" placeholder="mail/chat/gateway/status/config"></label><button type="submit">Go</button></form>`
 		}
 		page := fmt.Sprintf(`<html><body>
 <p>Signed in as %s</p>
-<p><a href="/mail">mail</a> | <a href="/settings">settings</a> | <a href="/chat">chat</a> | <a href="/gateway">gateway</a> | <a href="/logout">logout</a></p>
+<p><a href="/mail">mail</a> | <a href="/settings">settings</a> | <a href="/chat">chat</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/gateway">gateway</a>%s | <a href="/help">help</a> | <a href="/logout">logout</a></p>
+%s
+%s
+%s
 <h1>Message Boards</h1>
 <table border="1">
-<tr><th>ID</th><th>Board</th><th>Topics</th><th>Last</th><th>Last subject</th></tr>%s</table>
-</body></html>`, user.Handle, rows.String())
+<tr><th>ID</th><th>Board</th><th>Conf</th><th>Topics</th><th>New</th><th>Last</th><th>Last subject</th></tr>%s</table>
+</body></html>`, user.Handle, discoverLink, motdBlock, announcementBlock, quickJumpBlock, rows.String())
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(page))
 		return
@@ -346,10 +1115,18 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "board not found", http.StatusNotFound)
 		return
 	}
+	if !a.canReadBoard(user, board) {
+		http.Error(w, "board read denied by ACS", http.StatusForbidden)
+		return
+	}
 	msgs, err := a.msgRepo.ListByBoard(boardID)
 	if err != nil {
 		http.Error(w, "failed to load messages", http.StatusInternalServerError)
 		return
+	}
+	pointerID := int64(0)
+	if ptr, ptrErr := a.msgRepo.GetPointer(user.ID, boardID); ptrErr == nil && ptr != nil {
+		pointerID = ptr.LastReadID
 	}
 	handleByID := a.userHandleLookup()
 	csrf := a.csrfHiddenInput(r)
@@ -358,6 +1135,7 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 	if messageID > 0 {
 		msg, err := a.msgRepo.GetMessage(messageID)
 		if err == nil && msg.BoardID == boardID {
+			_ = a.msgRepo.SetPointer(user.ID, boardID, msg.ID, time.Now().UTC())
 			view.WriteString(`<h2>Reader</h2>`)
 			view.WriteString(`<p><strong>Subject:</strong> ` + htmlEscape(msg.Subject) + `<br>`)
 			view.WriteString(`<strong>From:</strong> ` + htmlEscape(handleByID[msg.AuthorID]) + `<br>`)
@@ -366,11 +1144,15 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 			}
 			view.WriteString(`<strong>When:</strong> ` + msg.CreatedAt.Format("2006-01-02 15:04:05") + `</p>`)
 			view.WriteString(`<pre>` + htmlEscape(msg.Body) + `</pre>`)
-			view.WriteString(`<h3>Reply</h3>`)
-			view.WriteString(`<form method="POST" action="/boards"><input type="hidden" name="board_id" value="` + strconv.FormatInt(boardID, 10) + `"><input type="hidden" name="parent_id" value="` + strconv.FormatInt(msg.ID, 10) + `">` + csrf)
-			view.WriteString(`<label>Subject: <input name="subject" value="Re: ` + htmlEscape(msg.Subject) + `" size="60"></label><br>`)
-			view.WriteString(`<label>Body:<br><textarea name="body" rows="10" cols="80">` + htmlEscape(quoteBody(msg.Body)) + `</textarea></label><br>`)
-			view.WriteString(`<button type="submit">Post Reply</button></form>`)
+			if a.canWriteBoard(user, board) {
+				view.WriteString(`<h3>Reply</h3>`)
+				view.WriteString(`<form method="POST" action="/boards"><input type="hidden" name="board_id" value="` + strconv.FormatInt(boardID, 10) + `"><input type="hidden" name="parent_id" value="` + strconv.FormatInt(msg.ID, 10) + `">` + csrf)
+				view.WriteString(`<label>Subject: <input name="subject" value="Re: ` + htmlEscape(msg.Subject) + `" size="60"></label><br>`)
+				view.WriteString(`<label>Body:<br><textarea name="body" rows="10" cols="80">` + htmlEscape(quoteBody(msg.Body)) + `</textarea></label><br>`)
+				view.WriteString(`<button type="submit">Post Reply</button></form>`)
+			} else {
+				view.WriteString(`<p><em>Replying is disabled by board ACS policy.</em></p>`)
+			}
 		}
 	}
 
@@ -380,14 +1162,37 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 		if msg.ParentID > 0 {
 			subject = "> " + subject
 		}
-		rows.WriteString(fmt.Sprintf(`<tr><td>%d</td><td><a href="/boards?board=%d&id=%d">%s</a></td><td>%s</td><td>%s</td></tr>`,
-			msg.ID, boardID, msg.ID, htmlEscape(subject), htmlEscape(handleByID[msg.AuthorID]), msg.CreatedAt.Format("2006-01-02 15:04")))
+		newMark := ""
+		if msg.ID > pointerID {
+			newMark = "N"
+		}
+		rows.WriteString(fmt.Sprintf(`<tr><td>%d</td><td>%s</td><td><a href="/boards?board=%d&id=%d">%s</a></td><td>%s</td><td>%s</td></tr>`,
+			msg.ID, newMark, boardID, msg.ID, htmlEscape(subject), htmlEscape(handleByID[msg.AuthorID]), msg.CreatedAt.Format("2006-01-02 15:04")))
+	}
+	discoverLink := ""
+	if a.discover {
+		discoverLink = ` | <a href="/discover">discover</a>`
+	}
+	motdBlock := ""
+	if strings.TrimSpace(a.motd) != "" {
+		motdBlock = `<p><strong>MOTD:</strong> ` + htmlEscape(a.motd) + `</p>`
+	}
+	announcementBlock := ""
+	if strings.TrimSpace(a.announcement) != "" {
+		announcementBlock = `<p><strong>Announcement:</strong> ` + htmlEscape(a.announcement) + `</p>`
 	}
 	page := `<html><body><h1>Board: ` + htmlEscape(board.Name) + `</h1>` +
-		`<p><a href="/boards">all boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/logout">logout</a></p>` +
-		`<table border="1"><tr><th>ID</th><th>Subject</th><th>Author</th><th>When</th></tr>` + rows.String() + `</table>` +
-		`<h2>New Post</h2><form method="POST" action="/boards"><input type="hidden" name="board_id" value="` + strconv.FormatInt(boardID, 10) + `">` + csrf +
-		`<label>Subject: <input name="subject" size="60"></label><br><label>Body:<br><textarea name="body" rows="10" cols="80"></textarea></label><br><button type="submit">Post</button></form>` +
+		`<p><a href="/boards">all boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/status">status</a> | <a href="/config">config</a>` + discoverLink + ` | <a href="/help">help</a> | <a href="/logout">logout</a></p>` +
+		`<p><strong>Conference:</strong> ` + htmlEscape(defaultConferenceValue(board.Conference)) + `</p>` +
+		motdBlock + announcementBlock +
+		`<table border="1"><tr><th>ID</th><th>New</th><th>Subject</th><th>Author</th><th>When</th></tr>` + rows.String() + `</table>`
+	if a.canWriteBoard(user, board) {
+		page += `<h3>New Post</h3><form method="POST" action="/boards"><input type="hidden" name="board_id" value="` + strconv.FormatInt(boardID, 10) + `">` + csrf +
+			`<label>Subject: <input name="subject" size="60"></label><br><label>Body:<br><textarea name="body" rows="10" cols="80"></textarea></label><br><button type="submit">Post</button></form>`
+	} else {
+		page += `<p><em>Posting is disabled by board ACS policy.</em></p>`
+	}
+	page +=
 		view.String() + `</body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -446,6 +1251,12 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "could not save mail", http.StatusInternalServerError)
 			return
 		}
+		if a.eventBus != nil {
+			a.eventBus.Publish("mail.sent", map[string]string{
+				"user": user.Handle,
+				"to":   toRaw,
+			})
+		}
 		http.Redirect(w, r, "/mail", http.StatusFound)
 		return
 	}
@@ -475,7 +1286,7 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 		} else {
 			to = handleByID[item.ToUserID]
 		}
-		page := `<html><body><h1>Mail #` + strconv.FormatInt(item.ID, 10) + `</h1><p><a href="/mail">back</a></p>` +
+		page := `<html><body><h1>Mail #` + strconv.FormatInt(item.ID, 10) + `</h1><p><a href="/mail">back</a> | <a href="/help">help</a></p>` +
 			`<p><strong>From:</strong> ` + htmlEscape(handleByID[item.FromUserID]) + `<br>` +
 			`<strong>To:</strong> ` + htmlEscape(to) + `<br>` +
 			`<strong>Subject:</strong> ` + htmlEscape(item.Subject) + `<br>` +
@@ -508,7 +1319,11 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 			row.ID, row.ID, htmlEscape(target), htmlEscape(row.Subject), row.CreatedAt.Format("2006-01-02 15:04")))
 	}
 	csrf := a.csrfHiddenInput(r)
-	page := `<html><body><h1>Private Mail</h1><p><a href="/boards">boards</a> | <a href="/chat">chat</a> | <a href="/logout">logout</a></p>` +
+	discoverLink := ""
+	if a.discover {
+		discoverLink = ` | <a href="/discover">discover</a>`
+	}
+	page := `<html><body><h1>Private Mail</h1><p><a href="/boards">boards</a> | <a href="/chat">chat</a> | <a href="/status">status</a> | <a href="/config">config</a>` + discoverLink + ` | <a href="/help">help</a> | <a href="/logout">logout</a></p>` +
 		`<h2>Compose</h2><form method="POST" action="/mail">` + csrf +
 		`<label>To (handle or email): <input name="to" size="40"></label><br>` +
 		`<label>Subject: <input name="subject" size="60"></label><br>` +
@@ -521,15 +1336,35 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *webApp) handleGateway(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
 	if r.Method == http.MethodGet {
+		if a.serveGatewayDownload(w, r, user, strings.TrimSpace(r.URL.Query().Get("download"))) {
+			return
+		}
+		if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("view")), "files") {
+			if a.serveGatewayBatchZip(w, r, user) {
+				return
+			}
+			a.renderGatewayFiles(w, r, user)
+			return
+		}
+		csrf := a.csrfHiddenInput(r)
 		page := `<html><body>
 	<h1>Gateway</h1>
+	<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
 	<p>Fetch readable text via text gateway (safety limits and SSRF blocks apply).</p>
 	<form method="POST" action="/gateway">
+		` + csrf + `
+		<input type="hidden" name="action" value="fetch">
 		<label>URL: <input name="url" size="60" value="https://"></label><br><br>
 		<label><input type="checkbox" name="save" value="1"> Save for offline reading</label><br><br>
 		<button type="submit">Fetch</button>
 	</form>
+	<p><a href="/gateway?view=files">FileBase browser + queue + temp links</a></p>
 	</body></html>`
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(page))
@@ -537,6 +1372,12 @@ func (a *webApp) handleGateway(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !a.requireCSRF(w, r) {
+		return
+	}
+	if a.handleGatewayFileAction(w, r, user) {
 		return
 	}
 	url := strings.TrimSpace(r.FormValue("url"))
@@ -553,7 +1394,6 @@ func (a *webApp) handleGateway(w http.ResponseWriter, r *http.Request) {
 	}
 	note := ""
 	if strings.TrimSpace(r.FormValue("save")) == "1" {
-		user, _ := a.currentUser(r)
 		path, err := gateway.SaveOffline(a.offlineDir, user.Handle, url, result)
 		if err != nil {
 			note = "\n\nCould not save offline copy: " + err.Error()
@@ -566,7 +1406,7 @@ func (a *webApp) handleGateway(w http.ResponseWriter, r *http.Request) {
 	escaped = strings.ReplaceAll(escaped, "<", "&lt;")
 	escaped = strings.ReplaceAll(escaped, ">", "&gt;")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(`<html><body><h1>Gateway Reader</h1><pre>` + escaped + `</pre></body></html>`))
+	_, _ = w.Write([]byte(`<html><body><h1>Gateway Reader</h1><p><a href="/gateway">back</a> | <a href="/help">help</a></p><pre>` + escaped + `</pre></body></html>`))
 }
 
 func (a *webApp) handleSettings(w http.ResponseWriter, r *http.Request) {
@@ -577,6 +1417,9 @@ func (a *webApp) handleSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == http.MethodPost {
+		if !a.requireCSRF(w, r) {
+			return
+		}
 		action := strings.TrimSpace(strings.ToLower(r.FormValue("action")))
 		switch action {
 		case "change_password":
@@ -595,6 +1438,16 @@ func (a *webApp) handleSettings(w http.ResponseWriter, r *http.Request) {
 			if err := a.authSvc.SetPassword(user.Handle, next); err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				_, _ = w.Write([]byte("password update failed"))
+				return
+			}
+		case "update_prefs":
+			theme := strings.TrimSpace(r.FormValue("theme"))
+			ansiEnabled := parseCheckbox(r.FormValue("ansi_enabled"))
+			pagingEnabled := parseCheckbox(r.FormValue("paging_enabled"))
+			timeFormat24h := parseCheckbox(r.FormValue("time_format_24h"))
+			if err := a.authSvc.SetPreferences(user.Handle, theme, ansiEnabled, pagingEnabled, timeFormat24h); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte("preference update failed"))
 				return
 			}
 		case "enable_2fa":
@@ -631,25 +1484,241 @@ func (a *webApp) handleSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	csrf := a.csrfHiddenInput(r)
 	var secondFactorBlock strings.Builder
 	if user.TOTPSecret == "" {
 		secondFactorBlock.WriteString(`<p>2FA is currently disabled.</p>`)
-		secondFactorBlock.WriteString(`<form method="POST" action="/settings"><input type="hidden" name="action" value="enable_2fa"><button type="submit">Enable TOTP</button></form>`)
+		secondFactorBlock.WriteString(`<form method="POST" action="/settings"><input type="hidden" name="action" value="enable_2fa">` + csrf + `<button type="submit">Enable TOTP</button></form>`)
 	} else {
 		secondFactorBlock.WriteString(`<p>2FA is enabled.</p>`)
-		secondFactorBlock.WriteString(`<form method="POST" action="/settings"><input type="hidden" name="action" value="disable_2fa"><button type="submit">Disable TOTP</button></form>`)
-		secondFactorBlock.WriteString(`<form method="POST" action="/settings"><input type="hidden" name="action" value="regen_codes"><button type="submit">Regenerate recovery codes</button></form>`)
+		secondFactorBlock.WriteString(`<form method="POST" action="/settings"><input type="hidden" name="action" value="disable_2fa">` + csrf + `<button type="submit">Disable TOTP</button></form>`)
+		secondFactorBlock.WriteString(`<form method="POST" action="/settings"><input type="hidden" name="action" value="regen_codes">` + csrf + `<button type="submit">Regenerate recovery codes</button></form>`)
 		secondFactorBlock.WriteString(`<p>Recovery Codes: ` + strings.Join(user.RecoveryCodes, ", ") + `</p>`)
 	}
-	page := `<html><body><h1>Settings</h1><p>User: ` + user.Handle + `</p><ul>` +
+	page := `<html><body><h1>Settings</h1><p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p><p>User: ` + user.Handle + `</p><ul>` +
 		`<li>ANSI: ` + boolToText(user.ANSIEnabled) + `</li>` +
 		`<li>Paging: ` + boolToText(user.PagingEnabled) + `</li>` +
 		`<li>Time format 24h: ` + boolToText(user.TimeFormat24h) + `</li>` +
 		`</ul>` +
-		`<h2>Password</h2><form method="POST" action="/settings"><input type="hidden" name="action" value="change_password">` +
+		`<h2>Display Preferences</h2><form method="POST" action="/settings"><input type="hidden" name="action" value="update_prefs">` + csrf +
+		`<label>Theme: <input name="theme" value="` + htmlEscape(user.Theme) + `" size="20"></label><br>` +
+		`<label><input type="checkbox" name="ansi_enabled" value="1" ` + checkedAttr(user.ANSIEnabled) + `> ANSI enabled</label><br>` +
+		`<label><input type="checkbox" name="paging_enabled" value="1" ` + checkedAttr(user.PagingEnabled) + `> Paging enabled</label><br>` +
+		`<label><input type="checkbox" name="time_format_24h" value="1" ` + checkedAttr(user.TimeFormat24h) + `> 24-hour time format</label><br>` +
+		`<button type="submit">Save Preferences</button></form>` +
+		`<h2>Password</h2><form method="POST" action="/settings"><input type="hidden" name="action" value="change_password">` + csrf +
 		`<label>New password: <input name="password" type="password"></label><br>` +
 		`<label>Confirm: <input name="confirm" type="password"></label><br><button type="submit">Change password</button></form>` +
 		secondFactorBlock.String() +
+		`</body></html>`
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(page))
+}
+
+func (a *webApp) handleDiscover(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if !a.discover {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	const maxItems = 15
+	digest, err := discovery.BuildSinceLastCall(a.boardRepo, a.msgRepo, a.mailRepo, user, maxItems)
+	if err != nil {
+		http.Error(w, "discover feed unavailable", http.StatusInternalServerError)
+		return
+	}
+	if strings.TrimSpace(r.URL.Query().Get("save")) == "1" {
+		query := strings.TrimSpace(r.URL.Query().Get("q"))
+		if query != "" && a.classicSearch {
+			a.addSavedSearch(user.Handle, query)
+		}
+	}
+	query := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	searchRows := []string{}
+	saved := []string{}
+	if a.classicSearch {
+		searchRows = a.searchRows(query, maxItems)
+		saved = a.savedSearchList(user.Handle)
+	}
+
+	itemsRows := strings.Builder{}
+	for _, row := range digest.Items {
+		itemsRows.WriteString(`<li>` + htmlEscape(row.Line) + `</li>`)
+	}
+	if itemsRows.Len() == 0 {
+		itemsRows.WriteString(`<li>No new items since your last call.</li>`)
+	}
+	searchHTML := strings.Builder{}
+	savedHTML := strings.Builder{}
+	if a.classicSearch {
+		for _, row := range searchRows {
+			searchHTML.WriteString(`<li>` + htmlEscape(row) + `</li>`)
+		}
+		if searchHTML.Len() == 0 {
+			searchHTML.WriteString(`<li>No matches for current search.</li>`)
+		}
+		for _, row := range saved {
+			link := "/discover?q=" + url.QueryEscape(row)
+			savedHTML.WriteString(`<li><a href="` + link + `">` + htmlEscape(row) + `</a></li>`)
+		}
+		if savedHTML.Len() == 0 {
+			savedHTML.WriteString(`<li>No saved searches yet.</li>`)
+		}
+	} else {
+		searchHTML.WriteString(`<li>Classic search is disabled by sysop policy.</li>`)
+		savedHTML.WriteString(`<li>Classic search is disabled by sysop policy.</li>`)
+	}
+
+	aiLine := ""
+	if envEnabledDefault("WOLFBBS_AI_ASSIST_ENABLE", false) {
+		if summary := discovery.BuildAICatchUpLine(digest.Items); summary != "" {
+			aiLine = `<p><strong>` + htmlEscape(summary) + `</strong></p>`
+		}
+	}
+
+	page := `<html><body>
+<h1>Since Your Last Call</h1>
+<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/settings">settings</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
+<p>Transparent rules: replies-to-you, handle mentions, per-board new activity, and inbox mail. Max ` + strconv.Itoa(maxItems) + ` items.</p>
+<p>Last seen: ` + digest.Since.Local().Format("2006-01-02 15:04") + `</p>
+` + aiLine + `
+<ul>` + itemsRows.String() + `</ul>
+<h2>Deep Search</h2>
+<form method="GET" action="/discover">
+<label>Query: <input name="q" value="` + htmlEscape(query) + `" size="42"></label>
+<button type="submit">Search</button>
+<button type="submit" name="save" value="1">Save Search</button>
+</form>
+<ul>` + searchHTML.String() + `</ul>
+<h3>Saved Searches</h3>
+<ul>` + savedHTML.String() + `</ul>
+</body></html>`
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(page))
+}
+
+func (a *webApp) handleStatusCenter(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	boardsCount := 0
+	if a.boardRepo != nil {
+		if boards, err := a.boardRepo.List(); err == nil {
+			boardsCount = len(boards)
+		}
+	}
+	onlineCount := 0
+	channelCount := 0
+	if a.chatSvc != nil {
+		onlineCount = len(a.chatSvc.Online())
+		channelCount = len(a.chatSvc.ListChannels())
+	}
+	doorCount := 0
+	if a.doorRegistry != nil {
+		doorCount = len(a.doorRegistry.Doors())
+	}
+	gatewayConfigured := false
+	if a.adminRepo != nil {
+		if cfg, err := a.adminRepo.GetGatewaySettings(); err == nil && cfg != nil {
+			gatewayConfigured = strings.TrimSpace(cfg.SMTPHost) != "" || strings.TrimSpace(cfg.FromDomain) != ""
+		}
+	}
+	loginTelnet := a.runtimeCfg.Login.Telnet.Enabled
+	loginWS := a.runtimeCfg.Login.WebSocket.Enabled
+	loginWSS := a.runtimeCfg.Login.WebSocketTLS.Enabled
+	contentGopher := strings.TrimSpace(a.runtimeCfg.Content.GopherListen) != ""
+	contentNNTP := strings.TrimSpace(a.runtimeCfg.Content.NNTPListen) != ""
+	contentNNTPS := strings.TrimSpace(a.runtimeCfg.Content.NNTPSListen) != ""
+	connectorDoorParty := a.runtimeCfg.Connectors.DoorParty.Enabled
+	connectorBBSLink := a.runtimeCfg.Connectors.BBSLink.Enabled
+	connectorTelnetBridge := a.runtimeCfg.Connectors.Telnet.Enabled
+	role := rbac.NormalizeRole(user.Role)
+	adminLink := ""
+	if a.hasRole(user, roleAdmin) {
+		adminLink = ` | <a href="/admin/system">sysop system</a>`
+	}
+	page := `<html><body><h1>Status Center</h1>` +
+		`<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/config">config</a> | <a href="/settings">settings</a> | <a href="/help">help</a> | <a href="/logout">logout</a>` + adminLink + `</p>` +
+		`<table border="1"><tr><th>Function</th><th>State</th><th>Details</th></tr>` +
+		statusRow("Account role", true, role) +
+		statusRow("Boards service", a.boardRepo != nil, strconv.Itoa(boardsCount)+" boards") +
+		statusRow("Chat service", a.chatSvc != nil, strconv.Itoa(channelCount)+" channels, "+strconv.Itoa(onlineCount)+" online") +
+		statusRow("Doors registry", a.doorRegistry != nil, strconv.Itoa(doorCount)+" doors loaded") +
+		statusRow("Gateway config", gatewayConfigured, boolToText(gatewayConfigured)) +
+		statusRow("Telnet login server", loginTelnet, a.runtimeCfg.Login.Telnet.Listen) +
+		statusRow("WebSocket login server", loginWS, a.runtimeCfg.Login.WebSocket.Listen+a.runtimeCfg.Login.WebSocket.Path) +
+		statusRow("WebSocket TLS login server", loginWSS, a.runtimeCfg.Login.WebSocketTLS.Listen+a.runtimeCfg.Login.WebSocketTLS.Path) +
+		statusRow("Gopher content server", contentGopher, a.runtimeCfg.Content.GopherListen) +
+		statusRow("NNTP content server", contentNNTP, a.runtimeCfg.Content.NNTPListen) +
+		statusRow("NNTPS content server", contentNNTPS, a.runtimeCfg.Content.NNTPSListen) +
+		statusRow("DoorParty connector", connectorDoorParty, boolToText(connectorDoorParty)) +
+		statusRow("BBSLink connector", connectorBBSLink, boolToText(connectorBBSLink)) +
+		statusRow("Telnet bridge connector", connectorTelnetBridge, boolToText(connectorTelnetBridge)) +
+		statusRow("Discover feed", a.discover, "flag: discover") +
+		statusRow("Guest tour", a.guestTour, "flag: guest tour") +
+		statusRow("Web on-ramp", a.modernOnRamp, "flag: connect/tour pages") +
+		statusRow("Quick jump", a.quickJump, "opt-in feature flag") +
+		statusRow("Classic search", a.classicSearch, "opt-in feature flag") +
+		statusRow("Read-only mode", a.readOnly, "write operations blocked when true") +
+		`</table></body></html>`
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(page))
+}
+
+func (a *webApp) handleConfigCenter(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	role := rbac.NormalizeRole(user.Role)
+	adminLinks := ""
+	if a.hasRole(user, roleAdmin) {
+		adminLinks = `<p><a href="/admin/config">Edit Sysop Runtime Config</a> | <a href="/admin/setup">Setup</a></p>`
+	}
+	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Config Center</title></head><body><h1>Config Center</h1>` +
+		`<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/status">status</a> | <a href="/settings">settings</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>` +
+		`<p>Role: ` + htmlEscape(role) + `</p>` +
+		`<h2>User Configuration</h2><ul>` +
+		`<li>Display + ANSI + pager + 24h clock: <a href="/settings">/settings</a></li>` +
+		`<li>Password + 2FA: <a href="/settings">/settings</a></li>` +
+		`</ul>` +
+		`<h2>Runtime Feature Flags</h2><ul>` +
+		`<li>Discover: ` + boolToText(a.discover) + `</li>` +
+		`<li>Quick jump: ` + boolToText(a.quickJump) + `</li>` +
+		`<li>Classic search: ` + boolToText(a.classicSearch) + `</li>` +
+		`<li>Guest tour: ` + boolToText(a.guestTour) + `</li>` +
+		`<li>Web on-ramp: ` + boolToText(a.modernOnRamp) + `</li>` +
+		`<li>Read-only mode: ` + boolToText(a.readOnly) + `</li>` +
+		`</ul>` +
+		`<h2>Transport and Service Config</h2><ul>` +
+		`<li>Telnet login: ` + boolToText(a.runtimeCfg.Login.Telnet.Enabled) + ` (` + htmlEscape(a.runtimeCfg.Login.Telnet.Listen) + `)</li>` +
+		`<li>WebSocket login: ` + boolToText(a.runtimeCfg.Login.WebSocket.Enabled) + ` (` + htmlEscape(a.runtimeCfg.Login.WebSocket.Listen+a.runtimeCfg.Login.WebSocket.Path) + `)</li>` +
+		`<li>WebSocket TLS login: ` + boolToText(a.runtimeCfg.Login.WebSocketTLS.Enabled) + ` (` + htmlEscape(a.runtimeCfg.Login.WebSocketTLS.Listen+a.runtimeCfg.Login.WebSocketTLS.Path) + `)</li>` +
+		`<li>Gopher/NNTP/NNTPS: ` + htmlEscape(a.runtimeCfg.Content.GopherListen) + ` / ` + htmlEscape(a.runtimeCfg.Content.NNTPListen) + ` / ` + htmlEscape(a.runtimeCfg.Content.NNTPSListen) + `</li>` +
+		`<li>DoorParty/BBSLink/Telnet bridge: ` + boolToText(a.runtimeCfg.Connectors.DoorParty.Enabled) + ` / ` + boolToText(a.runtimeCfg.Connectors.BBSLink.Enabled) + ` / ` + boolToText(a.runtimeCfg.Connectors.Telnet.Enabled) + `</li>` +
+		`</ul>` +
+		adminLinks +
 		`</body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -661,16 +1730,237 @@ func (a *webApp) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
-	page := `<html><body><h1>Admin</h1><p>Logged in as ` + user.Handle + `</p>` +
+	errorCount := len(a.latestErrors(1000))
+	page := `<html><body><h1>Sysop Control Panel</h1><p>Logged in as ` + user.Handle + `</p>` +
 		`<p><a href="/admin/users">Users</a> | <a href="/admin/boards">Boards</a> | <a href="/admin/mail">Mail</a> | ` +
 		`<a href="/admin/files">Files</a> | <a href="/admin/gateways">Gateways</a> | <a href="/admin/chat">Chat</a> | ` +
-		`<a href="/admin/system">System</a> | <a href="/admin/audit">Audit Log</a></p>` +
+		`<a href="/admin/doors">Doors</a> | <a href="/admin/setup">Setup</a> | <a href="/admin/config">Config</a> | ` +
+		`<a href="/admin/system">System</a> | <a href="/admin/errors">Errors</a> | <a href="/admin/audit">Audit Log</a> | <a href="/help">Help</a></p>` +
 		`<ul><li>Users: list/search, disable, ban, reset passwords</li>` +
 		`<li>Boards: create, edit, delete, permissions</li>` +
 		`<li>Mail: audit, limit controls</li>` +
 		`<li>Chat: channel state, kicks, mutes</li>` +
-		`<li>Gateway controls and server health</li></ul>` +
-		`<p>Read-only mode: ` + boolToText(a.readOnly) + `</p></body></html>`
+		`<li>Doors: per-door enable/disable, turn rules, logs, and score reset</li>` +
+		`<li>Gateway controls, setup checks, runtime config, and server health</li></ul>` +
+		`<p><a href="/scores">Door Scores & Trophies</a></p>` +
+		`<p>Read-only mode: ` + boolToText(a.readOnly) + ` | Runtime errors logged: ` + strconv.Itoa(errorCount) + `</p></body></html>`
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(page))
+}
+
+func (a *webApp) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if r.Method == http.MethodPost {
+		if !a.requireAdminWrite(w, r) {
+			return
+		}
+		action := strings.ToLower(strings.TrimSpace(r.FormValue("action")))
+		switch action {
+		case "seed_default_boards":
+			seedDefaultBoards(a.boardRepo)
+			a.recordAdminAction(user.Handle, "setup", "seed_default_boards", "ran default board seeding")
+		case "ensure_mailbot":
+			seedServiceUsers(a.authSvc)
+			a.recordAdminAction(user.Handle, "setup", "ensure_mailbot", "mailbot service account checked")
+		}
+		http.Redirect(w, r, "/admin/setup", http.StatusFound)
+		return
+	}
+
+	users, usersErr := a.authSvc.ListUsers()
+	if usersErr != nil {
+		a.addAppError("admin.setup", fmt.Errorf("list users: %w", usersErr))
+	}
+	boards, boardsErr := a.boardRepo.List()
+	if boardsErr != nil {
+		a.addAppError("admin.setup", fmt.Errorf("list boards: %w", boardsErr))
+	}
+	gatewayConfigured := false
+	if a.adminRepo != nil {
+		if cfg, err := a.adminRepo.GetGatewaySettings(); err == nil && cfg != nil {
+			gatewayConfigured = strings.TrimSpace(cfg.SMTPHost) != "" || strings.TrimSpace(cfg.FromDomain) != ""
+		}
+	}
+
+	sysopCount := 0
+	moderatorCount := 0
+	serviceMailbot := false
+	for _, row := range users {
+		role := rbac.NormalizeRole(row.Role)
+		if role == roleAdmin {
+			sysopCount++
+		}
+		if role == roleModerator {
+			moderatorCount++
+		}
+		if strings.EqualFold(strings.TrimSpace(row.Handle), "mailbot") {
+			serviceMailbot = true
+		}
+	}
+
+	healthRows := strings.Builder{}
+	healthRows.WriteString(statusRow("DB users list", usersErr == nil, "auth repository reachable"))
+	healthRows.WriteString(statusRow("DB boards list", boardsErr == nil, "board repository reachable"))
+	healthRows.WriteString(statusRow("Sysop account", sysopCount > 0, strconv.Itoa(sysopCount)+" sysop account(s)"))
+	healthRows.WriteString(statusRow("Moderator account", moderatorCount > 0, strconv.Itoa(moderatorCount)+" moderator account(s)"))
+	healthRows.WriteString(statusRow("Mailbot service user", serviceMailbot, boolToText(serviceMailbot)))
+	healthRows.WriteString(statusRow("Boards seeded", len(boards) > 0, strconv.Itoa(len(boards))+" board(s)"))
+	healthRows.WriteString(statusRow("Gateway settings", gatewayConfigured, boolToText(gatewayConfigured)))
+	healthRows.WriteString(statusRow("Inbound token configured", strings.TrimSpace(a.inboundToken) != "", boolToText(strings.TrimSpace(a.inboundToken) != "")))
+
+	csrf := a.csrfHiddenInput(r)
+	page := `<html><body><h1>Setup & Install</h1><p><a href="/admin">back</a> | <a href="/admin/system">system</a> | <a href="/help">help</a></p>` +
+		`<p>Use this screen to verify base services and bootstrap sysop dependencies after install/upgrade.</p>` +
+		`<table border="1"><tr><th>Check</th><th>Status</th><th>Details</th></tr>` + healthRows.String() + `</table>` +
+		`<h2>Bootstrap Actions</h2>` +
+		`<form method="POST"><input type="hidden" name="action" value="seed_default_boards">` + csrf + `<button type="submit">Seed Default Boards</button></form>` +
+		`<form method="POST"><input type="hidden" name="action" value="ensure_mailbot">` + csrf + `<button type="submit">Ensure Mailbot Account</button></form>` +
+		`<h2>Install and Ops Shortcuts</h2>` +
+		`<ul>` +
+		`<li>Installer docs: <code>docs/INSTALL.md</code></li>` +
+		`<li>Health: <a href="/healthz">/healthz</a> and <a href="/readyz">/readyz</a></li>` +
+		`<li>Metrics: <a href="/metrics">/metrics</a></li>` +
+		`<li>Sysop CLI: <code>go run ./cmd/oputil status</code></li>` +
+		`</ul></body></html>`
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(page))
+}
+
+func statusRow(name string, ok bool, detail string) string {
+	status := "FAIL"
+	if ok {
+		status = "PASS"
+	}
+	return `<tr><td>` + htmlEscape(name) + `</td><td>` + status + `</td><td>` + htmlEscape(detail) + `</td></tr>`
+}
+
+func (a *webApp) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	menuFile := strings.TrimSpace(r.URL.Query().Get("menu_file"))
+	menuNotice := strings.TrimSpace(r.URL.Query().Get("menu_notice"))
+	menuErr := ""
+	menuBody := ""
+
+	if r.Method == http.MethodPost {
+		if !a.requireAdminWrite(w, r) {
+			return
+		}
+		action := strings.ToLower(strings.TrimSpace(r.FormValue("action")))
+		switch action {
+		case "save_text":
+			a.motd = strings.TrimSpace(r.FormValue("motd"))
+			a.announcement = strings.TrimSpace(r.FormValue("announcement"))
+			a.persistSystemSetting(sysSettingMOTD, a.motd)
+			a.persistSystemSetting(sysSettingAnnouncement, a.announcement)
+			a.recordAdminAction(user.Handle, "config", "save_site_text", "updated motd/announcement")
+			http.Redirect(w, r, "/admin/config", http.StatusFound)
+			return
+		case "save_flags":
+			a.readOnly = formHasValue(r, "read_only")
+			a.modernOnRamp = formHasValue(r, "web_onramp")
+			a.guestTour = formHasValue(r, "guest_tour")
+			a.discover = formHasValue(r, "discover")
+			a.quickJump = formHasValue(r, "quick_jump")
+			a.classicSearch = formHasValue(r, "classic_search")
+			a.persistSystemSetting(sysSettingReadOnly, strconv.FormatBool(a.readOnly))
+			a.persistSystemSetting(sysSettingWebOnRamp, strconv.FormatBool(a.modernOnRamp))
+			a.persistSystemSetting(sysSettingGuestTour, strconv.FormatBool(a.guestTour))
+			a.persistSystemSetting(sysSettingDiscover, strconv.FormatBool(a.discover))
+			a.persistSystemSetting(sysSettingQuickJump, strconv.FormatBool(a.quickJump))
+			a.persistSystemSetting(sysSettingClassicSearch, strconv.FormatBool(a.classicSearch))
+			a.recordAdminAction(user.Handle, "config", "save_runtime_flags", fmt.Sprintf("read_only=%t web_onramp=%t guest_tour=%t discover=%t quick_jump=%t classic_search=%t", a.readOnly, a.modernOnRamp, a.guestTour, a.discover, a.quickJump, a.classicSearch))
+			http.Redirect(w, r, "/admin/config", http.StatusFound)
+			return
+		case "save_menu_settings":
+			enabled := formHasValue(r, "menu_enabled")
+			normalizedFile, err := a.normalizeMenuFilePath(r.FormValue("menu_file"))
+			if err != nil {
+				menuErr = err.Error()
+				menuFile = strings.TrimSpace(r.FormValue("menu_file"))
+				menuBody = r.FormValue("menu_body")
+				break
+			}
+			a.runtimeCfg.Menu.Enabled = enabled
+			a.runtimeCfg.Menu.File = normalizedFile
+			a.persistSystemSetting(sysSettingMenuEnabled, strconv.FormatBool(enabled))
+			a.persistSystemSetting(sysSettingMenuFile, normalizedFile)
+			a.recordAdminAction(user.Handle, "config", "save_menu_runtime", fmt.Sprintf("enabled=%t file=%s", enabled, normalizedFile))
+			http.Redirect(w, r, "/admin/config?menu_file="+url.QueryEscape(normalizedFile)+"&menu_notice="+url.QueryEscape("Menu runtime settings saved."), http.StatusFound)
+			return
+		case "validate_menu", "save_menu":
+			menuBody = r.FormValue("menu_body")
+			normalizedFile, err := a.normalizeMenuFilePath(r.FormValue("menu_file"))
+			if err != nil {
+				menuErr = err.Error()
+				menuFile = strings.TrimSpace(r.FormValue("menu_file"))
+				break
+			}
+			menuFile = normalizedFile
+			screen, err := menu.ParseHJSON([]byte(menuBody))
+			if err != nil {
+				menuErr = err.Error()
+				break
+			}
+			menuNotice = fmt.Sprintf("Menu parse OK: id=%s title=%s entries=%d", screen.ID, screen.Title, len(screen.Entries))
+			if action == "save_menu" {
+				if err := a.saveMenuFile(menuFile, menuBody); err != nil {
+					menuErr = err.Error()
+					break
+				}
+				a.runtimeCfg.Menu.File = menuFile
+				a.persistSystemSetting(sysSettingMenuFile, menuFile)
+				a.recordAdminAction(user.Handle, "config", "save_menu_file", fmt.Sprintf("file=%s entries=%d", menuFile, len(screen.Entries)))
+				http.Redirect(w, r, "/admin/config?menu_file="+url.QueryEscape(menuFile)+"&menu_notice="+url.QueryEscape("Menu file saved. Reconnect SSH sessions to apply changes."), http.StatusFound)
+				return
+			}
+		default:
+			http.Redirect(w, r, "/admin/config", http.StatusFound)
+			return
+		}
+	}
+
+	if strings.TrimSpace(menuFile) == "" {
+		menuFile = strings.TrimSpace(a.runtimeCfg.Menu.File)
+	}
+	if strings.TrimSpace(menuFile) == "" {
+		menuFile = a.defaultMenuFile()
+	}
+	if normalized, err := a.normalizeMenuFilePath(menuFile); err == nil {
+		menuFile = normalized
+	}
+	if strings.TrimSpace(menuBody) == "" {
+		if loaded, err := a.loadMenuFile(menuFile); err == nil {
+			menuBody = loaded
+		} else if strings.TrimSpace(menuErr) == "" {
+			menuErr = "menu load failed: " + err.Error()
+		}
+	}
+	statusCode := http.StatusOK
+	if r.Method == http.MethodPost && strings.TrimSpace(menuErr) != "" {
+		statusCode = http.StatusBadRequest
+	}
+	a.renderAdminConfigPage(w, r, statusCode, menuFile, menuBody, menuNotice, menuErr)
+}
+
+func (a *webApp) handleAdminErrors(w http.ResponseWriter, r *http.Request) {
+	rows := strings.Builder{}
+	for _, entry := range a.latestErrors(250) {
+		rows.WriteString(`<tr><td>` + entry.Time.Local().Format("2006-01-02 15:04:05") + `</td><td>` + htmlEscape(entry.Area) + `</td><td>` + htmlEscape(entry.Message) + `</td></tr>`)
+	}
+	if rows.Len() == 0 {
+		rows.WriteString(`<tr><td colspan="3">No runtime errors logged in current process.</td></tr>`)
+	}
+	page := `<html><body><h1>Runtime Error Log</h1><p><a href="/admin">back</a> | <a href="/admin/system">system</a> | <a href="/help">help</a></p>` +
+		`<p>Shows recent application/runtime errors captured by the web companion process.</p>` +
+		`<table border="1"><tr><th>Time</th><th>Area</th><th>Message</th></tr>` + rows.String() + `</table></body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
 }
@@ -689,37 +1979,75 @@ func (a *webApp) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		target := strings.TrimSpace(r.FormValue("handle"))
 		action := strings.TrimSpace(strings.ToLower(r.FormValue("action")))
 		switch action {
+		case "create":
+			password := strings.TrimSpace(r.FormValue("password"))
+			role := strings.TrimSpace(r.FormValue("role"))
+			if role == "" {
+				role = roleUser
+			}
+			if password == "" {
+				password = randomPassword(14)
+			}
+			created, err := a.authSvc.Register(target, password)
+			if err != nil {
+				a.addAppError("admin.users", fmt.Errorf("create user %s: %w", target, err))
+				http.Error(w, "create user failed", http.StatusBadRequest)
+				return
+			}
+			_ = a.authSvc.SetRole(created.Handle, role)
+			a.recordAdminAction(user.Handle, created.Handle, "create_user", "role="+role)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("created user " + created.Handle + " with password " + password))
+			return
 		case "disable":
-			_ = a.authSvc.SetEnabled(target, false)
+			if err := a.authSvc.SetEnabled(target, false); err != nil {
+				a.addAppError("admin.users", fmt.Errorf("disable %s: %w", target, err))
+			}
 			a.recordAdminAction(user.Handle, target, "disable_user", "disabled account")
 		case "enable":
-			_ = a.authSvc.SetEnabled(target, true)
+			if err := a.authSvc.SetEnabled(target, true); err != nil {
+				a.addAppError("admin.users", fmt.Errorf("enable %s: %w", target, err))
+			}
 			a.recordAdminAction(user.Handle, target, "enable_user", "enabled account")
 		case "ban":
-			_ = a.authSvc.SetBanned(target, true)
+			if err := a.authSvc.SetBanned(target, true); err != nil {
+				a.addAppError("admin.users", fmt.Errorf("ban %s: %w", target, err))
+			}
 			a.recordAdminAction(user.Handle, target, "ban_user", "banned account")
 		case "unban":
-			_ = a.authSvc.SetBanned(target, false)
+			if err := a.authSvc.SetBanned(target, false); err != nil {
+				a.addAppError("admin.users", fmt.Errorf("unban %s: %w", target, err))
+			}
 			a.recordAdminAction(user.Handle, target, "unban_user", "removed ban")
 		case "set_role":
 			role := strings.TrimSpace(r.FormValue("role"))
 			if role == "" {
 				role = "user"
 			}
-			_ = a.authSvc.SetRole(target, role)
+			if err := a.authSvc.SetRole(target, role); err != nil {
+				a.addAppError("admin.users", fmt.Errorf("set role %s -> %s: %w", target, role, err))
+			}
 			a.recordAdminAction(user.Handle, target, "set_role", role)
 		case "reset":
 			pw := randomPassword(10)
-			_ = a.authSvc.SetPassword(target, pw)
+			if err := a.authSvc.SetPassword(target, pw); err != nil {
+				a.addAppError("admin.users", fmt.Errorf("reset password %s: %w", target, err))
+				http.Error(w, "reset password failed", http.StatusBadRequest)
+				return
+			}
 			a.recordAdminAction(user.Handle, target, "reset_password", "")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("reset password for " + target + " to " + pw))
 			return
 		case "verify":
-			_ = a.authSvc.SetVerified(target, true)
+			if err := a.authSvc.SetVerified(target, true); err != nil {
+				a.addAppError("admin.users", fmt.Errorf("verify %s: %w", target, err))
+			}
 			a.recordAdminAction(user.Handle, target, "verify_user", "")
 		case "unverify":
-			_ = a.authSvc.SetVerified(target, false)
+			if err := a.authSvc.SetVerified(target, false); err != nil {
+				a.addAppError("admin.users", fmt.Errorf("unverify %s: %w", target, err))
+			}
 			a.recordAdminAction(user.Handle, target, "unverify_user", "")
 		}
 		http.Redirect(w, r, "/admin/users", http.StatusFound)
@@ -728,6 +2056,7 @@ func (a *webApp) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 
 	users, err := a.authSvc.ListUsers()
 	if err != nil {
+		a.addAppError("admin.users", fmt.Errorf("list users: %w", err))
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte("failed to load users"))
 		return
@@ -751,7 +2080,11 @@ func (a *webApp) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		if u.Verified {
 			verified = "yes"
 		}
-		rows.WriteString(`<tr><td>` + u.Handle + `</td><td>` + status + `</td><td>` + u.Role + `</td><td>` + verified + `</td><td>`)
+		lastLogin := "-"
+		if u.LastLoginAt != nil && !u.LastLoginAt.IsZero() {
+			lastLogin = u.LastLoginAt.Local().Format("2006-01-02 15:04")
+		}
+		rows.WriteString(`<tr><td>` + u.Handle + `</td><td>` + status + `</td><td>` + u.Role + `</td><td>` + verified + `</td><td>` + lastLogin + `</td><td>`)
 		rows.WriteString(fmt.Sprintf(`<form method="POST" action="/admin/users">
 			<input type="hidden" name="handle" value="%s">
 			%s
@@ -787,14 +2120,20 @@ func (a *webApp) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 			<select name="role">
 				<option value="user"%s>User</option>
 				<option value="moderator"%s>Moderator</option>
-				<option value="admin"%s>Admin</option>
-			</select><button type="submit">Set role</button></form>`, u.Handle, csrf, selectedIf(u.Role == "user"), selectedIf(u.Role == "moderator"), selectedIf(u.Role == "admin")))
+				<option value="sysop"%s>Sysop</option>
+			</select><button type="submit">Set role</button></form>`, u.Handle, csrf, selectedIf(rbac.NormalizeRole(u.Role) == rbac.RoleUser), selectedIf(rbac.NormalizeRole(u.Role) == rbac.RoleModerator), selectedIf(rbac.NormalizeRole(u.Role) == rbac.RoleSysop)))
 		rows.WriteString(`</td></tr>`)
 	}
 
-	page := `<html><body><h1>Users</h1><p><a href="/admin">back</a></p>` +
+	page := `<html><body><h1>Sysop Users</h1><p><a href="/admin">back</a> | <a href="/admin/audit">audit</a> | <a href="/help">help</a></p>` +
+		`<h2>Create User</h2><form method="POST">` + csrf +
+		`<input type="hidden" name="action" value="create">` +
+		`<label>Handle <input name="handle"></label> ` +
+		`<label>Password <input name="password"></label> ` +
+		`<label>Role <select name="role"><option value="user">User</option><option value="moderator">Moderator</option><option value="sysop">Sysop</option></select></label> ` +
+		`<button type="submit">Create</button></form>` +
 		`<form method="GET"><label>Search: <input name="q" value="` + filter + `"></label><button type="submit">filter</button></form>` +
-		`<table border="1"><tr><th>Handle</th><th>Status</th><th>Role</th><th>Verified</th><th>Actions</th></tr>` + rows.String() + `</table>` +
+		`<table border="1"><tr><th>Handle</th><th>Status</th><th>Role</th><th>Verified</th><th>Last Login</th><th>Actions</th></tr>` + rows.String() + `</table>` +
 		`</body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -823,7 +2162,17 @@ func (a *webApp) handleAdminBoards(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			desc := strings.TrimSpace(r.FormValue("description"))
-			_ = a.boardRepo.Create(&domain.Board{Name: title, Description: desc, CreatedBy: user.ID})
+			conference := strings.TrimSpace(r.FormValue("conference"))
+			readACS := strings.TrimSpace(r.FormValue("read_acs"))
+			writeACS := strings.TrimSpace(r.FormValue("write_acs"))
+			_ = a.boardRepo.Create(&domain.Board{
+				Name:        title,
+				Description: desc,
+				Conference:  conference,
+				ReadACS:     readACS,
+				WriteACS:    writeACS,
+				CreatedBy:   user.ID,
+			})
 			a.recordAdminAction(user.Handle, title, "create_board", "")
 		case "delete":
 			id := strings.TrimSpace(r.FormValue("id"))
@@ -835,6 +2184,35 @@ func (a *webApp) handleAdminBoards(w http.ResponseWriter, r *http.Request) {
 						target = board.Name
 					}
 					a.recordAdminAction(user.Handle, target, "delete_board", "")
+				} else {
+					a.addAppError("admin.boards", fmt.Errorf("delete board %s: %w", id, err))
+				}
+			}
+		case "update":
+			id := strings.TrimSpace(r.FormValue("id"))
+			title := strings.TrimSpace(r.FormValue("title"))
+			desc := strings.TrimSpace(r.FormValue("description"))
+			conference := strings.TrimSpace(r.FormValue("conference"))
+			readACS := strings.TrimSpace(r.FormValue("read_acs"))
+			writeACS := strings.TrimSpace(r.FormValue("write_acs"))
+			boardID, parseErr := strconv.ParseInt(id, 10, 64)
+			if parseErr == nil && boardID > 0 {
+				board, getErr := a.boardRepo.Get(boardID)
+				if getErr != nil {
+					a.addAppError("admin.boards", fmt.Errorf("load board %s: %w", id, getErr))
+				} else if board != nil {
+					if title != "" {
+						board.Name = title
+					}
+					board.Description = desc
+					board.Conference = conference
+					board.ReadACS = readACS
+					board.WriteACS = writeACS
+					if err := a.boardRepo.Update(board); err != nil {
+						a.addAppError("admin.boards", fmt.Errorf("update board %s: %w", id, err))
+					} else {
+						a.recordAdminAction(user.Handle, board.Name, "update_board", "description/title/acs updated")
+					}
 				}
 			}
 		}
@@ -844,6 +2222,7 @@ func (a *webApp) handleAdminBoards(w http.ResponseWriter, r *http.Request) {
 
 	boards, err := a.boardRepo.List()
 	if err != nil {
+		a.addAppError("admin.boards", fmt.Errorf("list boards: %w", err))
 		http.Error(w, "failed to load boards", http.StatusInternalServerError)
 		return
 	}
@@ -855,13 +2234,26 @@ func (a *webApp) handleAdminBoards(w http.ResponseWriter, r *http.Request) {
 		if len(msgs) > 0 {
 			last = msgs[len(msgs)-1].CreatedAt.Format("2006-01-02 15:04")
 		}
-		rows.WriteString(fmt.Sprintf(`<tr><td>%d</td><td>%s</td><td>%d</td><td>%s</td>`, b.ID, htmlEscape(b.Name), len(msgs), last))
+		rows.WriteString(fmt.Sprintf(`<tr><td>%d</td><td>%s</td><td>%s</td><td>%d</td><td>%s</td>`,
+			b.ID,
+			htmlEscape(b.Name),
+			htmlEscape(defaultConferenceValue(b.Conference)),
+			len(msgs),
+			last))
+		rows.WriteString(`<td><form method="POST" action="/admin/boards">` + csrf +
+			`<input type="hidden" name="action" value="update"><input type="hidden" name="id" value="` + strconv.FormatInt(b.ID, 10) + `">` +
+			`<input name="title" value="` + htmlEscape(b.Name) + `" size="16"> ` +
+			`<input name="conference" value="` + htmlEscape(defaultConferenceValue(b.Conference)) + `" size="12"> ` +
+			`<input name="description" value="` + htmlEscape(b.Description) + `" size="22"> ` +
+			`<input name="read_acs" value="` + htmlEscape(b.ReadACS) + `" size="18" placeholder="read ACS"> ` +
+			`<input name="write_acs" value="` + htmlEscape(b.WriteACS) + `" size="18" placeholder="write ACS"> ` +
+			`<button type="submit">save</button></form></td>`)
 		rows.WriteString(fmt.Sprintf(`<td><form method="POST" action="/admin/boards"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="%d">`+csrf+`<button type="submit">delete</button></form></td>`, b.ID))
 		rows.WriteString(`</tr>`)
 	}
-	page := `<html><body><h1>Boards</h1><p><a href="/admin">back</a></p>` +
-		`<form method="POST"><label>Title <input name="title"></label> <label>Description <input name="description" size="50"></label>` + csrf + `<input type="hidden" name="action" value="create"><button type="submit">add</button></form>` +
-		`<table border="1"><tr><th>ID</th><th>Title</th><th>Topics</th><th>Last</th><th>Actions</th></tr>` + rows.String() + `</table>` +
+	page := `<html><body><h1>Sysop Boards</h1><p><a href="/admin">back</a> | <a href="/help">help</a></p>` +
+		`<form method="POST"><label>Title <input name="title"></label> <label>Conference <input name="conference" value="General" size="14"></label> <label>Description <input name="description" size="28"></label> <label>Read ACS <input name="read_acs" size="16"></label> <label>Write ACS <input name="write_acs" size="16"></label>` + csrf + `<input type="hidden" name="action" value="create"><button type="submit">add</button></form>` +
+		`<table border="1"><tr><th>ID</th><th>Title</th><th>Conf</th><th>Topics</th><th>Last</th><th>Edit</th><th>Actions</th></tr>` + rows.String() + `</table>` +
 		`</body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -914,7 +2306,7 @@ func (a *webApp) handleAdminMail(w http.ResponseWriter, r *http.Request) {
 	if rows.Len() == 0 {
 		rows.WriteString(`<tr><td colspan="3">No per-user outbound limits configured</td></tr>`)
 	}
-	page := `<html><body><h1>Mail Controls</h1><p><a href="/admin">back</a></p>` +
+	page := `<html><body><h1>Mail Controls</h1><p><a href="/admin">back</a> | <a href="/help">help</a></p>` +
 		`<table border="1"><tr><th>Handle</th><th>OutboundDisabled</th><th>Action</th></tr>` + rows.String() + `</table></body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -931,6 +2323,7 @@ func (a *webApp) handleAdminFiles(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		action := strings.ToLower(strings.TrimSpace(r.FormValue("action")))
+		redirectURL := "/admin/files"
 		switch action {
 		case "create":
 			area := &domain.FileArea{
@@ -949,28 +2342,218 @@ func (a *webApp) handleAdminFiles(w http.ResponseWriter, r *http.Request) {
 				_ = a.adminRepo.DeleteFileArea(id)
 				a.recordAdminAction(user.Handle, strconv.FormatInt(id, 10), "delete_file_area", "")
 			}
+		case "index_area":
+			id, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("id")), 10, 64)
+			uploaderID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("uploader_id")), 10, 64)
+			if uploaderID <= 0 {
+				uploaderID = user.ID
+			}
+			if a.adminRepo != nil && id > 0 {
+				areas, _ := a.adminRepo.ListFileAreas()
+				for _, area := range areas {
+					if area.ID != id {
+						continue
+					}
+					indexed, failed, err := a.indexAreaFiles(area, uploaderID)
+					if err != nil {
+						a.addAppError("admin.files", fmt.Errorf("index area %d: %w", id, err))
+					} else {
+						a.recordAdminAction(user.Handle, area.Name, "index_file_area", fmt.Sprintf("indexed=%d failed=%d", indexed, failed))
+					}
+					break
+				}
+			}
+		case "rate":
+			targetUserID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("user_id")), 10, 64)
+			fileID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("file_id")), 10, 64)
+			rating := parseInt(r.FormValue("rating"), 0)
+			if targetUserID <= 0 {
+				targetUserID = user.ID
+			}
+			if a.adminRepo != nil && targetUserID > 0 && fileID > 0 && rating > 0 {
+				if err := a.adminRepo.SetFileRating(targetUserID, fileID, rating); err != nil {
+					a.addAppError("admin.files", fmt.Errorf("set file rating: %w", err))
+				} else {
+					a.recordAdminAction(user.Handle, strconv.FormatInt(fileID, 10), "rate_file", fmt.Sprintf("user=%d rating=%d", targetUserID, rating))
+				}
+			}
+		case "save_filter":
+			targetUserID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("filter_user_id")), 10, 64)
+			if targetUserID <= 0 {
+				targetUserID = user.ID
+			}
+			filter := &domain.FileFilter{
+				UserID: targetUserID,
+				Name:   strings.TrimSpace(r.FormValue("name")),
+				Query:  strings.TrimSpace(r.FormValue("query")),
+			}
+			rawTags := strings.TrimSpace(r.FormValue("tags"))
+			for _, tag := range strings.Split(rawTags, ",") {
+				tag = strings.TrimSpace(tag)
+				if tag != "" {
+					filter.Tags = append(filter.Tags, tag)
+				}
+			}
+			if a.adminRepo != nil {
+				if err := a.adminRepo.SaveFileFilter(filter); err != nil {
+					a.addAppError("admin.files", fmt.Errorf("save file filter: %w", err))
+				} else {
+					a.recordAdminAction(user.Handle, filter.Name, "save_file_filter", fmt.Sprintf("user=%d", targetUserID))
+					redirectURL = "/admin/files?filter_user=" + strconv.FormatInt(targetUserID, 10)
+				}
+			}
+		case "queue_add":
+			targetUserID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("queue_user_id")), 10, 64)
+			fileID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("file_id")), 10, 64)
+			if targetUserID <= 0 {
+				targetUserID = user.ID
+			}
+			if a.adminRepo != nil && targetUserID > 0 && fileID > 0 {
+				if err := a.adminRepo.EnqueueDownload(targetUserID, fileID); err != nil {
+					a.addAppError("admin.files", fmt.Errorf("enqueue download: %w", err))
+				} else {
+					a.recordAdminAction(user.Handle, strconv.FormatInt(fileID, 10), "enqueue_download", fmt.Sprintf("user=%d", targetUserID))
+					redirectURL = "/admin/files?queue_user=" + strconv.FormatInt(targetUserID, 10)
+				}
+			}
+		case "queue_del":
+			targetUserID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("queue_user_id")), 10, 64)
+			fileID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("file_id")), 10, 64)
+			if a.adminRepo != nil && targetUserID > 0 && fileID > 0 {
+				if err := a.adminRepo.DequeueDownload(targetUserID, fileID); err != nil {
+					a.addAppError("admin.files", fmt.Errorf("dequeue download: %w", err))
+				} else {
+					a.recordAdminAction(user.Handle, strconv.FormatInt(fileID, 10), "dequeue_download", fmt.Sprintf("user=%d", targetUserID))
+					redirectURL = "/admin/files?queue_user=" + strconv.FormatInt(targetUserID, 10)
+				}
+			}
+		case "ticket":
+			targetUserID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("queue_user_id")), 10, 64)
+			fileID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("file_id")), 10, 64)
+			ttlMinutes := parseInt(r.FormValue("ttl_minutes"), 15)
+			if ttlMinutes <= 0 {
+				ttlMinutes = 15
+			}
+			if targetUserID <= 0 {
+				targetUserID = user.ID
+			}
+			if targetUserID > 0 && fileID > 0 {
+				ticket, err := a.createDownloadTicket(targetUserID, fileID, time.Duration(ttlMinutes)*time.Minute)
+				if err != nil {
+					a.addAppError("admin.files", fmt.Errorf("create download ticket: %w", err))
+				} else {
+					a.recordAdminAction(user.Handle, strconv.FormatInt(fileID, 10), "issue_download_ticket", fmt.Sprintf("user=%d ttl=%dm", targetUserID, ttlMinutes))
+					redirectURL = "/admin/files?queue_user=" + strconv.FormatInt(targetUserID, 10) + "&issued_token=" + url.QueryEscape(ticket.Token)
+				}
+			}
 		}
-		http.Redirect(w, r, "/admin/files", http.StatusFound)
+		http.Redirect(w, r, redirectURL, http.StatusFound)
 		return
 	}
 
 	areas := []domain.FileArea{}
+	files := []domain.FileEntry{}
+	filters := []domain.FileFilter{}
+	queue := []domain.DownloadQueueItem{}
+	queueFiles := map[int64]string{}
+	areaNames := map[int64]string{}
+	fileAreaID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("area")), 10, 64)
+	queueUserID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("queue_user")), 10, 64)
+	filterUserID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("filter_user")), 10, 64)
+	searchQuery := strings.TrimSpace(r.URL.Query().Get("q"))
+	searchTagsRaw := strings.TrimSpace(r.URL.Query().Get("tags"))
+	searchTags := make([]string, 0)
+	for _, tag := range strings.Split(searchTagsRaw, ",") {
+		tag = strings.TrimSpace(tag)
+		if tag != "" {
+			searchTags = append(searchTags, tag)
+		}
+	}
+	issuedToken := strings.TrimSpace(r.URL.Query().Get("issued_token"))
 	if a.adminRepo != nil {
 		areas, _ = a.adminRepo.ListFileAreas()
+		for _, area := range areas {
+			areaNames[area.ID] = area.Name
+		}
+		files, _ = a.adminRepo.ListFileEntries(fileAreaID, searchQuery, searchTags, 300)
+		if filterUserID > 0 {
+			filters, _ = a.adminRepo.ListFileFilters(filterUserID)
+		} else {
+			filters, _ = a.adminRepo.ListFileFilters(0)
+		}
+		if queueUserID > 0 {
+			queue, _ = a.adminRepo.ListDownloadQueue(queueUserID, 200)
+			for _, item := range queue {
+				if entry, err := a.adminRepo.GetFileEntry(item.FileID); err == nil && entry != nil {
+					queueFiles[item.FileID] = entry.Name
+				}
+			}
+		}
 	}
 	csrf := a.csrfHiddenInput(r)
-	rows := strings.Builder{}
+	areaRows := strings.Builder{}
 	for _, area := range areas {
-		rows.WriteString(fmt.Sprintf(`<tr><td>%d</td><td>%s</td><td>%s</td><td>%s</td>`, area.ID, htmlEscape(area.Name), htmlEscape(area.Path), htmlEscape(area.Description)))
-		rows.WriteString(`<td><form method="POST" action="/admin/files">` + csrf + `<input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="` + strconv.FormatInt(area.ID, 10) + `"><button type="submit">delete</button></form></td></tr>`)
+		areaRows.WriteString(fmt.Sprintf(`<tr><td>%d</td><td>%s</td><td>%s</td><td>%s</td>`, area.ID, htmlEscape(area.Name), htmlEscape(area.Path), htmlEscape(area.Description)))
+		areaRows.WriteString(`<td><form method="POST" action="/admin/files">` + csrf + `<input type="hidden" name="action" value="index_area"><input type="hidden" name="id" value="` + strconv.FormatInt(area.ID, 10) + `"><input type="hidden" name="uploader_id" value="` + strconv.FormatInt(user.ID, 10) + `"><button type="submit">index</button></form></td>`)
+		areaRows.WriteString(`<td><form method="POST" action="/admin/files">` + csrf + `<input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="` + strconv.FormatInt(area.ID, 10) + `"><button type="submit">delete</button></form></td></tr>`)
 	}
-	if rows.Len() == 0 {
-		rows.WriteString(`<tr><td colspan="5">No file areas configured</td></tr>`)
+	if areaRows.Len() == 0 {
+		areaRows.WriteString(`<tr><td colspan="6">No file areas configured</td></tr>`)
 	}
-	page := `<html><body><h1>Files</h1><p><a href="/admin">back</a></p>` +
+
+	fileRows := strings.Builder{}
+	for _, row := range files {
+		tags := htmlEscape(strings.Join(row.Tags, ","))
+		areaName := htmlEscape(areaNames[row.AreaID])
+		fileRows.WriteString(`<tr><td>` + strconv.FormatInt(row.ID, 10) + `</td><td>` + areaName + `</td><td>` + htmlEscape(row.Name) + `</td><td>` + tags + `</td><td>` + fmt.Sprintf("%.2f", row.RatingAvg) + ` (` + strconv.Itoa(row.RatingCount) + `)</td><td>` + htmlEscape(row.SHA256) + `</td>`)
+		fileRows.WriteString(`<td><form method="POST" action="/admin/files">` + csrf +
+			`<input type="hidden" name="action" value="rate"><input type="hidden" name="file_id" value="` + strconv.FormatInt(row.ID, 10) + `"><input type="hidden" name="user_id" value="` + strconv.FormatInt(user.ID, 10) + `">` +
+			`<input name="rating" size="2" value="5"><button type="submit">rate</button></form>`)
+		fileRows.WriteString(`<form method="POST" action="/admin/files">` + csrf +
+			`<input type="hidden" name="action" value="queue_add"><input type="hidden" name="file_id" value="` + strconv.FormatInt(row.ID, 10) + `"><input name="queue_user_id" size="6" value="` + strconv.FormatInt(user.ID, 10) + `"><button type="submit">queue</button></form></td></tr>`)
+	}
+	if fileRows.Len() == 0 {
+		fileRows.WriteString(`<tr><td colspan="7">No indexed files matched</td></tr>`)
+	}
+
+	filterRows := strings.Builder{}
+	for _, row := range filters {
+		filterRows.WriteString(`<tr><td>` + strconv.FormatInt(row.ID, 10) + `</td><td>` + strconv.FormatInt(row.UserID, 10) + `</td><td>` + htmlEscape(row.Name) + `</td><td>` + htmlEscape(row.Query) + `</td><td>` + htmlEscape(strings.Join(row.Tags, ",")) + `</td></tr>`)
+	}
+	if filterRows.Len() == 0 {
+		filterRows.WriteString(`<tr><td colspan="5">No saved filters</td></tr>`)
+	}
+
+	queueRows := strings.Builder{}
+	for _, item := range queue {
+		displayName := queueFiles[item.FileID]
+		if displayName == "" {
+			displayName = "file #" + strconv.FormatInt(item.FileID, 10)
+		}
+		queueRows.WriteString(`<tr><td>` + strconv.FormatInt(item.ID, 10) + `</td><td>` + strconv.FormatInt(item.UserID, 10) + `</td><td>` + htmlEscape(displayName) + `</td><td>` + item.CreatedAt.Local().Format(time.RFC3339) + `</td><td>`)
+		queueRows.WriteString(`<form method="POST" action="/admin/files">` + csrf + `<input type="hidden" name="action" value="queue_del"><input type="hidden" name="queue_user_id" value="` + strconv.FormatInt(item.UserID, 10) + `"><input type="hidden" name="file_id" value="` + strconv.FormatInt(item.FileID, 10) + `"><button type="submit">remove</button></form>`)
+		queueRows.WriteString(`<form method="POST" action="/admin/files">` + csrf + `<input type="hidden" name="action" value="ticket"><input type="hidden" name="queue_user_id" value="` + strconv.FormatInt(item.UserID, 10) + `"><input type="hidden" name="file_id" value="` + strconv.FormatInt(item.FileID, 10) + `"><input name="ttl_minutes" size="4" value="15"><button type="submit">ticket</button></form>`)
+		queueRows.WriteString(`</td></tr>`)
+	}
+	if queueRows.Len() == 0 {
+		queueRows.WriteString(`<tr><td colspan="5">No queue rows for selected user</td></tr>`)
+	}
+
+	var ticketNotice string
+	if issuedToken != "" {
+		ticketNotice = `<p><strong>Issued ticket:</strong> <code>` + htmlEscape(issuedToken) + `</code><br><a href="/gateway?download=` + url.QueryEscape(issuedToken) + `">/gateway?download=` + url.QueryEscape(issuedToken) + `</a></p>`
+	}
+
+	page := `<html><body><h1>Files</h1><p><a href="/admin">back</a> | <a href="/gateway">gateway</a> | <a href="/help">help</a></p>` + ticketNotice +
 		`<form method="POST"><input type="hidden" name="action" value="create">` + csrf +
 		`<label>Name <input name="name"></label> <label>Path <input name="path" size="30"></label> <label>Description <input name="description" size="40"></label> <button type="submit">add</button></form>` +
-		`<table border="1"><tr><th>ID</th><th>Name</th><th>Path</th><th>Description</th><th>Action</th></tr>` + rows.String() + `</table></body></html>`
+		`<table border="1"><tr><th>ID</th><th>Name</th><th>Path</th><th>Description</th><th>Index</th><th>Delete</th></tr>` + areaRows.String() + `</table>` +
+		`<h2>Indexed Files</h2><form method="GET"><label>Area ID <input name="area" value="` + strconv.FormatInt(fileAreaID, 10) + `" size="6"></label> <label>Query <input name="q" value="` + htmlEscape(searchQuery) + `" size="24"></label> <label>Tags <input name="tags" value="` + htmlEscape(searchTagsRaw) + `" size="24"></label> <button type="submit">search</button></form>` +
+		`<table border="1"><tr><th>ID</th><th>Area</th><th>Name</th><th>Tags</th><th>Rating</th><th>SHA-256</th><th>Actions</th></tr>` + fileRows.String() + `</table>` +
+		`<h2>Saved Filters</h2><form method="POST">` + csrf + `<input type="hidden" name="action" value="save_filter"><label>User ID <input name="filter_user_id" value="` + strconv.FormatInt(maxInt64(filterUserID, user.ID), 10) + `" size="8"></label> <label>Name <input name="name" size="16"></label> <label>Query <input name="query" size="24"></label> <label>Tags <input name="tags" size="24" placeholder="tag1,tag2"></label> <button type="submit">save</button></form>` +
+		`<table border="1"><tr><th>ID</th><th>User</th><th>Name</th><th>Query</th><th>Tags</th></tr>` + filterRows.String() + `</table>` +
+		`<h2>Download Queue</h2><form method="GET"><label>User ID <input name="queue_user" value="` + strconv.FormatInt(maxInt64(queueUserID, user.ID), 10) + `" size="8"></label><button type="submit">view queue</button></form>` +
+		`<table border="1"><tr><th>ID</th><th>User</th><th>File</th><th>Queued At</th><th>Actions</th></tr>` + queueRows.String() + `</table></body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
 }
@@ -999,17 +2582,19 @@ func (a *webApp) handleAdminGateways(w http.ResponseWriter, r *http.Request) {
 		if a.adminRepo != nil {
 			if err := a.adminRepo.UpsertGatewaySettings(cfg); err == nil {
 				a.recordAdminAction(user.Handle, "gateway_settings", "update_gateway_settings", "saved")
+			} else {
+				a.addAppError("admin.gateways", fmt.Errorf("save gateway settings: %w", err))
 			}
 		}
 		http.Redirect(w, r, "/admin/gateways", http.StatusFound)
 		return
 	}
 	cfg := &domain.GatewaySettings{
-		SMTPHost:        strings.TrimSpace(os.Getenv("SMTP_HOST")),
-		SMTPPort:        parseInt(os.Getenv("SMTP_PORT"), 587),
-		SMTPUser:        strings.TrimSpace(os.Getenv("SMTP_USER")),
-		SMTPPass:        strings.TrimSpace(os.Getenv("SMTP_PASS")),
-		FromDomain:      strings.TrimSpace(os.Getenv("FROM_DOMAIN")),
+		SMTPHost:        strings.TrimSpace(envFirst("SMTP_HOST", "WOLFBBS_SMTP_HOST")),
+		SMTPPort:        parseInt(envFirst("SMTP_PORT", "WOLFBBS_SMTP_PORT"), 587),
+		SMTPUser:        strings.TrimSpace(envFirst("SMTP_USER", "WOLFBBS_SMTP_USER")),
+		SMTPPass:        strings.TrimSpace(envFirst("SMTP_PASS", "WOLFBBS_SMTP_PASS")),
+		FromDomain:      strings.TrimSpace(envFirst("FROM_DOMAIN", "WOLFBBS_FROM_DOMAIN")),
 		MaxRecipients:   parseInt(os.Getenv("WOLFBBS_MAIL_MAX_RECIPIENTS"), 3),
 		MaxMessageBytes: parseInt(os.Getenv("WOLFBBS_MAIL_MAX_BYTES"), 65536),
 		WebTimeoutSec:   10,
@@ -1021,7 +2606,7 @@ func (a *webApp) handleAdminGateways(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	csrf := a.csrfHiddenInput(r)
-	page := `<html><body><h1>Gateway Controls</h1><p><a href="/admin">back</a></p>` +
+	page := `<html><body><h1>Gateway Controls</h1><p><a href="/admin">back</a> | <a href="/help">help</a></p>` +
 		`<form method="POST">` + csrf +
 		`<label>SMTP Host <input name="smtp_host" value="` + htmlEscape(cfg.SMTPHost) + `"></label><br>` +
 		`<label>SMTP Port <input name="smtp_port" value="` + strconv.Itoa(cfg.SMTPPort) + `"></label><br>` +
@@ -1039,25 +2624,422 @@ func (a *webApp) handleAdminGateways(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *webApp) handleAdminChat(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if a.chatSvc == nil {
+		a.addAppError("admin.chat", fmt.Errorf("chat service unavailable"))
+		http.Error(w, "chat service unavailable", http.StatusInternalServerError)
+		return
+	}
+	if r.Method == http.MethodPost {
+		if !a.requireAdminWrite(w, r) {
+			return
+		}
+		action := strings.ToLower(strings.TrimSpace(r.FormValue("action")))
+		channel := chat.NormalizeChannel(strings.TrimSpace(r.FormValue("channel")))
+		if channel == "" {
+			channel = "#lobby"
+		}
+		switch action {
+		case "create_channel":
+			a.chatSvc.JoinChannel(user.Handle, channel)
+			a.chatSvc.LeaveChannel(user.Handle, channel)
+			a.recordAdminAction(user.Handle, channel, "chat_create_channel", "")
+		case "lock_channel":
+			a.setChannelLock(channel, true)
+			a.recordAdminAction(user.Handle, channel, "chat_lock_channel", "")
+		case "unlock_channel":
+			a.setChannelLock(channel, false)
+			a.recordAdminAction(user.Handle, channel, "chat_unlock_channel", "")
+		}
+		http.Redirect(w, r, "/admin/chat", http.StatusFound)
+		return
+	}
+
+	channels := a.chatSvc.ListChannels()
+	if len(channels) == 0 {
+		channels = []string{"#lobby"}
+	}
+	online := a.chatSvc.Online()
+	onlineByChannel := map[string]int{}
+	for _, row := range online {
+		ch := chat.NormalizeChannel(row.Area)
+		if ch == "" {
+			ch = "#lobby"
+		}
+		onlineByChannel[ch]++
+	}
+	csrf := a.csrfHiddenInput(r)
 	channelRows := strings.Builder{}
-	for _, c := range a.chatSvc.ListChannels() {
-		channelRows.WriteString(`<tr><td>` + c + `</td></tr>`)
+	for _, c := range channels {
+		locked := a.isChannelLocked(c)
+		channelRows.WriteString(`<tr><td>` + htmlEscape(c) + `</td><td>` + strconv.Itoa(onlineByChannel[c]) + `</td><td>` + boolToText(locked) + `</td><td>`)
+		if locked {
+			channelRows.WriteString(`<form method="POST"><input type="hidden" name="action" value="unlock_channel"><input type="hidden" name="channel" value="` + htmlEscape(c) + `">` + csrf + `<button type="submit">Unlock</button></form>`)
+		} else {
+			channelRows.WriteString(`<form method="POST"><input type="hidden" name="action" value="lock_channel"><input type="hidden" name="channel" value="` + htmlEscape(c) + `">` + csrf + `<button type="submit">Lock</button></form>`)
+		}
+		channelRows.WriteString(`</td></tr>`)
 	}
-	if channelRows.Len() == 0 {
-		channelRows.WriteString(`<tr><td>#lobby</td></tr>`)
+	modRows := strings.Builder{}
+	for _, action := range a.chatSvc.ModerationLog(200) {
+		modRows.WriteString(`<tr><td>` + action.CreatedAt.Local().Format("2006-01-02 15:04:05") + `</td><td>` + htmlEscape(action.Type) + `</td><td>` + htmlEscape(action.Channel) + `</td><td>` + htmlEscape(action.Actor) + `</td><td>` + htmlEscape(action.Target) + `</td><td>` + htmlEscape(action.Reason) + `</td></tr>`)
 	}
-	page := `<html><body><h1>Chat Admin</h1><p><a href="/admin">back</a></p>` +
-		`<table border="1"><tr><th>Channel</th></tr>` + channelRows.String() + `</table></body></html>`
+	if modRows.Len() == 0 {
+		modRows.WriteString(`<tr><td colspan="6">No moderation events</td></tr>`)
+	}
+	page := `<html><body><h1>Chat Admin</h1><p><a href="/admin">back</a> | <a href="/help">help</a></p>` +
+		`<h2>Channel Management</h2><form method="POST"><input type="hidden" name="action" value="create_channel">` + csrf + `<label>Channel <input name="channel" value="#new-channel"></label> <button type="submit">Create</button></form>` +
+		`<table border="1"><tr><th>Channel</th><th>Online</th><th>Locked</th><th>Action</th></tr>` + channelRows.String() + `</table>` +
+		`<p>Locked channels allow moderator/sysop posting only.</p>` +
+		`<h2>Moderation Log</h2><table border="1"><tr><th>Time</th><th>Action</th><th>Channel</th><th>Actor</th><th>Target</th><th>Reason</th></tr>` + modRows.String() + `</table></body></html>`
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(page))
+}
+
+func (a *webApp) handleAdminDoors(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if a.doorRegistry == nil {
+		http.Error(w, "door registry unavailable", http.StatusInternalServerError)
+		return
+	}
+	if r.Method == http.MethodPost {
+		if !a.requireAdminWrite(w, r) {
+			return
+		}
+		action := strings.ToLower(strings.TrimSpace(r.FormValue("action")))
+		doorID := strings.ToLower(strings.TrimSpace(r.FormValue("door_id")))
+		if doorID == "" {
+			http.Redirect(w, r, "/admin/doors", http.StatusFound)
+			return
+		}
+		switch action {
+		case "reset_scores":
+			if err := a.doorRegistry.ResetDoorScores(doorID); err == nil {
+				a.recordAdminAction(user.Handle, doorID, "door_reset_scores", "")
+			}
+		case "save_config":
+			door, found := a.doorRegistry.DoorByID(doorID)
+			if !found {
+				http.Error(w, "unknown door", http.StatusBadRequest)
+				return
+			}
+			cfg, err := a.doorRegistry.GetDoorConfig(doorID)
+			if err != nil || cfg == nil {
+				cfg = &domain.DoorConfig{
+					DoorID:         doorID,
+					Enabled:        door.EnabledDefault,
+					DailyTurns:     door.DailyTurns,
+					TimeBankMax:    door.TimeBankMax,
+					ResetHourLocal: door.ResetHour,
+					MessagesDays:   maxInt(1, door.MessagesDays),
+					LogsDays:       maxInt(1, door.LogsDays),
+					MaxRunSeconds:  door.MaxRunSec,
+					MaxOutputRate:  door.MaxOutputRate,
+					AllowNetwork:   door.NeedsNetwork,
+					AllowFSWrite:   door.NeedsFSWrite,
+				}
+			}
+			cfg.Enabled = formHasValue(r, "enabled")
+			cfg.DailyTurns = parseIntWithFallback(r.FormValue("daily_turns"), cfg.DailyTurns)
+			cfg.TimeBankMax = parseIntWithFallback(r.FormValue("time_bank_max"), cfg.TimeBankMax)
+			cfg.ResetHourLocal = parseIntWithFallback(r.FormValue("reset_hour"), cfg.ResetHourLocal)
+			cfg.MessagesDays = parseIntWithFallback(r.FormValue("messages_days"), cfg.MessagesDays)
+			cfg.LogsDays = parseIntWithFallback(r.FormValue("logs_days"), cfg.LogsDays)
+			cfg.MaxRunSeconds = parseIntWithFallback(r.FormValue("max_run_seconds"), cfg.MaxRunSeconds)
+			cfg.MaxOutputRate = parseIntWithFallback(r.FormValue("max_output_rate"), cfg.MaxOutputRate)
+			cfg.AllowNetwork = formHasValue(r, "allow_network")
+			cfg.AllowFSWrite = formHasValue(r, "allow_fs_write")
+			cfg.RequiredRoleOverride = strings.TrimSpace(r.FormValue("required_role_override"))
+			if err := a.doorRegistry.SetDoorConfig(cfg); err == nil {
+				a.recordAdminAction(user.Handle, doorID, "door_save_config", "updated policy")
+			}
+		}
+		http.Redirect(w, r, "/admin/doors", http.StatusFound)
+		return
+	}
+
+	filter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	csrf := a.csrfHiddenInput(r)
+	rows := strings.Builder{}
+	for _, door := range a.doorRegistry.Doors() {
+		if filter != "" &&
+			!strings.Contains(strings.ToLower(door.ID), filter) &&
+			!strings.Contains(strings.ToLower(door.Name), filter) &&
+			!strings.Contains(strings.ToLower(door.Category), filter) {
+			continue
+		}
+		cfg, _ := a.doorRegistry.GetDoorConfig(door.ID)
+		if cfg == nil {
+			cfg = &domain.DoorConfig{
+				DoorID:         door.ID,
+				Enabled:        door.EnabledDefault,
+				DailyTurns:     door.DailyTurns,
+				TimeBankMax:    door.TimeBankMax,
+				ResetHourLocal: door.ResetHour,
+				MessagesDays:   maxInt(1, door.MessagesDays),
+				LogsDays:       maxInt(1, door.LogsDays),
+				MaxRunSeconds:  door.MaxRunSec,
+				MaxOutputRate:  door.MaxOutputRate,
+				AllowNetwork:   door.NeedsNetwork,
+				AllowFSWrite:   door.NeedsFSWrite,
+			}
+		}
+		stats, _ := a.doorRegistry.GetUsageStats(door.ID)
+		if stats == nil {
+			stats = &domain.DoorUsageStats{}
+		}
+		rows.WriteString(`<tr><td>` + strings.ToUpper(door.Hotkey) + `</td><td>` + htmlEscape(door.Name) + `</td><td>` + htmlEscape(door.Category) + `</td>`)
+		rows.WriteString(`<td>` + strconv.Itoa(stats.DailyActive) + ` / ` + strconv.Itoa(stats.MonthlyActive) + `</td>`)
+		rows.WriteString(`<td>` + strconv.FormatInt(stats.TotalPlays, 10) + `</td>`)
+		rows.WriteString(`<td><form method="POST" action="/admin/doors">` + csrf +
+			`<input type="hidden" name="action" value="save_config">` +
+			`<input type="hidden" name="door_id" value="` + htmlEscape(door.ID) + `">` +
+			`Enabled <input type="checkbox" name="enabled"` + checkedIf(cfg.Enabled) + `>` +
+			` Turns <input size="4" name="daily_turns" value="` + strconv.Itoa(cfg.DailyTurns) + `">` +
+			` Bank <input size="4" name="time_bank_max" value="` + strconv.Itoa(cfg.TimeBankMax) + `">` +
+			` Reset <input size="2" name="reset_hour" value="` + strconv.Itoa(cfg.ResetHourLocal) + `">` +
+			` Logs <input size="3" name="logs_days" value="` + strconv.Itoa(cfg.LogsDays) + `">` +
+			` Msg <input size="3" name="messages_days" value="` + strconv.Itoa(cfg.MessagesDays) + `">` +
+			` Run(s) <input size="4" name="max_run_seconds" value="` + strconv.Itoa(cfg.MaxRunSeconds) + `">` +
+			` Out/s <input size="5" name="max_output_rate" value="` + strconv.Itoa(cfg.MaxOutputRate) + `">` +
+			` Net <input type="checkbox" name="allow_network"` + checkedIf(cfg.AllowNetwork) + `>` +
+			` FSW <input type="checkbox" name="allow_fs_write"` + checkedIf(cfg.AllowFSWrite) + `>` +
+			` Role <input size="10" name="required_role_override" value="` + htmlEscape(cfg.RequiredRoleOverride) + `">` +
+			` <button type="submit">Save</button></form>`)
+		rows.WriteString(`<form method="POST" action="/admin/doors">` + csrf +
+			`<input type="hidden" name="action" value="reset_scores">` +
+			`<input type="hidden" name="door_id" value="` + htmlEscape(door.ID) + `">` +
+			`<button type="submit">Reset Scores</button></form>`)
+		rows.WriteString(`<a href="/scores?door=` + htmlEscape(door.ID) + `">Scores</a></td></tr>`)
+	}
+	if rows.Len() == 0 {
+		rows.WriteString(`<tr><td colspan="6">No doors matched filter.</td></tr>`)
+	}
+	logRows := strings.Builder{}
+	for _, event := range a.mustDoorEvents("", 0, 120) {
+		logRows.WriteString(`<tr><td>` + event.CreatedAt.Format("2006-01-02 15:04:05") + `</td><td>` + htmlEscape(event.DoorID) + `</td><td>` + strconv.FormatInt(event.UserID, 10) + `</td><td>` + htmlEscape(event.EventType) + `</td><td>` + htmlEscape(event.PayloadJSON) + `</td></tr>`)
+	}
+	if logRows.Len() == 0 {
+		logRows.WriteString(`<tr><td colspan="5">No door events logged yet.</td></tr>`)
+	}
+	page := `<html><body><h1>Doors Admin</h1><p><a href="/admin">back</a> | <a href="/scores">global scores</a> | <a href="/help">help</a></p>` +
+		`<form method="GET"><label>Filter <input name="q" value="` + htmlEscape(filter) + `"></label><button type="submit">Apply</button></form>` +
+		`<table border="1"><tr><th>HK</th><th>Name</th><th>Category</th><th>DAU/MAU</th><th>Total Plays</th><th>Config</th></tr>` + rows.String() + `</table>` +
+		`<h2>Door Event Log</h2><table border="1"><tr><th>Time</th><th>Door</th><th>UserID</th><th>Event</th><th>Payload</th></tr>` + logRows.String() + `</table>` +
+		`</body></html>`
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(page))
+}
+
+func (a *webApp) handleScores(w http.ResponseWriter, r *http.Request) {
+	_, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if a.doorRegistry == nil {
+		http.Error(w, "door registry unavailable", http.StatusInternalServerError)
+		return
+	}
+	filterDoor := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("door")))
+	lookup := a.userHandleLookup()
+	section := strings.Builder{}
+	section.WriteString(`<p><a href="/boards">boards</a> | <a href="/chat">chat</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/admin">admin</a> | <a href="/help">help</a></p>`)
+	section.WriteString(`<p><strong>Door filter:</strong> ` + htmlEscape(filterDoor) + `</p>`)
+	section.WriteString(`<table border="1"><tr><th>Door</th><th>User</th><th>Score</th><th>Type</th><th>When</th></tr>`)
+	for _, door := range a.doorRegistry.Doors() {
+		if filterDoor != "" && door.ID != filterDoor {
+			continue
+		}
+		scores, _ := a.doorRegistry.ListScores(door.ID, 10)
+		if len(scores) == 0 {
+			section.WriteString(`<tr><td>` + htmlEscape(door.Name) + `</td><td colspan="4">No scores yet</td></tr>`)
+			continue
+		}
+		for _, score := range scores {
+			handle := lookup[score.UserID]
+			if handle == "" {
+				handle = "uid:" + strconv.FormatInt(score.UserID, 10)
+			}
+			section.WriteString(`<tr><td>` + htmlEscape(door.Name) + `</td><td>` + htmlEscape(handle) + `</td><td>` + strconv.FormatInt(score.Value, 10) + `</td><td>` + htmlEscape(score.ScoreType) + `</td><td>` + score.CreatedAt.Format("2006-01-02 15:04:05") + `</td></tr>`)
+		}
+	}
+	section.WriteString(`</table>`)
+	page := `<html><body><h1>Door Scores & Trophies</h1>` + section.String() + `</body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
 }
 
 func (a *webApp) handleAdminSystem(w http.ResponseWriter, r *http.Request) {
-	_, _ = w.Write([]byte(`<html><body><h1>System</h1><p><a href="/admin">back</a></p><ul>` +
-		`<li>Read-only mode: ` + boolToText(a.readOnly) + `</li>` +
-		`<li>Uptime: simulated in MVP</li>` +
-		`<li>Health: service routes active</li>` +
-		`</ul></body></html>`))
+	a.Lock()
+	webSessions := len(a.sessions)
+	a.Unlock()
+
+	userCount := 0
+	if a.authSvc != nil {
+		if users, err := a.authSvc.ListUsers(); err == nil {
+			userCount = len(users)
+		}
+	}
+
+	boardCount := 0
+	messageCount := 0
+	if a.boardRepo != nil {
+		if boards, err := a.boardRepo.List(); err == nil {
+			boardCount = len(boards)
+			if a.msgRepo != nil {
+				for _, board := range boards {
+					if msgs, listErr := a.msgRepo.ListByBoard(board.ID); listErr == nil {
+						messageCount += len(msgs)
+					}
+				}
+			}
+		}
+	}
+
+	channels := []string{"#lobby"}
+	online := []chat.Presence{}
+	if a.chatSvc != nil {
+		channels = a.chatSvc.ListChannels()
+		online = a.chatSvc.Online()
+	}
+	nodeSessions := []domain.NodeSession{}
+	callerHistory := []domain.CallerHistory{}
+	if a.adminRepo != nil {
+		nodeSessions, _ = a.adminRepo.ListNodeSessions(200)
+		callerHistory, _ = a.adminRepo.ListCallerHistory(50)
+	}
+	lockedCount := 0
+	for _, channel := range channels {
+		if a.isChannelLocked(channel) {
+			lockedCount++
+		}
+	}
+	errorCount := len(a.latestErrors(1000))
+
+	uptime := "unknown"
+	if !a.startedAt.IsZero() {
+		uptime = time.Since(a.startedAt).Round(time.Second).String()
+	}
+
+	onlineRows := strings.Builder{}
+	if len(nodeSessions) > 0 {
+		now := time.Now().UTC()
+		for _, row := range nodeSessions {
+			idle := now.Sub(row.LastActivity)
+			if idle < 0 {
+				idle = 0
+			}
+			onlineRows.WriteString(`<tr><td>` + htmlEscape(row.Username) + `</td><td>Node ` + strconv.Itoa(row.NodeID) + `</td><td>` + htmlEscape(row.Area) + `</td><td>` + row.LoginAt.Format("2006-01-02 15:04:05") + `</td><td>` + strconv.Itoa(int(idle.Seconds())) + `s</td></tr>`)
+		}
+	} else {
+		for _, row := range online {
+			onlineRows.WriteString(`<tr><td>` + htmlEscape(row.Nick) + `</td><td>` + htmlEscape(row.Node) + `</td><td>` + htmlEscape(row.Area) + `</td><td>` + row.LoginAt.Format("2006-01-02 15:04:05") + `</td><td>` + strconv.Itoa(row.IdleSec) + `s</td></tr>`)
+		}
+	}
+	if onlineRows.Len() == 0 {
+		onlineRows.WriteString(`<tr><td colspan="5">No users currently online</td></tr>`)
+	}
+
+	callerRows := strings.Builder{}
+	for _, caller := range callerHistory {
+		callerRows.WriteString(`<tr><td>` + caller.LogoutAt.Format("2006-01-02 15:04:05") + `</td><td>Node ` + strconv.Itoa(caller.NodeID) + `</td><td>` + htmlEscape(caller.Username) + `</td><td>` + htmlEscape(caller.Area) + `</td><td>` + strconv.FormatInt(caller.DurationSeconds, 10) + `s</td></tr>`)
+	}
+	if callerRows.Len() == 0 {
+		callerRows.WriteString(`<tr><td colspan="5">No caller history available</td></tr>`)
+	}
+
+	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>System / WFC Dashboard</title></head><body><h1>System / WFC Dashboard</h1><p><a href="/admin">back</a> | <a href="/admin/setup">setup</a> | <a href="/admin/config">config</a> | <a href="/admin/errors">errors</a> | <a href="/admin/node-state">node-state json</a> | <a href="/help">help</a></p>` +
+		`<table border="1"><tr><th>Metric</th><th>Value</th></tr>` +
+		`<tr><td>Read-only mode</td><td>` + boolToText(a.readOnly) + `</td></tr>` +
+		`<tr><td>Uptime</td><td>` + uptime + `</td></tr>` +
+		`<tr><td>Web sessions</td><td>` + strconv.Itoa(webSessions) + `</td></tr>` +
+		`<tr><td>Users</td><td>` + strconv.Itoa(userCount) + `</td></tr>` +
+		`<tr><td>Boards</td><td>` + strconv.Itoa(boardCount) + `</td></tr>` +
+		`<tr><td>Messages</td><td>` + strconv.Itoa(messageCount) + `</td></tr>` +
+		`<tr><td>Chat channels</td><td>` + strconv.Itoa(len(channels)) + `</td></tr>` +
+		`<tr><td>Locked channels</td><td>` + strconv.Itoa(lockedCount) + `</td></tr>` +
+		`<tr><td>Online users</td><td>` + strconv.Itoa(len(online)) + `</td></tr>` +
+		`<tr><td>Node sessions (persisted)</td><td>` + strconv.Itoa(len(nodeSessions)) + `</td></tr>` +
+		`<tr><td>Caller history rows</td><td>` + strconv.Itoa(len(callerHistory)) + `</td></tr>` +
+		`<tr><td>Runtime errors</td><td>` + strconv.Itoa(errorCount) + `</td></tr>` +
+		`<tr><td>MOTD</td><td>` + htmlEscape(cleanOneLiner(a.motd, 80)) + `</td></tr>` +
+		`<tr><td>Announcement</td><td>` + htmlEscape(cleanOneLiner(a.announcement, 80)) + `</td></tr>` +
+		`</table>` +
+		`<h2>Online / Node State</h2><table border="1"><tr><th>User</th><th>Node</th><th>Area</th><th>Login</th><th>Idle</th></tr>` + onlineRows.String() + `</table>` +
+		`<h2>Last Callers</h2><table border="1"><tr><th>Logout</th><th>Node</th><th>User</th><th>Area</th><th>Duration</th></tr>` + callerRows.String() + `</table>` +
+		`<p>Health endpoints: <a href="/healthz">/healthz</a> | <a href="/readyz">/readyz</a> | <a href="/metrics">/metrics</a></p>` +
+		`</body></html>`
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(page))
+}
+
+func (a *webApp) handleAdminNodeState(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	sessions := []domain.NodeSession{}
+	callers := []domain.CallerHistory{}
+	if a.adminRepo != nil {
+		sessions, _ = a.adminRepo.ListNodeSessions(200)
+		callers, _ = a.adminRepo.ListCallerHistory(200)
+	}
+	chatOnline := 0
+	chatChannels := 0
+	a.Lock()
+	webSessionEstimate := len(a.sessions)
+	a.Unlock()
+	if a.chatSvc != nil {
+		chatOnline = len(a.chatSvc.Online())
+		chatChannels = len(a.chatSvc.ListChannels())
+	}
+	now := time.Now().UTC()
+	type nodeRow struct {
+		SessionID    string `json:"session_id"`
+		NodeID       int    `json:"node_id"`
+		Username     string `json:"username"`
+		Area         string `json:"area"`
+		RemoteAddr   string `json:"remote_addr"`
+		LoginAt      string `json:"login_at"`
+		LastActivity string `json:"last_activity"`
+		IdleSeconds  int64  `json:"idle_seconds"`
+	}
+	nodes := make([]nodeRow, 0, len(sessions))
+	for _, row := range sessions {
+		idle := now.Sub(row.LastActivity)
+		if idle < 0 {
+			idle = 0
+		}
+		nodes = append(nodes, nodeRow{
+			SessionID:    row.SessionID,
+			NodeID:       row.NodeID,
+			Username:     row.Username,
+			Area:         row.Area,
+			RemoteAddr:   row.RemoteAddr,
+			LoginAt:      row.LoginAt.UTC().Format(time.RFC3339),
+			LastActivity: row.LastActivity.UTC().Format(time.RFC3339),
+			IdleSeconds:  int64(idle.Seconds()),
+		})
+	}
+	_ = writeJSON(w, http.StatusOK, map[string]interface{}{
+		"generated_at":    now.Format(time.RFC3339),
+		"node_sessions":   nodes,
+		"caller_history":  callers,
+		"session_count":   len(nodes),
+		"caller_count":    len(callers),
+		"chat_online":     chatOnline,
+		"chat_channels":   chatChannels,
+		"web_session_est": webSessionEstimate,
+	})
 }
 
 func (a *webApp) handleAdminAudit(w http.ResponseWriter, r *http.Request) {
@@ -1074,18 +3056,102 @@ func (a *webApp) handleAdminAudit(w http.ResponseWriter, r *http.Request) {
 		rows.WriteString(`<tr><td colspan="5">No admin actions yet</td></tr>`)
 	}
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(`<html><body><h1>Admin Audit Log</h1><p><a href="/admin">back</a></p><table border="1"><tr><th>Time</th><th>Actor</th><th>Target</th><th>Action</th><th>Details</th></tr>` + rows.String() + `</table></body></html>`))
+	_, _ = w.Write([]byte(`<html><body><h1>Admin Audit Log</h1><p><a href="/admin">back</a> | <a href="/help">help</a></p><table border="1"><tr><th>Time</th><th>Actor</th><th>Target</th><th>Action</th><th>Details</th></tr>` + rows.String() + `</table></body></html>`))
+}
+
+func (a *webApp) canReadBoard(user *domain.User, board *domain.Board) bool {
+	if board == nil {
+		return false
+	}
+	return a.evalACS(boardReadRuleForBoard(board), user, map[string]string{
+		"area":       "boards",
+		"mode":       "read",
+		"board_id":   strconv.FormatInt(board.ID, 10),
+		"board":      board.Name,
+		"conference": defaultConferenceValue(board.Conference),
+	})
+}
+
+func (a *webApp) canWriteBoard(user *domain.User, board *domain.Board) bool {
+	if board == nil {
+		return false
+	}
+	return a.evalACS(boardWriteRuleForBoard(board), user, map[string]string{
+		"area":       "boards",
+		"mode":       "post",
+		"board_id":   strconv.FormatInt(board.ID, 10),
+		"board":      board.Name,
+		"conference": defaultConferenceValue(board.Conference),
+	})
+}
+
+func (a *webApp) evalACS(expr string, user *domain.User, attrs map[string]string) bool {
+	expr = strings.TrimSpace(expr)
+	if expr == "" {
+		return true
+	}
+	if attrs == nil {
+		attrs = map[string]string{}
+	}
+	role := roleUser
+	verified := false
+	handle := ""
+	if user != nil {
+		role = rbac.NormalizeRole(user.Role)
+		verified = user.Verified
+		handle = strings.TrimSpace(user.Handle)
+	}
+	attrs["role"] = role
+	attrs["verified"] = boolToText(verified)
+	attrs["handle"] = handle
+	allowed, err := acs.Evaluate(expr, acs.Context{
+		Role:     role,
+		Verified: verified,
+		Attrs:    attrs,
+	})
+	if err != nil {
+		return !envEnabledDefault("WOLFBBS_ACS_STRICT", false)
+	}
+	return allowed
+}
+
+func boardReadRuleForBoard(board *domain.Board) string {
+	if board == nil {
+		return strings.TrimSpace(os.Getenv("WOLFBBS_ACS_BOARDS_READ"))
+	}
+	if rule := strings.TrimSpace(board.ReadACS); rule != "" {
+		return rule
+	}
+	return strings.TrimSpace(os.Getenv("WOLFBBS_ACS_BOARDS_READ"))
+}
+
+func boardWriteRuleForBoard(board *domain.Board) string {
+	if board == nil {
+		return strings.TrimSpace(os.Getenv("WOLFBBS_ACS_BOARDS_POST"))
+	}
+	if rule := strings.TrimSpace(board.WriteACS); rule != "" {
+		return rule
+	}
+	return strings.TrimSpace(os.Getenv("WOLFBBS_ACS_BOARDS_POST"))
+}
+
+func defaultConferenceValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "General"
+	}
+	return value
 }
 
 func (a *webApp) roleForUser(u *domain.User) int {
 	if u == nil {
 		return 0
 	}
-	return roleWeight[strings.ToLower(strings.TrimSpace(u.Role))]
+	return roleWeight[rbac.NormalizeRole(u.Role)]
 }
 
 func (a *webApp) hasRole(u *domain.User, minimum string) bool {
-	return a.roleForUser(u) >= roleWeight[strings.ToLower(strings.TrimSpace(minimum))]
+	return a.roleForUser(u) >= roleWeight[rbac.NormalizeRole(minimum)]
 }
 
 func (a *webApp) authRequired(next http.HandlerFunc) http.Handler {
@@ -1202,11 +3268,183 @@ func (a *webApp) currentUser(r *http.Request) (*domain.User, bool) {
 	return u, true
 }
 
+func (a *webApp) loadPersistedAdminSettings() {
+	if a.adminRepo == nil {
+		return
+	}
+	settings, err := a.adminRepo.ListSystemSettings()
+	if err != nil {
+		a.addAppError("startup", fmt.Errorf("load system settings: %w", err))
+		return
+	}
+	if len(settings) == 0 {
+		return
+	}
+	if value, ok := settings[sysSettingMOTD]; ok {
+		a.motd = strings.TrimSpace(value)
+	}
+	if value, ok := settings[sysSettingAnnouncement]; ok {
+		a.announcement = strings.TrimSpace(value)
+	}
+	if value, ok := settings[sysSettingReadOnly]; ok && strings.TrimSpace(value) != "" {
+		a.readOnly = parseCheckbox(value)
+	}
+	if value, ok := settings[sysSettingWebOnRamp]; ok && strings.TrimSpace(value) != "" {
+		a.modernOnRamp = parseCheckbox(value)
+	}
+	if value, ok := settings[sysSettingGuestTour]; ok && strings.TrimSpace(value) != "" {
+		a.guestTour = parseCheckbox(value)
+	}
+	if value, ok := settings[sysSettingDiscover]; ok && strings.TrimSpace(value) != "" {
+		a.discover = parseCheckbox(value)
+	}
+	if value, ok := settings[sysSettingQuickJump]; ok && strings.TrimSpace(value) != "" {
+		a.quickJump = parseCheckbox(value)
+	}
+	if value, ok := settings[sysSettingClassicSearch]; ok && strings.TrimSpace(value) != "" {
+		a.classicSearch = parseCheckbox(value)
+	}
+	if value, ok := settings[sysSettingMenuEnabled]; ok && strings.TrimSpace(value) != "" {
+		a.runtimeCfg.Menu.Enabled = parseCheckbox(value)
+	}
+	if value, ok := settings[sysSettingMenuFile]; ok {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			a.runtimeCfg.Menu.File = value
+		}
+	}
+	a.loadLockedChannels(settings[sysSettingLockedChannels])
+}
+
+func (a *webApp) loadLockedChannels(raw string) {
+	a.Lock()
+	defer a.Unlock()
+	if a.lockedChat == nil {
+		a.lockedChat = map[string]bool{}
+	}
+	for _, part := range strings.Split(raw, ",") {
+		channel := chat.NormalizeChannel(strings.TrimSpace(part))
+		if strings.TrimSpace(channel) == "" {
+			continue
+		}
+		a.lockedChat[channel] = true
+	}
+}
+
+func (a *webApp) persistSystemSetting(key, value string) {
+	if a.adminRepo == nil {
+		return
+	}
+	if err := a.adminRepo.UpsertSystemSetting(key, value); err != nil {
+		a.addAppError("admin.config", fmt.Errorf("save %s: %w", key, err))
+	}
+}
+
+func (a *webApp) persistLockedChannels() {
+	a.Lock()
+	channels := make([]string, 0, len(a.lockedChat))
+	for channel, locked := range a.lockedChat {
+		if locked {
+			channels = append(channels, channel)
+		}
+	}
+	a.Unlock()
+	sort.Slice(channels, func(i, j int) bool { return strings.ToLower(channels[i]) < strings.ToLower(channels[j]) })
+	a.persistSystemSetting(sysSettingLockedChannels, strings.Join(channels, ","))
+}
+
+func (a *webApp) setChannelLock(channel string, locked bool) {
+	channel = chat.NormalizeChannel(channel)
+	if strings.TrimSpace(channel) == "" {
+		return
+	}
+	a.Lock()
+	if a.lockedChat == nil {
+		a.lockedChat = map[string]bool{}
+	}
+	if locked {
+		a.lockedChat[channel] = true
+	} else {
+		delete(a.lockedChat, channel)
+	}
+	a.Unlock()
+	a.persistLockedChannels()
+}
+
+func (a *webApp) isChannelLocked(channel string) bool {
+	channel = chat.NormalizeChannel(channel)
+	a.Lock()
+	defer a.Unlock()
+	return a.lockedChat[channel]
+}
+
+func (a *webApp) addAppError(area string, err error) {
+	if err == nil {
+		return
+	}
+	entry := appErrorEntry{
+		Time:    time.Now().UTC(),
+		Area:    strings.TrimSpace(area),
+		Message: strings.TrimSpace(err.Error()),
+	}
+	if entry.Area == "" {
+		entry.Area = "runtime"
+	}
+	a.Lock()
+	a.errorLog = append(a.errorLog, entry)
+	if len(a.errorLog) > maxAdminErrorEntries {
+		a.errorLog = append([]appErrorEntry{}, a.errorLog[len(a.errorLog)-maxAdminErrorEntries:]...)
+	}
+	a.Unlock()
+	log.Printf("area=%s error=%s", entry.Area, entry.Message)
+}
+
+func (a *webApp) latestErrors(limit int) []appErrorEntry {
+	if limit <= 0 {
+		limit = 50
+	}
+	a.Lock()
+	defer a.Unlock()
+	total := len(a.errorLog)
+	if total == 0 {
+		return nil
+	}
+	if limit > total {
+		limit = total
+	}
+	start := total - limit
+	out := make([]appErrorEntry, 0, limit)
+	for i := total - 1; i >= start; i-- {
+		out = append(out, a.errorLog[i])
+	}
+	return out
+}
+
 func boolToText(v bool) string {
 	if v {
 		return "true"
 	}
 	return "false"
+}
+
+func checkedAttr(active bool) string {
+	if active {
+		return "checked"
+	}
+	return ""
+}
+
+func parseCheckbox(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	return value == "1" || value == "true" || value == "on" || value == "yes"
+}
+
+func envEnabledDefault(name string, def bool) bool {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return def
+	}
+	return parseCheckbox(raw)
 }
 
 func selectedIf(active bool) string {
@@ -1295,6 +3533,7 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 	<body>
 		<h1>WolfBBS Chat</h1>
 		<p>Logged in as ` + user.Handle + `</p>
+		<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/settings">settings</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
 		<p><label>Channel:
 			<select id="channelSelect"></select>
 		</label></p>
@@ -1322,10 +3561,11 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 				const select = document.getElementById('channelSelect');
 				select.innerHTML = '';
 				const channels = payload.channels || ['#lobby'];
+				const lockedSet = new Set(payload.locked || []);
 				channels.forEach((name) => {
 					const option = document.createElement('option');
 					option.value = name;
-					option.textContent = name;
+					option.textContent = lockedSet.has(name) ? (name + ' [locked]') : name;
 					select.appendChild(option);
 				});
 				if (!channels.includes(streamState.channel)) {
@@ -1472,6 +3712,10 @@ func (a *webApp) handleChatSend(w http.ResponseWriter, r *http.Request) {
 	if channel == "" {
 		channel = "#lobby"
 	}
+	if a.isChannelLocked(channel) && !a.hasRole(user, roleModerator) {
+		http.Error(w, "channel is locked", http.StatusForbidden)
+		return
+	}
 	message := body["message"]
 	if message == "" {
 		w.WriteHeader(http.StatusBadRequest)
@@ -1564,7 +3808,17 @@ func (a *webApp) handleChatChannels(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	_ = writeJSON(w, http.StatusOK, map[string]interface{}{"channels": a.chatSvc.ListChannels()})
+	channels := a.chatSvc.ListChannels()
+	locked := make([]string, 0)
+	for _, channel := range channels {
+		if a.isChannelLocked(channel) {
+			locked = append(locked, channel)
+		}
+	}
+	_ = writeJSON(w, http.StatusOK, map[string]interface{}{
+		"channels": channels,
+		"locked":   locked,
+	})
 }
 
 func (a *webApp) handleChatJoin(w http.ResponseWriter, r *http.Request) {
@@ -1589,6 +3843,10 @@ func (a *webApp) handleChatJoin(w http.ResponseWriter, r *http.Request) {
 	channel := chat.NormalizeChannel(body["channel"])
 	if channel == "" {
 		channel = "#lobby"
+	}
+	if a.isChannelLocked(channel) && !a.hasRole(user, roleModerator) {
+		http.Error(w, "channel is locked", http.StatusForbidden)
+		return
 	}
 	a.chatSvc.JoinChannel(user.Handle, channel)
 	_ = writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "channel": channel})
@@ -1869,6 +4127,180 @@ func (a *webApp) userHandleLookup() map[int64]string {
 	return out
 }
 
+func (a *webApp) latestLogins(limit int) []string {
+	if limit <= 0 {
+		limit = 6
+	}
+	users, err := a.authSvc.ListUsers()
+	if err != nil {
+		return nil
+	}
+	sort.Slice(users, func(i, j int) bool {
+		var li, lj time.Time
+		if users[i].LastLoginAt != nil {
+			li = users[i].LastLoginAt.UTC()
+		}
+		if users[j].LastLoginAt != nil {
+			lj = users[j].LastLoginAt.UTC()
+		}
+		if li.Equal(lj) {
+			return strings.ToLower(users[i].Handle) < strings.ToLower(users[j].Handle)
+		}
+		return li.After(lj)
+	})
+	rows := make([]string, 0, limit)
+	for _, user := range users {
+		if user.LastLoginAt == nil || user.LastLoginAt.IsZero() {
+			continue
+		}
+		rows = append(rows, fmt.Sprintf("%s @ %s", user.Handle, user.LastLoginAt.Local().Format("01-02 15:04")))
+		if len(rows) >= limit {
+			break
+		}
+	}
+	return rows
+}
+
+func (a *webApp) featuredThreadLine() string {
+	if a.boardRepo == nil || a.msgRepo == nil {
+		return ""
+	}
+	boards, err := a.boardRepo.List()
+	if err != nil {
+		return ""
+	}
+	var selected *domain.Message
+	boardName := ""
+	for _, board := range boards {
+		msgs, listErr := a.msgRepo.ListByBoard(board.ID)
+		if listErr != nil || len(msgs) == 0 {
+			continue
+		}
+		last := msgs[len(msgs)-1]
+		if selected == nil || last.CreatedAt.After(selected.CreatedAt) {
+			copy := last
+			selected = &copy
+			boardName = board.Name
+		}
+	}
+	if selected == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s / %s", cleanOneLiner(boardName, 20), cleanOneLiner(selected.Subject, 64))
+}
+
+func (a *webApp) filebaseDownloadPick() string {
+	if a.doorRepo == nil {
+		return "FileBase Pro picks appear after uploads."
+	}
+	row, err := a.doorRepo.GetGlobalState("filebase-pro")
+	if err != nil || row == nil || strings.TrimSpace(row.StateJSON) == "" {
+		return "No file uploads yet. Check FileBase Pro later."
+	}
+	var state struct {
+		Files []struct {
+			Filename    string `json:"filename"`
+			Description string `json:"description"`
+			Downloads   int64  `json:"downloads"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal([]byte(row.StateJSON), &state); err != nil || len(state.Files) == 0 {
+		return "No file uploads yet. Check FileBase Pro later."
+	}
+	sort.Slice(state.Files, func(i, j int) bool {
+		if state.Files[i].Downloads == state.Files[j].Downloads {
+			return state.Files[i].Filename < state.Files[j].Filename
+		}
+		return state.Files[i].Downloads > state.Files[j].Downloads
+	})
+	pick := state.Files[0]
+	desc := cleanOneLiner(pick.Description, 52)
+	if desc == "" {
+		desc = "classic upload"
+	}
+	return fmt.Sprintf("%s (%d dl) - %s", cleanOneLiner(pick.Filename, 24), pick.Downloads, desc)
+}
+
+func (a *webApp) addSavedSearch(handle, query string) {
+	handle = strings.ToLower(strings.TrimSpace(handle))
+	query = strings.TrimSpace(query)
+	if handle == "" || query == "" {
+		return
+	}
+	a.Lock()
+	defer a.Unlock()
+	if a.savedSearches == nil {
+		a.savedSearches = map[string][]string{}
+	}
+	current := a.savedSearches[handle]
+	for _, row := range current {
+		if strings.EqualFold(strings.TrimSpace(row), query) {
+			return
+		}
+	}
+	current = append([]string{query}, current...)
+	if len(current) > 10 {
+		current = current[:10]
+	}
+	a.savedSearches[handle] = current
+}
+
+func (a *webApp) savedSearchList(handle string) []string {
+	handle = strings.ToLower(strings.TrimSpace(handle))
+	if handle == "" {
+		return nil
+	}
+	a.Lock()
+	defer a.Unlock()
+	rows := a.savedSearches[handle]
+	out := make([]string, len(rows))
+	copy(out, rows)
+	return out
+}
+
+func (a *webApp) searchRows(query string, limit int) []string {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" || a.boardRepo == nil || a.msgRepo == nil {
+		return nil
+	}
+	boards, err := a.boardRepo.List()
+	if err != nil {
+		return nil
+	}
+	rows := make([]string, 0, limit)
+	for _, board := range boards {
+		msgs, listErr := a.msgRepo.ListByBoard(board.ID)
+		if listErr != nil {
+			continue
+		}
+		for _, msg := range msgs {
+			haystack := strings.ToLower(msg.Subject + "\n" + msg.Body)
+			if !strings.Contains(haystack, query) {
+				continue
+			}
+			rows = append(rows, fmt.Sprintf("%s #%d: %s", board.Name, msg.ID, cleanOneLiner(msg.Subject, 48)))
+			if len(rows) >= limit {
+				return rows
+			}
+		}
+	}
+	return rows
+}
+
+func cleanOneLiner(value string, limit int) string {
+	value = strings.ReplaceAll(value, "\r", " ")
+	value = strings.ReplaceAll(value, "\n", " ")
+	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	if limit <= 0 || len([]rune(value)) <= limit {
+		return value
+	}
+	r := []rune(value)
+	if limit <= 1 {
+		return string(r[:limit])
+	}
+	return string(r[:limit-1]) + "…"
+}
+
 func htmlEscape(value string) string {
 	value = strings.ReplaceAll(value, "&", "&amp;")
 	value = strings.ReplaceAll(value, "<", "&lt;")
@@ -1910,6 +4342,104 @@ func parseInt(raw string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+func parseIntWithFallback(raw string, fallback int) int {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func maxInt64(value, fallback int64) int64 {
+	if value > 0 {
+		return value
+	}
+	return fallback
+}
+
+func envFirst(names ...string) string {
+	for _, name := range names {
+		value := strings.TrimSpace(os.Getenv(name))
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func formHasValue(r *http.Request, key string) bool {
+	if r == nil {
+		return false
+	}
+	value := strings.TrimSpace(r.FormValue(key))
+	if value == "" {
+		return false
+	}
+	switch strings.ToLower(value) {
+	case "0", "false", "off", "no":
+		return false
+	default:
+		return true
+	}
+}
+
+func webQuickJumpPath(raw string) string {
+	target := strings.ToLower(strings.TrimSpace(raw))
+	switch target {
+	case "boards", "messages", "msg", "m":
+		return "/boards"
+	case "mail", "pm", "p":
+		return "/mail"
+	case "chat", "c":
+		return "/chat"
+	case "gateway", "g":
+		return "/gateway"
+	case "settings", "prefs", "s":
+		return "/settings"
+	case "status", "health", "y":
+		return "/status"
+	case "config", "cfg", "x":
+		return "/config"
+	case "discover", "newscan", "n":
+		return "/discover"
+	case "scores", "doors", "d":
+		return "/scores"
+	case "admin", "a":
+		return "/admin"
+	default:
+		return ""
+	}
+}
+
+func checkedIf(active bool) string {
+	if active {
+		return ` checked`
+	}
+	return ""
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func (a *webApp) mustDoorEvents(doorID string, userID int64, limit int) []domain.DoorEvent {
+	if a.doorRegistry == nil {
+		return nil
+	}
+	rows, err := a.doorRegistry.ListEvents(doorID, userID, limit)
+	if err != nil {
+		return nil
+	}
+	return rows
 }
 
 func parseAllowDomains(raw string) map[string]struct{} {
@@ -1954,15 +4484,64 @@ func writeJSON(w http.ResponseWriter, status int, body interface{}) error {
 	return err
 }
 
-func loginPage() string {
-	return `<html><body>
+func loginPage(path string, showConnect bool, showTour bool) string {
+	extra := strings.Builder{}
+	if showConnect {
+		extra.WriteString(`<p><a href="/connect">Quick connect</a></p>`)
+	}
+	if showTour {
+		extra.WriteString(`<p><a href="/tour">Guided guest tour</a></p>`)
+	}
+	postPath := "/login"
+	if strings.HasPrefix(strings.TrimSpace(path), "/admin") {
+		postPath = "/admin/login"
+	}
+	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>WolfBBS Login</title></head><body>
 	<h1>WolfBBS Web Login</h1>
-	<form method="POST" action="/login">
+	<p><a href="/help">Help</a></p>
+	<form method="POST" action="` + postPath + `">
 		<label>Handle: <input name="handle"></label><br>
 		<label>Password: <input name="password" type="password"></label><br>
 		<label>2FA code: <input name="totp"></label><br>
 		<button type="submit">Sign In</button>
 	</form>
+	<p><a href="/reset/request">Forgot password?</a></p>
+	` + extra.String() + `
+	</body></html>`
+}
+
+func resetRequestPage(message string) string {
+	if strings.TrimSpace(message) != "" {
+		message = `<p>` + message + `</p>`
+	}
+	return `<html><body>
+	<h1>WolfBBS Password Reset</h1>
+	<p><a href="/help">Help</a></p>
+	<p>Enter your handle and we will issue a reset token.</p>
+	<form method="POST" action="/reset/request">
+		<label>Handle: <input name="handle"></label><br>
+		<button type="submit">Issue Reset Token</button>
+	</form>` + message + `
+	<p><a href="/login">Back to login</a></p>
+	</body></html>`
+}
+
+func resetCompletePage(token, message string) string {
+	token = htmlEscape(strings.TrimSpace(token))
+	message = strings.TrimSpace(message)
+	if message != "" {
+		message = `<p>` + htmlEscape(message) + `</p>`
+	}
+	return `<html><body>
+	<h1>Set New Password</h1>
+	<p><a href="/help">Help</a></p>
+	<form method="POST" action="/reset/complete">
+		<input type="hidden" name="token" value="` + token + `">
+		<label>Reset token: <input name="token" value="` + token + `" size="70"></label><br>
+		<label>New password: <input name="password" type="password"></label><br>
+		<button type="submit">Reset Password</button>
+	</form>` + message + `
+	<p><a href="/login">Back to login</a></p>
 	</body></html>`
 }
 

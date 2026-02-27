@@ -32,12 +32,14 @@ In-memory mode is used automatically when DB configuration is not present.
 - `messageType` (channel/dm/system)
 
 ## Access Paths
-- SSH UI: command hooks from `C` menu (planned for next pass)
+- SSH UI: `C` menu opens live channel view with send/join/online actions.
 - Web UI: SSE endpoint `/chat/stream` with channel history and live messages
 - IRC endpoint: implemented in `cmd/wolfbbs-irc`
 
 ## Message Rules
 - Rate limits: per-user and per-IP burst caps
+  - enforced in `internal/chat/service.go` for shared backend writes
+  - enforced again at IRC edge in `cmd/wolfbbs-irc/main.go` for connection-level flood control
 - Moderation hooks before persistence
 - Audit each mute/ban/kick with actor and reason
 - Optional retention by age configured in service config

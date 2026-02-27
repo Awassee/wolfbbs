@@ -3,6 +3,7 @@
 ## Outbound
 - Composed in BBS mail composer and sent via SMTP relay:
   - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `FROM_DOMAIN`
+  - or prefixed aliases: `WOLFBBS_SMTP_HOST`, `WOLFBBS_SMTP_PORT`, `WOLFBBS_SMTP_USER`, `WOLFBBS_SMTP_PASS`, `WOLFBBS_FROM_DOMAIN`
 - Hard safety:
   - per-user send rate cap
   - max recipients per message
@@ -11,6 +12,13 @@
   - global outbound disable toggle for incident response
 - Audit log fields:
   - actor id, recipient count, subject, status, error, relay response, timestamp
+
+## Password Reset Delivery
+- `/reset/request` issues one-time reset tokens with expiration.
+- If SMTP is configured and the account handle is an email-form handle, WolfBBS sends a reset link via email.
+- Reset URL base:
+  - `WOLFBBS_PUBLIC_BASE_URL` when set, otherwise inferred from request host/proto.
+- Delivery failures are logged server-side while API responses remain non-enumerating.
 
 ## Inbound (preferred optional)
 - HTTP ingestion route is available:

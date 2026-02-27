@@ -13,6 +13,8 @@ type MessageRepository interface {
 	CreateMessage(msg *domain.Message) error
 	GetMessage(id int64) (*domain.Message, error)
 	ListByBoard(boardID int64) ([]domain.Message, error)
+	GetPointer(userID, boardID int64) (*domain.MessagePointer, error)
+	SetPointer(userID, boardID, lastReadID int64, lastReadAt time.Time) error
 }
 
 type InMemoryMessageRepository struct {
@@ -20,10 +22,16 @@ type InMemoryMessageRepository struct {
 	nextID  int64
 	byID    map[int64]domain.Message
 	byBoard map[int64][]int64
+	ptrs    map[[2]int64]domain.MessagePointer
 }
 
 func NewInMemoryMessageRepository() *InMemoryMessageRepository {
-	return &InMemoryMessageRepository{nextID: 1, byID: map[int64]domain.Message{}, byBoard: map[int64][]int64{}}
+	return &InMemoryMessageRepository{
+		nextID:  1,
+		byID:    map[int64]domain.Message{},
+		byBoard: map[int64][]int64{},
+		ptrs:    map[[2]int64]domain.MessagePointer{},
+	}
 }
 
 func (r *InMemoryMessageRepository) CreateMessage(msg *domain.Message) error {
@@ -100,6 +108,48 @@ func (r *InMemoryMessageRepository) ListByBoard(boardID int64) ([]domain.Message
 		return out[i].ThreadID < out[j].ThreadID
 	})
 	return out, nil
+}
+
+func (r *InMemoryMessageRepository) GetPointer(userID, boardID int64) (*domain.MessagePointer, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if userID <= 0 || boardID <= 0 {
+		return nil, ErrNotFound
+	}
+	key := [2]int64{userID, boardID}
+	row, ok := r.ptrs[key]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	copy := row
+	return &copy, nil
+}
+
+func (r *InMemoryMessageRepository) SetPointer(userID, boardID, lastReadID int64, lastReadAt time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if userID <= 0 || boardID <= 0 || lastReadID <= 0 {
+		return errors.New("user id, board id, and last read id are required")
+	}
+	now := time.Now().UTC()
+	if lastReadAt.IsZero() {
+		lastReadAt = now
+	}
+	key := [2]int64{userID, boardID}
+	existing, ok := r.ptrs[key]
+	if ok {
+		if lastReadID < existing.LastReadID {
+			lastReadID = existing.LastReadID
+		}
+	}
+	r.ptrs[key] = domain.MessagePointer{
+		UserID:     userID,
+		BoardID:    boardID,
+		LastReadID: lastReadID,
+		LastReadAt: lastReadAt.UTC(),
+		UpdatedAt:  now,
+	}
+	return nil
 }
 
 var _ MessageRepository = (*InMemoryMessageRepository)(nil)

@@ -1,4 +1,3 @@
-version: '3.9'
 services:
   bbs:
     build: .
@@ -7,12 +6,40 @@ services:
     ports:
       - "${WOLFBBS_SSH_PORT:-2222}:2222"
     environment:
-      WOLFBBS_DATABASE_URL: "${WOLFBBS_DATABASE_URL}"
+      WOLFBBS_DATABASE_URL: "${WOLFBBS_DATABASE_URL:-postgres://wolfbbs:wolfbbs@postgres:5432/wolfbbs?sslmode=disable}"
       WOLFBBS_DB_CONNECT_RETRIES: "15"
       WOLFBBS_DB_CONNECT_DELAY_MS: "500"
       WOLFBBS_PORT: "2222"
+      WOLFBBS_OFFLINE_DIR: "${WOLFBBS_OFFLINE_DIR:-/app/.wolfbbs/offline}"
+      WOLFBBS_DOOR_DATA_ROOT: "${WOLFBBS_DOOR_DATA_ROOT:-/app/.wolfbbs/doors}"
+      WOLFBBS_DOOR_DROPFILES: "${WOLFBBS_DOOR_DROPFILES:-}"
+      WOLFBBS_DOORPARTY_ENABLE: "${WOLFBBS_DOORPARTY_ENABLE:-false}"
+      WOLFBBS_DOORPARTY_COMMAND: "${WOLFBBS_DOORPARTY_COMMAND:-}"
+      WOLFBBS_DOORPARTY_ARGS: "${WOLFBBS_DOORPARTY_ARGS:-}"
+      WOLFBBS_BBSLINK_ENABLE: "${WOLFBBS_BBSLINK_ENABLE:-false}"
+      WOLFBBS_BBSLINK_COMMAND: "${WOLFBBS_BBSLINK_COMMAND:-}"
+      WOLFBBS_BBSLINK_ARGS: "${WOLFBBS_BBSLINK_ARGS:-}"
+      WOLFBBS_TELNET_BRIDGE_ENABLE: "${WOLFBBS_TELNET_BRIDGE_ENABLE:-false}"
+      WOLFBBS_TELNET_BRIDGE_COMMAND: "${WOLFBBS_TELNET_BRIDGE_COMMAND:-}"
+      WOLFBBS_TELNET_BRIDGE_ARGS: "${WOLFBBS_TELNET_BRIDGE_ARGS:-}"
+      SMTP_HOST: "${SMTP_HOST:-}"
+      SMTP_PORT: "${SMTP_PORT:-587}"
+      SMTP_USER: "${SMTP_USER:-}"
+      SMTP_PASS: "${SMTP_PASS:-}"
+      FROM_DOMAIN: "${FROM_DOMAIN:-}"
+      WOLFBBS_SMTP_HOST: "${WOLFBBS_SMTP_HOST:-}"
+      WOLFBBS_SMTP_PORT: "${WOLFBBS_SMTP_PORT:-587}"
+      WOLFBBS_SMTP_USER: "${WOLFBBS_SMTP_USER:-}"
+      WOLFBBS_SMTP_PASS: "${WOLFBBS_SMTP_PASS:-}"
+      WOLFBBS_FROM_DOMAIN: "${WOLFBBS_FROM_DOMAIN:-}"
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "2222"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
   web:
     build: .
     entrypoint: ["/app/wolfbbs-web"]
@@ -20,11 +47,60 @@ services:
     ports:
       - "${WOLFBBS_WEB_PORT:-8080}:8080"
     environment:
-      WOLFBBS_DATABASE_URL: "${WOLFBBS_DATABASE_URL}"
+      WOLFBBS_DATABASE_URL: "${WOLFBBS_DATABASE_URL:-postgres://wolfbbs:wolfbbs@postgres:5432/wolfbbs?sslmode=disable}"
       WOLFBBS_DB_CONNECT_RETRIES: "15"
       WOLFBBS_DB_CONNECT_DELAY_MS: "500"
+      WOLFBBS_SECURE_COOKIE: "${WOLFBBS_SECURE_COOKIE:-false}"
+      WOLFBBS_READ_ONLY: "${WOLFBBS_READ_ONLY:-false}"
+      WOLFBBS_INBOUND_TOKEN: "${WOLFBBS_INBOUND_TOKEN:-dev-inbound-token}"
+      WOLFBBS_MAILIN_ALLOW_DOMAINS: "${WOLFBBS_MAILIN_ALLOW_DOMAINS:-}"
+      WOLFBBS_RESET_TTL_MINUTES: "${WOLFBBS_RESET_TTL_MINUTES:-30}"
+      WOLFBBS_DEV_SHOW_RESET_TOKEN: "${WOLFBBS_DEV_SHOW_RESET_TOKEN:-false}"
+      WOLFBBS_PUBLIC_BASE_URL: "${WOLFBBS_PUBLIC_BASE_URL:-}"
+      WOLFBBS_BOOTSTRAP_ADMIN_HANDLE: "${WOLFBBS_BOOTSTRAP_ADMIN_HANDLE:-sysop}"
+      WOLFBBS_BOOTSTRAP_ADMIN_PASSWORD: "${WOLFBBS_BOOTSTRAP_ADMIN_PASSWORD:-wolfbbs-sysop}"
+      WOLFBBS_BOOTSTRAP_MODERATOR_HANDLE: "${WOLFBBS_BOOTSTRAP_MODERATOR_HANDLE:-}"
+      WOLFBBS_BOOTSTRAP_MODERATOR_PASSWORD: "${WOLFBBS_BOOTSTRAP_MODERATOR_PASSWORD:-}"
+      WOLFBBS_BOOTSTRAP_USER_HANDLE: "${WOLFBBS_BOOTSTRAP_USER_HANDLE:-}"
+      WOLFBBS_BOOTSTRAP_USER_PASSWORD: "${WOLFBBS_BOOTSTRAP_USER_PASSWORD:-}"
+      WOLFBBS_OFFLINE_DIR: "${WOLFBBS_OFFLINE_DIR:-/app/.wolfbbs/offline}"
+      WOLFBBS_DOOR_DATA_ROOT: "${WOLFBBS_DOOR_DATA_ROOT:-/app/.wolfbbs/doors}"
+      WOLFBBS_DOOR_DROPFILES: "${WOLFBBS_DOOR_DROPFILES:-}"
+      WOLFBBS_DOORPARTY_ENABLE: "${WOLFBBS_DOORPARTY_ENABLE:-false}"
+      WOLFBBS_DOORPARTY_COMMAND: "${WOLFBBS_DOORPARTY_COMMAND:-}"
+      WOLFBBS_DOORPARTY_ARGS: "${WOLFBBS_DOORPARTY_ARGS:-}"
+      WOLFBBS_BBSLINK_ENABLE: "${WOLFBBS_BBSLINK_ENABLE:-false}"
+      WOLFBBS_BBSLINK_COMMAND: "${WOLFBBS_BBSLINK_COMMAND:-}"
+      WOLFBBS_BBSLINK_ARGS: "${WOLFBBS_BBSLINK_ARGS:-}"
+      WOLFBBS_TELNET_BRIDGE_ENABLE: "${WOLFBBS_TELNET_BRIDGE_ENABLE:-false}"
+      WOLFBBS_TELNET_BRIDGE_COMMAND: "${WOLFBBS_TELNET_BRIDGE_COMMAND:-}"
+      WOLFBBS_TELNET_BRIDGE_ARGS: "${WOLFBBS_TELNET_BRIDGE_ARGS:-}"
+      WOLFBBS_ACTIVITYPUB_ENABLE: "${WOLFBBS_ACTIVITYPUB_ENABLE:-false}"
+      WOLFBBS_ACTIVITYPUB_BASE_URL: "${WOLFBBS_ACTIVITYPUB_BASE_URL:-}"
+      WOLFBBS_CONTENT_HOST: "${WOLFBBS_CONTENT_HOST:-localhost}"
+      WOLFBBS_GOPHER_LISTEN: "${WOLFBBS_GOPHER_LISTEN:-}"
+      WOLFBBS_NNTP_LISTEN: "${WOLFBBS_NNTP_LISTEN:-}"
+      WOLFBBS_NNTPS_LISTEN: "${WOLFBBS_NNTPS_LISTEN:-}"
+      WOLFBBS_NNTPS_CERT: "${WOLFBBS_NNTPS_CERT:-}"
+      WOLFBBS_NNTPS_KEY: "${WOLFBBS_NNTPS_KEY:-}"
+      SMTP_HOST: "${SMTP_HOST:-}"
+      SMTP_PORT: "${SMTP_PORT:-587}"
+      SMTP_USER: "${SMTP_USER:-}"
+      SMTP_PASS: "${SMTP_PASS:-}"
+      FROM_DOMAIN: "${FROM_DOMAIN:-}"
+      WOLFBBS_SMTP_HOST: "${WOLFBBS_SMTP_HOST:-}"
+      WOLFBBS_SMTP_PORT: "${WOLFBBS_SMTP_PORT:-587}"
+      WOLFBBS_SMTP_USER: "${WOLFBBS_SMTP_USER:-}"
+      WOLFBBS_SMTP_PASS: "${WOLFBBS_SMTP_PASS:-}"
+      WOLFBBS_FROM_DOMAIN: "${WOLFBBS_FROM_DOMAIN:-}"
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
   irc:
     build: .
     entrypoint: ["/app/wolfbbs-irc"]
@@ -33,9 +109,10 @@ services:
       - "${WOLFBBS_IRC_PORT:-6667}:6667"
       - "${WOLFBBS_IRC_TLS_PORT:-6697}:6697"
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     environment:
-      WOLFBBS_DATABASE_URL: "${WOLFBBS_DATABASE_URL}"
+      WOLFBBS_DATABASE_URL: "${WOLFBBS_DATABASE_URL:-postgres://wolfbbs:wolfbbs@postgres:5432/wolfbbs?sslmode=disable}"
       WOLFBBS_IRC_TLS_LISTEN: "${WOLFBBS_IRC_TLS_LISTEN:-}"
       WOLFBBS_IRC_TLS_CERT: "${WOLFBBS_IRC_TLS_CERT:-}"
       WOLFBBS_IRC_TLS_KEY: "${WOLFBBS_IRC_TLS_KEY:-}"
@@ -51,7 +128,8 @@ services:
       WOLFBBS_INBOUND_TOKEN: "${WOLFBBS_INBOUND_TOKEN:-dev-inbound-token}"
       WOLFBBS_MAILIN_ALLOW_DOMAINS: "${WOLFBBS_MAILIN_ALLOW_DOMAINS:-}"
     depends_on:
-      - web
+      web:
+        condition: service_healthy
   postgres:
     image: postgres:16
     environment:
@@ -63,7 +141,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U wolfbbs"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-wolfbbs}"]
       interval: 2s
       timeout: 2s
       retries: 12

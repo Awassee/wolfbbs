@@ -31,16 +31,16 @@ type EmailGateway struct {
 
 func LoadEmailConfigFromEnv() EmailConfig {
 	cfg := EmailConfig{
-		Host:             strings.TrimSpace(os.Getenv("SMTP_HOST")),
+		Host:             strings.TrimSpace(firstEnv("SMTP_HOST", "WOLFBBS_SMTP_HOST")),
 		Port:             587,
-		User:             strings.TrimSpace(os.Getenv("SMTP_USER")),
-		Pass:             strings.TrimSpace(os.Getenv("SMTP_PASS")),
-		FromDomain:       strings.TrimSpace(os.Getenv("FROM_DOMAIN")),
+		User:             strings.TrimSpace(firstEnv("SMTP_USER", "WOLFBBS_SMTP_USER")),
+		Pass:             strings.TrimSpace(firstEnv("SMTP_PASS", "WOLFBBS_SMTP_PASS")),
+		FromDomain:       strings.TrimSpace(firstEnv("FROM_DOMAIN", "WOLFBBS_FROM_DOMAIN")),
 		MaxRecipients:    3,
 		MaxMessageBytes:  64 * 1024,
 		RateLimitPerHour: 20,
 	}
-	if value := strings.TrimSpace(os.Getenv("SMTP_PORT")); value != "" {
+	if value := strings.TrimSpace(firstEnv("SMTP_PORT", "WOLFBBS_SMTP_PORT")); value != "" {
 		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 {
 			cfg.Port = parsed
 		}
@@ -61,6 +61,15 @@ func LoadEmailConfigFromEnv() EmailConfig {
 		}
 	}
 	return cfg
+}
+
+func firstEnv(names ...string) string {
+	for _, name := range names {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func NewEmailGateway(cfg EmailConfig) *EmailGateway {

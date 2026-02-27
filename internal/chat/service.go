@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/lib/pq"
+	"wolfbbs/internal/events"
 	"wolfbbs/internal/repository"
 )
 
@@ -79,6 +80,7 @@ type Service struct {
 	listenerDone chan struct{}
 	audit        []ModerationAction
 	pollInterval time.Duration
+	bus          *events.Bus
 }
 
 type chatSubscription struct {
@@ -102,6 +104,10 @@ func NewServiceForTest() *Service {
 
 func NewServiceWithStorage(dsn string) *Service {
 	return newServiceWithStorage(strings.TrimSpace(dsn))
+}
+
+func (s *Service) SetEventBus(bus *events.Bus) {
+	s.bus = bus
 }
 
 func newServiceWithStorage(dsn string) *Service {
@@ -274,8 +280,7 @@ func (s *Service) ensureSchema() error {
 )`,
 		`CREATE INDEX IF NOT EXISTS idx_chat_rate_events_nick_created ON chat_rate_events(nick, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_chat_mod_actions_created ON chat_moderation_actions(created_at DESC)`,
-		`CREATE INDEX IF NOT EXISTS idx_chat_mod_state_channel_nick ON chat_moderation_state(channel, nick, action)
-)`,
+		`CREATE INDEX IF NOT EXISTS idx_chat_mod_state_channel_nick ON chat_moderation_state(channel, nick, action)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -512,17 +517,20 @@ func (s *Service) JoinChannel(nick, channel string) {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.ensureChannel(channel)
 	s.channels[channel][nick] = true
 	s.setPresenceLocked(nick, channel)
+	s.mu.Unlock()
+	s.publish("chat.join", map[string]string{
+		"nick":    nick,
+		"channel": channel,
+	})
 }
 
 func (s *Service) LeaveChannel(nick, channel string) {
 	nick = normalizeNick(nick)
 	channel = normalizeChannel(channel)
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if members, ok := s.channels[channel]; ok {
 		delete(members, nick)
 	}
@@ -532,6 +540,11 @@ func (s *Service) LeaveChannel(nick, channel string) {
 	if s.db != nil {
 		_, _ = s.db.Exec(`UPDATE chat_presence SET online = FALSE, area = '' WHERE nick = $1`, nick)
 	}
+	s.mu.Unlock()
+	s.publish("chat.leave", map[string]string{
+		"nick":    nick,
+		"channel": channel,
+	})
 }
 
 func (s *Service) Subscribe(channel, nick string) (chan Message, func()) {
@@ -749,6 +762,11 @@ func (s *Service) Post(nick, channel, body string) (Message, error) {
 			}
 		}(subscriber.messages)
 	}
+	s.publish("chat.post", map[string]string{
+		"nick":    msg.From,
+		"channel": msg.Channel,
+		"id":      strconv.FormatInt(msg.ID, 10),
+	})
 	return msg, nil
 }
 
@@ -1062,6 +1080,12 @@ func (s *Service) Ban(channel, nick, actor, reason, duration string) {
 	}
 	s.persistModerationStateLocked("ban", channel, nick, state)
 	s.persistModerationActionLocked("ban", channel, actor, nick, reason)
+	s.publish("chat.moderation", map[string]string{
+		"action":  "ban",
+		"channel": channel,
+		"actor":   actor,
+		"target":  nick,
+	})
 }
 
 func (s *Service) Unban(channel, nick string) {
@@ -1072,6 +1096,11 @@ func (s *Service) Unban(channel, nick string) {
 	delete(s.bans[channel], nick)
 	s.removeModerationStateLocked("ban", channel, nick)
 	s.persistModerationActionLocked("unban", channel, "system", nick, "")
+	s.publish("chat.moderation", map[string]string{
+		"action":  "unban",
+		"channel": channel,
+		"target":  nick,
+	})
 }
 
 func (s *Service) Mute(channel, nick, actor, reason, duration string) {
@@ -1098,6 +1127,12 @@ func (s *Service) Mute(channel, nick, actor, reason, duration string) {
 	})
 	s.persistModerationStateLocked("mute", channel, nick, state)
 	s.persistModerationActionLocked("mute", channel, actor, nick, reason)
+	s.publish("chat.moderation", map[string]string{
+		"action":  "mute",
+		"channel": channel,
+		"actor":   actor,
+		"target":  nick,
+	})
 }
 
 func (s *Service) Unmute(channel, nick string) {
@@ -1108,6 +1143,11 @@ func (s *Service) Unmute(channel, nick string) {
 	delete(s.mutes[channel], nick)
 	s.removeModerationStateLocked("mute", channel, nick)
 	s.persistModerationActionLocked("unmute", channel, "system", nick, "")
+	s.publish("chat.moderation", map[string]string{
+		"action":  "unmute",
+		"channel": channel,
+		"target":  nick,
+	})
 }
 
 func (s *Service) Kick(channel, actor, target, reason string) {
@@ -1130,6 +1170,19 @@ func (s *Service) Kick(channel, actor, target, reason string) {
 		CreatedAt: time.Now(),
 	})
 	s.persistModerationActionLocked("kick", channel, actor, target, reason)
+	s.publish("chat.moderation", map[string]string{
+		"action":  "kick",
+		"channel": channel,
+		"actor":   actor,
+		"target":  target,
+	})
+}
+
+func (s *Service) publish(name string, fields map[string]string) {
+	if s == nil || s.bus == nil {
+		return
+	}
+	s.bus.Publish(name, fields)
 }
 
 func (s *Service) ModerationLog(limit int) []ModerationAction {

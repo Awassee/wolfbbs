@@ -44,3 +44,16 @@ func TestANSIHelpers(t *testing.T) {
 		}
 	}
 }
+
+func TestApplyOutputProfileStripsANSIAndBoxes(t *testing.T) {
+	raw := "\x1b[31m╔═╗\x1b[0m\r\n\x1b[32m║x║\x1b[0m\r\n\x1b[33m╚═╝\x1b[0m"
+	got := ApplyOutputProfile(raw, false, "ascii")
+	if strings.Contains(got, "\x1b[") {
+		t.Fatalf("expected ansi escapes removed, got %q", got)
+	}
+	for _, want := range []string{"+-+", "|x|", "+-+"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in %q", want, got)
+		}
+	}
+}

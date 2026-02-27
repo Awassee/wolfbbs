@@ -18,3 +18,5 @@ jobs:
         run: shellcheck install.sh
       - name: Validate dry-run
         run: bash install.sh --dry-run --with-docker
+      - name: Verify acceptance fast checks
+        run: scripts/verify.sh --fast

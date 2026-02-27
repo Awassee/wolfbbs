@@ -1,0 +1,37 @@
+{
+  "id": "fishing-derby",
+  "display_name": "Fishing Derby",
+  "short_description": "Daily catches with rarity tables and seasonal events.",
+  "category": "arcade",
+  "version": "1.0.0",
+  "entry_type": "native",
+  "entrypoint": "native:fishing-derby",
+  "hotkey": "N",
+  "concurrency_mode": "per_user",
+  "requires": {
+    "ansi": true,
+    "min_cols": 80,
+    "min_rows": 25
+  },
+  "capabilities": {
+    "needs_network": false,
+    "needs_filesystem_write": false,
+    "needs_sound": false
+  },
+  "data_retention": {
+    "messages_days": 30,
+    "logs_days": 90
+  },
+  "admin_defaults": {
+    "enabled": true,
+    "daily_turns": 20,
+    "time_bank_max": 120,
+    "reset_hour": 0,
+    "max_run_seconds": 180,
+    "max_output_rate": 4096
+  },
+  "required_role": "user",
+  "help_text": "Fishing Derby: cast daily trips and target leaderboard species.",
+  "rules_text": "No automation; catch tables are server-authoritative.",
+  "args": []
+}

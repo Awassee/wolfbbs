@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +17,23 @@ import (
 	"wolfbbs/internal/repository"
 	"wolfbbs/internal/sshserver"
 )
+
+type safeBuffer struct {
+	mu sync.RWMutex
+	b  bytes.Buffer
+}
+
+func (s *safeBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *safeBuffer) String() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.b.String()
+}
 
 func TestSSHLoginFlow(t *testing.T) {
 	userRepo := repository.NewInMemoryUserRepository()
@@ -70,7 +88,7 @@ func TestSSHLoginFlow(t *testing.T) {
 		t.Fatalf("shell: %v", err)
 	}
 
-	var out bytes.Buffer
+	var out safeBuffer
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -112,6 +130,7 @@ func TestSSHBoardPostFlow(t *testing.T) {
 	msgRepo := repository.NewInMemoryMessageRepository()
 	mailRepo := repository.NewInMemoryPrivateMailRepository()
 	adminRepo := repository.NewInMemoryAdminRepository()
+	doorRepo := repository.NewInMemoryDoorRepository()
 
 	authSvc := auth.NewService(userRepo)
 	user, err := authSvc.Register("poster", "password123")
@@ -124,7 +143,7 @@ func TestSSHBoardPostFlow(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := sshserver.New("127.0.0.1:0", logger, authSvc)
-	srv.SetRepositories(userRepo, boardRepo, msgRepo, mailRepo, adminRepo)
+	srv.SetRepositories(userRepo, boardRepo, msgRepo, mailRepo, adminRepo, doorRepo)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -167,7 +186,7 @@ func TestSSHBoardPostFlow(t *testing.T) {
 		t.Fatalf("shell: %v", err)
 	}
 
-	var out bytes.Buffer
+	var out safeBuffer
 	done := make(chan struct{})
 	go func() {
 		defer close(done)

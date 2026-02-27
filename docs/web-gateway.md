@@ -14,6 +14,12 @@
 - In the web companion, results are HTML-escaped into a `<pre>` view and the same limits apply.
 - Optional "save for offline reading" writes:
   - `WOLFBBS_OFFLINE_DIR/<handle>/<timestamp>-<slug>.txt`
+- Web companion also provides `FileBase` mode at `/gateway?view=files`:
+  - browse/search indexed files (query + tags + area)
+  - set per-user ratings
+  - manage per-user download queue
+  - issue short-lived ticket links and download via `/gateway?download=<token>`
+  - stream queued files as a batch ZIP via `/gateway?view=files&batch=1`
 
 ## Safety
 - SSRF deny-by-default:
@@ -28,3 +34,8 @@
 - `Save for offline reading` stores extracted text in per-user folder path:
   - `offline/<user_handle>/<timestamp>-<slug>.txt`
 - Offline list is displayed in web companion and future SSH reader mode.
+
+## File Download Tickets
+- Tickets are stored server-side with expiry and one-time use semantics.
+- Default ticket TTL is 15 minutes.
+- Ticket access is scoped to the owning user unless a `sysop` is performing the request.

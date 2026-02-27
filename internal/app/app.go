@@ -2,14 +2,21 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"wolfbbs/internal/auth"
+	"wolfbbs/internal/chat"
+	"wolfbbs/internal/config"
+	"wolfbbs/internal/events"
+	"wolfbbs/internal/loginserver"
 	"wolfbbs/internal/repository"
+	"wolfbbs/internal/session"
 	"wolfbbs/internal/sshserver"
 )
 
@@ -31,6 +38,8 @@ func Run(cfg Config) error {
 				Messages: repository.NewInMemoryMessageRepository(),
 				Mail:     repository.NewInMemoryPrivateMailRepository(),
 				Admin:    repository.NewInMemoryAdminRepository(),
+				Doors:    repository.NewInMemoryDoorRepository(),
+				Resets:   repository.NewInMemoryPasswordResetRepository(),
 				Close:    func() {},
 			}
 		} else {
@@ -40,18 +49,93 @@ func Run(cfg Config) error {
 	defer storage.Close()
 
 	authSvc := auth.NewService(storage.Users)
+	authSvc.SetPasswordResetRepository(storage.Resets)
+	bus := events.NewBus()
+	bus.Subscribe("*", func(ev events.Event) {
+		logger.Debug("event", "name", ev.Name, "fields", ev.Fields)
+	})
+	authSvc.SetEventBus(bus)
 	server := sshserver.New(cfg.ListenAddr, logger, authSvc)
-	server.SetRepositories(storage.Users, storage.Boards, storage.Messages, storage.Mail, storage.Admin)
+	server.SetEventBus(bus)
+	nodeMgr := session.NewManager(255, 256)
+	server.SetSessionManager(nodeMgr)
+	server.SetRepositories(storage.Users, storage.Boards, storage.Messages, storage.Mail, storage.Admin, storage.Doors)
+	chatSvc := chat.NewServiceWithStorage(cfg.DBURL)
+	chatSvc.SetEventBus(bus)
+	server.SetChatService(chatSvc)
 	if cfg.DBURL != "" {
 		logger.Info("using configured database", "url", cfg.DBURL)
 	} else {
 		logger.Info("using local repository fallback")
 	}
 
-	errCh := make(chan error, 1)
+	runtimeCfg, runtimeErr := config.CachedRuntime()
+	if runtimeErr != nil {
+		logger.Warn("runtime config invalid; using defaults for optional login transports", "error", runtimeErr)
+		runtimeCfg = config.DefaultRuntime()
+	}
+
+	var telnetSrv *loginserver.TelnetServer
+	if runtimeCfg.Login.Telnet.Enabled {
+		telnetSrv = loginserver.NewTelnetServer(runtimeCfg.Login.Telnet.Listen, logger, authSvc, nodeMgr)
+	}
+
+	var wsSrv *loginserver.WebSocketServer
+	if runtimeCfg.Login.WebSocket.Enabled {
+		wsSrv, err = loginserver.NewWebSocketServer(
+			runtimeCfg.Login.WebSocket.Listen,
+			runtimeCfg.Login.WebSocket.Path,
+			logger,
+			authSvc,
+			nodeMgr,
+			parseCSV(runtimeCfg.Login.TrustedProxies),
+		)
+		if err != nil {
+			return fmt.Errorf("websocket login server config: %w", err)
+		}
+	}
+	var wssSrv *loginserver.WebSocketServer
+	if runtimeCfg.Login.WebSocketTLS.Enabled {
+		wssSrv, err = loginserver.NewWebSocketServer(
+			runtimeCfg.Login.WebSocketTLS.Listen,
+			runtimeCfg.Login.WebSocketTLS.Path,
+			logger,
+			authSvc,
+			nodeMgr,
+			parseCSV(runtimeCfg.Login.TrustedProxies),
+		)
+		if err != nil {
+			return fmt.Errorf("websocket tls login server config: %w", err)
+		}
+	}
+
+	errCh := make(chan error, 4)
 	go func() {
-		errCh <- server.ListenAndServe()
+		if err := server.ListenAndServe(); err != nil {
+			errCh <- fmt.Errorf("ssh server: %w", err)
+		}
 	}()
+	if telnetSrv != nil {
+		go func() {
+			if err := telnetSrv.ListenAndServe(); err != nil {
+				errCh <- fmt.Errorf("telnet login server: %w", err)
+			}
+		}()
+	}
+	if wsSrv != nil {
+		go func() {
+			if err := wsSrv.ListenAndServe(); err != nil {
+				errCh <- fmt.Errorf("websocket login server: %w", err)
+			}
+		}()
+	}
+	if wssSrv != nil {
+		go func() {
+			if err := wssSrv.ListenAndServeTLS(runtimeCfg.Login.WebSocketTLS.Cert, runtimeCfg.Login.WebSocketTLS.Key); err != nil {
+				errCh <- fmt.Errorf("websocket tls login server: %w", err)
+			}
+		}()
+	}
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
@@ -61,8 +145,40 @@ func Run(cfg Config) error {
 		logger.Info("shutdown signal received", "signal", sig.String())
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		return server.Shutdown(ctx)
+		var shutdownErr error
+		if wssSrv != nil {
+			if err := wssSrv.Shutdown(ctx); err != nil && shutdownErr == nil {
+				shutdownErr = err
+			}
+		}
+		if wsSrv != nil {
+			if err := wsSrv.Shutdown(ctx); err != nil && shutdownErr == nil {
+				shutdownErr = err
+			}
+		}
+		if telnetSrv != nil {
+			if err := telnetSrv.Shutdown(ctx); err != nil && shutdownErr == nil {
+				shutdownErr = err
+			}
+		}
+		if err := server.Shutdown(ctx); err != nil && shutdownErr == nil {
+			shutdownErr = err
+		}
+		return shutdownErr
 	case err := <-errCh:
 		return err
 	}
+}
+
+func parseCSV(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		out = append(out, part)
+	}
+	return out
 }

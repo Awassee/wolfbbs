@@ -142,10 +142,10 @@ Password: __________________________
 ### Main menu
 ```text
 ┌════════════════════ WolfBBS Main Menu ════════════┐
-│ [M]essage Boards   [P]rivate Mail   [F]iles     │
-│ [C]hat             [G]ateways       [S]ettings  │
-│ [D]oors            [A]dmin          [L]ast Callers│
-│ [W]ho's Online     [Q]uit                        │
+│ [M]essage Boards   [P]rivate Mail   [F]iles      │
+│ [C]hat             [G]ateways       [D]oors      │
+│ [N]ewscan          [S]ettings       [A]dmin      │
+│ [L]ast Callers     [W]ho's Online   [Q]uit       │
 └───────────────────────────────────────────────────┘
 
 Enter selection:
@@ -200,6 +200,22 @@ Enter selection:
 └────────────────────────────────────────────────────┘
 ```
 
+### Doors / Door Hub
+```text
+┌──────────────────────────── Door Hub ───────────────────────────┐
+│ [R]eturn [Q]uit [!]Favorite Toggle [?]Help [T]Trophies          │
+│ Favorites: SPACE-TRADER-WARS, PIT-ARENA                         │
+│ Recent: DRAGON-TAVERN-LEGENDS, FISHING-DERBY                    │
+│                                                                  │
+│ HK  Category   Door Name                          Turns  Flags   │
+│ ────────────────────────────────────────────────────────────────  │
+│ A   STRATEGY   Space Trader Wars                  34     *       │
+│ B   RPG        Dragon Tavern Legends              39             │
+│ K   ARCADE     The Pit Arena                      18     *       │
+│ X   UTILITY    FileBase Pro                        -             │
+└──────────────────────────────────────────────────────────────────┘
+```
+
 ### Last Callers
 ```text
 ┌─────────────── Last Callers / Traffic ───────────────┐
@@ -219,6 +235,57 @@ Enter selection:
 └───────────────────────────────────────────────────────┘
 ```
 
+### Context Help (new `?` panels)
+```text
+┌────────────────── Help: Main Menu ──────────────────┐
+│ Main Menu Key Guide                                 │
+│                                                      │
+│ M Message Boards     P Private Mail                 │
+│ F Files              C Chat                         │
+│ G Gateways           D Doors                        │
+│ N Newscan Digest     S Settings                     │
+│ A Sysop/Admin                                       │
+│ L Last Callers       W Who's Online                 │
+│ Q Quit               Esc Back                       │
+│ ? Show this panel                                    │
+│                                                      │
+│ Press any key to return.                             │
+└──────────────────────────────────────────────────────┘
+```
+
+### Guest Tour
+```text
+┌────────────────────── Guest Tour ──────────────────────┐
+│ Read-only guided tour. No posting in this mode.        │
+│                                                         │
+│ Last callers:                                           │
+│ - Node 01 byteforge   02-27 10:14                      │
+│ - Node 03 shells      02-27 10:08                      │
+│                                                         │
+│ One-liners (#lobby):                                    │
+│ - [10:15] sysop: Welcome to WolfBBS.                   │
+│                                                         │
+│ Featured thread: General / Build status and node logs  │
+│ Today's download pick: FileBase Pro door (X).          │
+│                                                         │
+│ Press any key to return to login.                       │
+└─────────────────────────────────────────────────────────┘
+```
+
+```text
+┌────────────────── Help: Message Boards ─────────────┐
+│ Boards Navigation                                    │
+│                                                      │
+│ Board list: enter ID or Q to return                 │
+│ Inside board: N New, R Read, Q Quit                 │
+│ Reader: R Reply, N/P Next/Prev, Q Exit              │
+│                                                      │
+│ Paging: Space/Enter continue, Q/Esc abort            │
+│                                                      │
+│ Press any key to return.                             │
+└──────────────────────────────────────────────────────┘
+```
+
 ## 3) Keybindings and Input Notes
 
 - `↑ ↓ ← →` -> `UP`, `DOWN`, `LEFT`, `RIGHT` (menu/list movement)
@@ -228,6 +295,8 @@ Enter selection:
 - `Esc` / `Q` -> back/cancel
 - `Ctrl+C` -> abort flow
 - `?` -> help
+- `!` -> toggle Door favorite in Door Hub
+- `T` -> Door scores/trophies screen in Door Hub
 - `SPACE` -> pager continue
 
 Notes:

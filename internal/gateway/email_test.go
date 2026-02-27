@@ -38,3 +38,28 @@ func TestEmailGatewayValidateOutbound(t *testing.T) {
 		t.Fatalf("expected max message bytes error")
 	}
 }
+
+func TestLoadEmailConfigFromWolfbbsPrefixedEnv(t *testing.T) {
+	t.Setenv("WOLFBBS_SMTP_HOST", "smtp.example.com")
+	t.Setenv("WOLFBBS_SMTP_PORT", "2525")
+	t.Setenv("WOLFBBS_SMTP_USER", "mailer")
+	t.Setenv("WOLFBBS_SMTP_PASS", "secret")
+	t.Setenv("WOLFBBS_FROM_DOMAIN", "bbs.example.com")
+
+	cfg := LoadEmailConfigFromEnv()
+	if cfg.Host != "smtp.example.com" {
+		t.Fatalf("unexpected host %q", cfg.Host)
+	}
+	if cfg.Port != 2525 {
+		t.Fatalf("unexpected port %d", cfg.Port)
+	}
+	if cfg.User != "mailer" {
+		t.Fatalf("unexpected user %q", cfg.User)
+	}
+	if cfg.Pass != "secret" {
+		t.Fatalf("unexpected pass")
+	}
+	if cfg.FromDomain != "bbs.example.com" {
+		t.Fatalf("unexpected from domain %q", cfg.FromDomain)
+	}
+}

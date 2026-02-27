@@ -17,6 +17,8 @@ import (
 
 	"wolfbbs/internal/auth"
 	"wolfbbs/internal/chat"
+	"wolfbbs/internal/events"
+	"wolfbbs/internal/rbac"
 	"wolfbbs/internal/repository"
 )
 
@@ -31,7 +33,6 @@ type ircState struct {
 	canModerate bool
 	channel     string
 	hitTimes    []time.Time
-	lastMessage int64
 }
 
 type ircClient struct {
@@ -83,7 +84,13 @@ func main() {
 	}
 	defer storage.Close()
 	authSvc := auth.NewService(storage.Users)
+	bus := events.NewBus()
+	bus.Subscribe("*", func(ev events.Event) {
+		log.Printf("event=%s fields=%v", ev.Name, ev.Fields)
+	})
+	authSvc.SetEventBus(bus)
 	chatSvc := chat.NewServiceWithStorage(strings.TrimSpace(*dbURL))
+	chatSvc.SetEventBus(bus)
 
 	ln, err := net.Listen("tcp", *listen)
 	if err != nil {
@@ -485,7 +492,6 @@ func handleIRCConn(conn net.Conn, svc *chat.Service, authSvc *auth.Service, ip s
 				_ = replyfConn(client, ":%s 437 %s %s :%s", serverName, nickOrStar(state.nick), target, err.Error())
 				continue
 			}
-			state.lastMessage = msg.ID
 			payload := noticeLine(state.nick, target, msg.Body)
 			if cmd == "PRIVMSG" {
 				_ = broadcastToChannel(target, payload)
@@ -597,8 +603,7 @@ func tryAuthenticate(client *ircClient, authSvc *auth.Service) {
 	}
 	state.authed = true
 	if user != nil {
-		role := strings.ToLower(strings.TrimSpace(user.Role))
-		state.canModerate = role == "moderator" || role == "admin" || role == "sysop"
+		state.canModerate = rbac.AtLeast(user.Role, rbac.RoleModerator)
 	}
 	if state.nick == "" {
 		state.nick = userHandle
@@ -768,8 +773,8 @@ func noticeLine(from, target, body string) string {
 }
 
 func startChatPoller(client *ircClient, svc *chat.Service, channelUpdate <-chan string, done <-chan struct{}) {
-	state := client.state
-	current := state.channel
+	current := ""
+	lastMessage := int64(0)
 	var stream <-chan chat.Message
 	var closeStream func()
 	subscribe := func(channel string) {
@@ -781,7 +786,7 @@ func startChatPoller(client *ircClient, svc *chat.Service, channelUpdate <-chan 
 		if channel == "" {
 			return
 		}
-		ch, closeFn := svc.Subscribe(channel, state.nick)
+		ch, closeFn := svc.Subscribe(channel, "")
 		stream = ch
 		closeStream = closeFn
 	}
@@ -804,28 +809,28 @@ func startChatPoller(client *ircClient, svc *chat.Service, channelUpdate <-chan 
 				stream = nil
 				continue
 			}
-			if !state.authed || current == "" {
+			if current == "" {
 				continue
 			}
 			if msg.Channel != current {
 				continue
 			}
-			if msg.ID <= state.lastMessage {
+			if msg.ID <= lastMessage {
 				continue
 			}
-			state.lastMessage = msg.ID
+			lastMessage = msg.ID
 			line := fmt.Sprintf(":%s PRIVMSG %s :%s", msg.From, msg.Channel, msg.Body)
 			_ = replyfConn(client, "%s", line)
 		case <-ticker.C:
-			if !state.authed || current == "" {
+			if current == "" {
 				continue
 			}
-			messages := svc.HistorySince(current, state.lastMessage, 20)
+			messages := svc.HistorySince(current, lastMessage, 20)
 			for _, msg := range messages {
-				if msg.ID <= state.lastMessage {
+				if msg.ID <= lastMessage {
 					continue
 				}
-				state.lastMessage = msg.ID
+				lastMessage = msg.ID
 				line := fmt.Sprintf(":%s PRIVMSG %s :%s", msg.From, msg.Channel, msg.Body)
 				_ = replyfConn(client, "%s", line)
 			}
