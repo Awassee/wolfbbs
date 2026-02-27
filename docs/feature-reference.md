@@ -67,6 +67,10 @@ This document maps product features to concrete runtime surfaces (binaries, rout
 - Doors: `?`
 - Settings: `?`
 
+Theme/MCI runtime:
+- Optional HJSON theme pack via `WOLFBBS_THEME_FILE`
+- Optional settings MCI template via `WOLFBBS_MCI_SETTINGS_FILE`
+
 Reference: `docs/help-guides.md`, `docs/screens.md`.
 
 ## Web Companion Surface
@@ -164,6 +168,7 @@ Documented in `docs/irc-compat.md`:
   - FTN/BSO/QWK board packet export/import
   - netmail queue + import processing
   - inbound/outbound/processed spool tracking
+  - board/netmail routing helpers (`WOLFBBS_NET_BOARD_ROUTES`, `WOLFBBS_NET_HANDLE_ROUTES`)
 - Sysop CLI:
   - `oputil network status`
   - `oputil network export --format <ftn|bso|qwk> --board <id>`
@@ -234,6 +239,7 @@ Reference: `docs/content-servers.md`, `docs/activitypub.md`.
 - WFC-style dashboard (`/admin/system`)
 - health/readiness/metrics endpoints
 - CLI ops (`cmd/oputil`)
+- optional ACS policy gate for admin routes (`WOLFBBS_ACS_ADMIN`)
 
 ## Related Documentation Index
 

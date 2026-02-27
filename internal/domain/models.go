@@ -52,6 +52,17 @@ type MessagePointer struct {
 	UpdatedAt  time.Time
 }
 
+type MessageReport struct {
+	ID         int64
+	MessageID  int64
+	ReporterID int64
+	Reason     string
+	Status     string
+	CreatedAt  time.Time
+	ResolvedAt *time.Time
+	ResolvedBy string
+}
+
 type PrivateMail struct {
 	ID         int64
 	FromUserID int64

@@ -34,6 +34,7 @@ import (
 	"wolfbbs/internal/network"
 	"wolfbbs/internal/rbac"
 	"wolfbbs/internal/repository"
+	"wolfbbs/internal/ui"
 )
 
 type boardRow struct {
@@ -235,6 +236,9 @@ func main() {
 	runtimeCfg, cfgErr := config.LoadRuntimeFromEnv()
 	if cfgErr != nil {
 		log.Fatalf("config init: %v", cfgErr)
+	}
+	if err := ui.LoadThemesFromEnv(); err != nil {
+		log.Printf("theme config load failed; using built-in themes: %v", err)
 	}
 
 	storage, err := repository.OpenStorageFromEnv(*dbURL)
@@ -1049,41 +1053,95 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 		if !a.requireCSRF(w, r) {
 			return
 		}
+		action := strings.ToLower(strings.TrimSpace(r.FormValue("action")))
+		if action == "" {
+			action = "post"
+		}
 		boardID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("board_id")), 10, 64)
-		parentID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("parent_id")), 10, 64)
-		subject := strings.TrimSpace(r.FormValue("subject"))
-		body := strings.TrimSpace(r.FormValue("body"))
-		if boardID <= 0 || subject == "" || body == "" {
-			http.Error(w, "board/subject/body required", http.StatusBadRequest)
-			return
+		switch action {
+		case "report":
+			messageID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("message_id")), 10, 64)
+			reason := strings.TrimSpace(r.FormValue("reason"))
+			if messageID <= 0 {
+				http.Error(w, "message id required", http.StatusBadRequest)
+				return
+			}
+			msg, err := a.msgRepo.GetMessage(messageID)
+			if err != nil || msg == nil {
+				http.Error(w, "message not found", http.StatusNotFound)
+				return
+			}
+			board, err := a.boardRepo.Get(msg.BoardID)
+			if err != nil || board == nil {
+				http.Error(w, "board not found", http.StatusNotFound)
+				return
+			}
+			if !a.canReadBoard(user, board) {
+				http.Error(w, "report denied by board ACS", http.StatusForbidden)
+				return
+			}
+			if reason == "" {
+				reason = "reported from web reader"
+			}
+			if err := a.msgRepo.CreateReport(&domain.MessageReport{
+				MessageID:  messageID,
+				ReporterID: user.ID,
+				Reason:     reason,
+				Status:     "open",
+			}); err != nil {
+				http.Error(w, "could not create report", http.StatusInternalServerError)
+				return
+			}
+			if a.eventBus != nil {
+				a.eventBus.Publish("message.reported", map[string]string{
+					"user":    user.Handle,
+					"board":   strconv.FormatInt(msg.BoardID, 10),
+					"message": strconv.FormatInt(messageID, 10),
+				})
+			}
+			http.Redirect(w, r, fmt.Sprintf("/boards?board=%d&id=%d", msg.BoardID, messageID), http.StatusFound)
+		case "post":
+			parentID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("parent_id")), 10, 64)
+			subject := strings.TrimSpace(r.FormValue("subject"))
+			body := strings.TrimSpace(r.FormValue("body"))
+			if boardID <= 0 || subject == "" || body == "" {
+				http.Error(w, "board/subject/body required", http.StatusBadRequest)
+				return
+			}
+			board, err := a.boardRepo.Get(boardID)
+			if err != nil || board == nil {
+				http.Error(w, "board not found", http.StatusNotFound)
+				return
+			}
+			if !a.canWriteBoard(user, board) {
+				http.Error(w, "posting denied by board ACS", http.StatusForbidden)
+				return
+			}
+			if err := a.msgRepo.CreateMessage(&domain.Message{
+				BoardID:  boardID,
+				AuthorID: user.ID,
+				ParentID: parentID,
+				Subject:  subject,
+				Body:     body,
+			}); err != nil {
+				if strings.Contains(strings.ToLower(err.Error()), "locked") {
+					http.Error(w, "thread is locked", http.StatusForbidden)
+					return
+				}
+				http.Error(w, "could not create message", http.StatusInternalServerError)
+				return
+			}
+			if a.eventBus != nil {
+				a.eventBus.Publish("message.posted", map[string]string{
+					"user":    user.Handle,
+					"board":   strconv.FormatInt(boardID, 10),
+					"subject": subject,
+				})
+			}
+			http.Redirect(w, r, fmt.Sprintf("/boards?board=%d", boardID), http.StatusFound)
+		default:
+			http.Error(w, "unsupported action", http.StatusBadRequest)
 		}
-		board, err := a.boardRepo.Get(boardID)
-		if err != nil || board == nil {
-			http.Error(w, "board not found", http.StatusNotFound)
-			return
-		}
-		if !a.canWriteBoard(user, board) {
-			http.Error(w, "posting denied by board ACS", http.StatusForbidden)
-			return
-		}
-		if err := a.msgRepo.CreateMessage(&domain.Message{
-			BoardID:  boardID,
-			AuthorID: user.ID,
-			ParentID: parentID,
-			Subject:  subject,
-			Body:     body,
-		}); err != nil {
-			http.Error(w, "could not create message", http.StatusInternalServerError)
-			return
-		}
-		if a.eventBus != nil {
-			a.eventBus.Publish("message.posted", map[string]string{
-				"user":    user.Handle,
-				"board":   strconv.FormatInt(boardID, 10),
-				"subject": subject,
-			})
-		}
-		http.Redirect(w, r, fmt.Sprintf("/boards?board=%d", boardID), http.StatusFound)
 		return
 	}
 	if r.Method != http.MethodGet {
@@ -1234,6 +1292,9 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 			}
 			view.WriteString(`<strong>When:</strong> ` + msg.CreatedAt.Format("2006-01-02 15:04:05") + `</p>`)
 			view.WriteString(`<pre>` + htmlEscape(msg.Body) + `</pre>`)
+			view.WriteString(`<h3>Report</h3>`)
+			view.WriteString(`<form method="POST" action="/boards"><input type="hidden" name="action" value="report"><input type="hidden" name="board_id" value="` + strconv.FormatInt(boardID, 10) + `"><input type="hidden" name="message_id" value="` + strconv.FormatInt(msg.ID, 10) + `">` + csrf)
+			view.WriteString(`<label>Reason: <input name="reason" size="48" placeholder="spam, abuse, off-topic"></label> <button type="submit">Report Post</button></form>`)
 			if a.canWriteBoard(user, board) {
 				view.WriteString(`<h3>Reply</h3>`)
 				view.WriteString(`<form method="POST" action="/boards"><input type="hidden" name="board_id" value="` + strconv.FormatInt(boardID, 10) + `"><input type="hidden" name="parent_id" value="` + strconv.FormatInt(msg.ID, 10) + `">` + csrf)
@@ -1294,8 +1355,16 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
+	if !a.canReadMail(user) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	if r.Method == http.MethodPost {
 		if !a.requireCSRF(w, r) {
+			return
+		}
+		if !a.canSendMail(user) {
+			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
 		toRaw := strings.TrimSpace(r.FormValue("to"))
@@ -1431,11 +1500,21 @@ func (a *webApp) handleGateway(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
+	downloadToken := strings.TrimSpace(r.URL.Query().Get("download"))
+	fileView := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("view")), "files")
 	if r.Method == http.MethodGet {
-		if a.serveGatewayDownload(w, r, user, strings.TrimSpace(r.URL.Query().Get("download"))) {
+		if downloadToken != "" && !a.canReadFiles(user, "download") {
+			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("view")), "files") {
+		if a.serveGatewayDownload(w, r, user, downloadToken) {
+			return
+		}
+		if fileView {
+			if !a.canReadFiles(user, "browse") {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
 			if a.serveGatewayBatchZip(w, r, user) {
 				return
 			}
@@ -1465,6 +1544,10 @@ func (a *webApp) handleGateway(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !a.requireCSRF(w, r) {
+		return
+	}
+	if strings.TrimSpace(strings.ToLower(r.FormValue("action"))) != "fetch" && !a.canReadFiles(user, "manage") {
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	if a.handleGatewayFileAction(w, r, user) {
@@ -1532,6 +1615,9 @@ func (a *webApp) handleSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		case "update_prefs":
 			theme := strings.TrimSpace(r.FormValue("theme"))
+			if theme == "" {
+				theme = user.Theme
+			}
 			ansiEnabled := parseCheckbox(r.FormValue("ansi_enabled"))
 			pagingEnabled := parseCheckbox(r.FormValue("paging_enabled"))
 			timeFormat24h := parseCheckbox(r.FormValue("time_format_24h"))
@@ -1575,6 +1661,7 @@ func (a *webApp) handleSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	csrf := a.csrfHiddenInput(r)
+	themeOptions := buildThemeOptionsHTML(user.Theme)
 	var secondFactorBlock strings.Builder
 	if user.TOTPSecret == "" {
 		secondFactorBlock.WriteString(`<p>2FA is currently disabled.</p>`)
@@ -1591,7 +1678,7 @@ func (a *webApp) handleSettings(w http.ResponseWriter, r *http.Request) {
 		`<li>Time format 24h: ` + boolToText(user.TimeFormat24h) + `</li>` +
 		`</ul>` +
 		`<h2>Display Preferences</h2><form method="POST" action="/settings"><input type="hidden" name="action" value="update_prefs">` + csrf +
-		`<label>Theme: <input name="theme" value="` + htmlEscape(user.Theme) + `" size="20"></label><br>` +
+		`<label>Theme: <select name="theme">` + themeOptions + `</select></label><br>` +
 		`<label><input type="checkbox" name="ansi_enabled" value="1" ` + checkedAttr(user.ANSIEnabled) + `> ANSI enabled</label><br>` +
 		`<label><input type="checkbox" name="paging_enabled" value="1" ` + checkedAttr(user.PagingEnabled) + `> Paging enabled</label><br>` +
 		`<label><input type="checkbox" name="time_format_24h" value="1" ` + checkedAttr(user.TimeFormat24h) + `> 24-hour time format</label><br>` +
@@ -1633,6 +1720,7 @@ func (a *webApp) handleDiscover(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	query := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	conferenceSummary := discovery.BuildConferenceSummary(digest.Items, 6)
 	searchRows := []string{}
 	saved := []string{}
 	if a.classicSearch {
@@ -1646,6 +1734,13 @@ func (a *webApp) handleDiscover(w http.ResponseWriter, r *http.Request) {
 	}
 	if itemsRows.Len() == 0 {
 		itemsRows.WriteString(`<li>No new items since your last call.</li>`)
+	}
+	conferenceRows := strings.Builder{}
+	for _, row := range conferenceSummary {
+		conferenceRows.WriteString(`<li>` + htmlEscape(row) + `</li>`)
+	}
+	if conferenceRows.Len() == 0 {
+		conferenceRows.WriteString(`<li>No area-level updates since your last call.</li>`)
 	}
 	searchHTML := strings.Builder{}
 	savedHTML := strings.Builder{}
@@ -1706,12 +1801,15 @@ func (a *webApp) handleDiscover(w http.ResponseWriter, r *http.Request) {
 	page := `<html><body>
 <h1>Since Your Last Call</h1>
 <p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/settings">settings</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
-<p>Transparent rules: replies-to-you, handle mentions, per-board new activity, and inbox mail. Max ` + strconv.Itoa(maxItems) + ` items.</p>
-<p>Last seen: ` + digest.Since.Local().Format("2006-01-02 15:04") + `</p>
-` + aiLine + `
-` + rumorLine + `
-<ul>` + itemsRows.String() + `</ul>
-<h2>Deep Search</h2>
+	<p>Transparent rules: replies-to-you, handle mentions, per-board new activity, and inbox mail. Max ` + strconv.Itoa(maxItems) + ` items.</p>
+	<p>Last seen: ` + digest.Since.Local().Format("2006-01-02 15:04") + `</p>
+	` + aiLine + `
+	` + rumorLine + `
+	<h2>Area Summary</h2>
+	<ul>` + conferenceRows.String() + `</ul>
+	<h2>Items</h2>
+	<ul>` + itemsRows.String() + `</ul>
+	<h2>Deep Search</h2>
 <form method="GET" action="/discover">
 <label>Query: <input name="q" value="` + htmlEscape(query) + `" size="42"></label>
 <button type="submit">Search</button>
@@ -2312,6 +2410,10 @@ func (a *webApp) handleAdminBoards(w http.ResponseWriter, r *http.Request) {
 		if !a.requireAdminWrite(w, r) {
 			return
 		}
+		redirectTo := strings.TrimSpace(r.FormValue("redirect_to"))
+		if !strings.HasPrefix(redirectTo, "/admin/boards") {
+			redirectTo = "/admin/boards"
+		}
 		action := strings.ToLower(strings.TrimSpace(r.FormValue("action")))
 		switch action {
 		case "create":
@@ -2374,8 +2476,58 @@ func (a *webApp) handleAdminBoards(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
+		case "delete_message":
+			messageID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("message_id")), 10, 64)
+			reason := strings.TrimSpace(r.FormValue("reason"))
+			if messageID > 0 {
+				target := "message #" + strconv.FormatInt(messageID, 10)
+				if msg, err := a.msgRepo.GetMessage(messageID); err == nil && msg != nil {
+					target = fmt.Sprintf("message #%d (board %d)", msg.ID, msg.BoardID)
+				}
+				if err := a.msgRepo.DeleteMessage(messageID); err != nil {
+					a.addAppError("admin.boards", fmt.Errorf("delete message %d: %w", messageID, err))
+				} else {
+					if reason == "" {
+						reason = "deleted from sysop board controls"
+					}
+					a.recordAdminAction(user.Handle, target, "delete_message", reason)
+				}
+			}
+		case "lock_thread", "unlock_thread":
+			threadID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("thread_id")), 10, 64)
+			if threadID > 0 {
+				locked := action == "lock_thread"
+				if err := a.msgRepo.SetThreadLocked(threadID, locked); err != nil {
+					a.addAppError("admin.boards", fmt.Errorf("set thread lock %d: %w", threadID, err))
+				} else {
+					detail := "locked"
+					if !locked {
+						detail = "unlocked"
+					}
+					a.recordAdminAction(user.Handle, "thread #"+strconv.FormatInt(threadID, 10), action, detail)
+				}
+			}
+		case "move_thread":
+			threadID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("thread_id")), 10, 64)
+			toBoardID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("to_board_id")), 10, 64)
+			if threadID > 0 && toBoardID > 0 {
+				if err := a.msgRepo.MoveThread(threadID, toBoardID); err != nil {
+					a.addAppError("admin.boards", fmt.Errorf("move thread %d -> %d: %w", threadID, toBoardID, err))
+				} else {
+					a.recordAdminAction(user.Handle, "thread #"+strconv.FormatInt(threadID, 10), "move_thread", "to board "+strconv.FormatInt(toBoardID, 10))
+				}
+			}
+		case "resolve_report":
+			reportID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("report_id")), 10, 64)
+			if reportID > 0 {
+				if err := a.msgRepo.ResolveReport(reportID, user.Handle, time.Now().UTC()); err != nil {
+					a.addAppError("admin.boards", fmt.Errorf("resolve report %d: %w", reportID, err))
+				} else {
+					a.recordAdminAction(user.Handle, "report #"+strconv.FormatInt(reportID, 10), "resolve_report", "")
+				}
+			}
 		}
-		http.Redirect(w, r, "/admin/boards", http.StatusFound)
+		http.Redirect(w, r, redirectTo, http.StatusFound)
 		return
 	}
 
@@ -2385,6 +2537,27 @@ func (a *webApp) handleAdminBoards(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to load boards", http.StatusInternalServerError)
 		return
 	}
+	boardNameByID := make(map[int64]string, len(boards))
+	for _, b := range boards {
+		boardNameByID[b.ID] = b.Name
+	}
+	manageBoardID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("manage_board")), 10, 64)
+	reportStatus := strings.TrimSpace(r.URL.Query().Get("report_status"))
+	if strings.EqualFold(reportStatus, "all") {
+		reportStatus = ""
+	}
+	redirectParams := url.Values{}
+	if manageBoardID > 0 {
+		redirectParams.Set("manage_board", strconv.FormatInt(manageBoardID, 10))
+	}
+	if reportStatus != "" {
+		redirectParams.Set("report_status", reportStatus)
+	}
+	redirectTo := "/admin/boards"
+	if encoded := redirectParams.Encode(); encoded != "" {
+		redirectTo = redirectTo + "?" + encoded
+	}
+
 	rows := strings.Builder{}
 	csrf := a.csrfHiddenInput(r)
 	for _, b := range boards {
@@ -2408,11 +2581,113 @@ func (a *webApp) handleAdminBoards(w http.ResponseWriter, r *http.Request) {
 			`<input name="write_acs" value="` + htmlEscape(b.WriteACS) + `" size="18" placeholder="write ACS"> ` +
 			`<button type="submit">save</button></form></td>`)
 		rows.WriteString(fmt.Sprintf(`<td><form method="POST" action="/admin/boards"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="%d">`+csrf+`<button type="submit">delete</button></form></td>`, b.ID))
+		rows.WriteString(`<td><a href="/admin/boards?manage_board=` + strconv.FormatInt(b.ID, 10) + `">moderate</a></td>`)
 		rows.WriteString(`</tr>`)
 	}
+	reports, reportErr := a.msgRepo.ListReports(250, reportStatus)
+	if reportErr != nil {
+		a.addAppError("admin.boards", fmt.Errorf("list reports: %w", reportErr))
+	}
+	handleByID := a.userHandleLookup()
+	reportRows := strings.Builder{}
+	for _, row := range reports {
+		reportBoard := int64(0)
+		reportSubject := "(message unavailable)"
+		if msg, msgErr := a.msgRepo.GetMessage(row.MessageID); msgErr == nil && msg != nil {
+			reportBoard = msg.BoardID
+			reportSubject = msg.Subject
+		}
+		reporter := handleByID[row.ReporterID]
+		if reporter == "" {
+			reporter = "#" + strconv.FormatInt(row.ReporterID, 10)
+		}
+		boardName := "?"
+		if reportBoard > 0 {
+			if name := boardNameByID[reportBoard]; name != "" {
+				boardName = name
+			}
+		}
+		reportRows.WriteString(`<tr><td>` + strconv.FormatInt(row.ID, 10) + `</td><td>` + strconv.FormatInt(row.MessageID, 10) + `</td><td>` + htmlEscape(boardName) + `</td><td>` + htmlEscape(reportSubject) + `</td><td>` + htmlEscape(reporter) + `</td><td>` + htmlEscape(row.Reason) + `</td><td>` + htmlEscape(row.Status) + `</td><td>` + row.CreatedAt.Local().Format("2006-01-02 15:04") + `</td><td>`)
+		if strings.EqualFold(row.Status, "resolved") {
+			reportRows.WriteString(`resolved`)
+		} else {
+			reportRows.WriteString(`<form method="POST" action="/admin/boards">` + csrf +
+				`<input type="hidden" name="action" value="resolve_report">` +
+				`<input type="hidden" name="report_id" value="` + strconv.FormatInt(row.ID, 10) + `">` +
+				`<input type="hidden" name="redirect_to" value="` + htmlEscape(redirectTo) + `">` +
+				`<button type="submit">resolve</button></form>`)
+		}
+		reportRows.WriteString(`</td></tr>`)
+	}
+	if reportRows.Len() == 0 {
+		reportRows.WriteString(`<tr><td colspan="9">No reports in this filter</td></tr>`)
+	}
+
+	manageRows := strings.Builder{}
+	if manageBoardID > 0 {
+		msgs, msgErr := a.msgRepo.ListByBoard(manageBoardID)
+		if msgErr != nil {
+			a.addAppError("admin.boards", fmt.Errorf("list board %d messages: %w", manageBoardID, msgErr))
+		} else {
+			moveOptions := strings.Builder{}
+			for _, board := range boards {
+				selected := ""
+				if board.ID == manageBoardID {
+					selected = ` selected`
+				}
+				moveOptions.WriteString(`<option value="` + strconv.FormatInt(board.ID, 10) + `"` + selected + `>` + htmlEscape(board.Name) + `</option>`)
+			}
+			for _, msg := range msgs {
+				author := handleByID[msg.AuthorID]
+				if author == "" {
+					author = "#" + strconv.FormatInt(msg.AuthorID, 10)
+				}
+				threadLocked, lockErr := a.msgRepo.IsThreadLocked(msg.ThreadID)
+				if lockErr != nil {
+					a.addAppError("admin.boards", fmt.Errorf("thread lock check %d: %w", msg.ThreadID, lockErr))
+				}
+				lockAction := "lock_thread"
+				lockLabel := "lock"
+				if threadLocked {
+					lockAction = "unlock_thread"
+					lockLabel = "unlock"
+				}
+				manageRows.WriteString(`<tr><td>` + strconv.FormatInt(msg.ID, 10) + `</td><td>` + strconv.FormatInt(msg.ThreadID, 10) + `</td><td>` + htmlEscape(author) + `</td><td>` + htmlEscape(msg.Subject) + `</td><td>` + msg.CreatedAt.Local().Format("2006-01-02 15:04") + `</td><td>`)
+				manageRows.WriteString(`<form method="POST" action="/admin/boards">` + csrf +
+					`<input type="hidden" name="action" value="delete_message">` +
+					`<input type="hidden" name="message_id" value="` + strconv.FormatInt(msg.ID, 10) + `">` +
+					`<input type="hidden" name="redirect_to" value="` + htmlEscape(redirectTo) + `">` +
+					`<input name="reason" size="16" placeholder="reason">` +
+					`<button type="submit">delete</button></form>`)
+				manageRows.WriteString(`<form method="POST" action="/admin/boards">` + csrf +
+					`<input type="hidden" name="action" value="` + lockAction + `">` +
+					`<input type="hidden" name="thread_id" value="` + strconv.FormatInt(msg.ThreadID, 10) + `">` +
+					`<input type="hidden" name="redirect_to" value="` + htmlEscape(redirectTo) + `">` +
+					`<button type="submit">` + lockLabel + `</button></form>`)
+				manageRows.WriteString(`<form method="POST" action="/admin/boards">` + csrf +
+					`<input type="hidden" name="action" value="move_thread">` +
+					`<input type="hidden" name="thread_id" value="` + strconv.FormatInt(msg.ThreadID, 10) + `">` +
+					`<input type="hidden" name="redirect_to" value="` + htmlEscape(redirectTo) + `">` +
+					`<select name="to_board_id">` + moveOptions.String() + `</select>` +
+					`<button type="submit">move</button></form>`)
+				manageRows.WriteString(`</td></tr>`)
+			}
+		}
+	}
+	if manageRows.Len() == 0 {
+		manageRows.WriteString(`<tr><td colspan="6">Select a board to moderate posts and thread state.</td></tr>`)
+	}
+
+	reportStatusSelect := map[string]string{"": "", "open": "", "resolved": ""}
+	reportStatusSelect[reportStatus] = ` selected`
 	page := `<html><body><h1>Sysop Boards</h1><p><a href="/admin">back</a> | <a href="/help">help</a></p>` +
 		`<form method="POST"><label>Title <input name="title"></label> <label>Conference <input name="conference" value="General" size="14"></label> <label>Description <input name="description" size="28"></label> <label>Read ACS <input name="read_acs" size="16"></label> <label>Write ACS <input name="write_acs" size="16"></label>` + csrf + `<input type="hidden" name="action" value="create"><button type="submit">add</button></form>` +
-		`<table border="1"><tr><th>ID</th><th>Title</th><th>Conf</th><th>Topics</th><th>Last</th><th>Edit</th><th>Actions</th></tr>` + rows.String() + `</table>` +
+		`<table border="1"><tr><th>ID</th><th>Title</th><th>Conf</th><th>Topics</th><th>Last</th><th>Edit</th><th>Actions</th><th>Moderation</th></tr>` + rows.String() + `</table>` +
+		`<h2>Moderation Queue</h2>` +
+		`<form method="GET" action="/admin/boards"><label>Status <select name="report_status"><option value=""` + reportStatusSelect[""] + `>all</option><option value="open"` + reportStatusSelect["open"] + `>open</option><option value="resolved"` + reportStatusSelect["resolved"] + `>resolved</option></select></label><label> Board <input name="manage_board" size="6" value="` + strconv.FormatInt(manageBoardID, 10) + `"></label><button type="submit">apply</button></form>` +
+		`<table border="1"><tr><th>ID</th><th>Message</th><th>Board</th><th>Subject</th><th>Reporter</th><th>Reason</th><th>Status</th><th>Created</th><th>Action</th></tr>` + reportRows.String() + `</table>` +
+		`<h2>Board Message Moderation</h2><p>Delete with reason, lock/unlock thread, and move thread to another board.</p>` +
+		`<table border="1"><tr><th>ID</th><th>Thread</th><th>Author</th><th>Subject</th><th>When</th><th>Actions</th></tr>` + manageRows.String() + `</table>` +
 		`</body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -3276,6 +3551,40 @@ func (a *webApp) canWriteBoard(user *domain.User, board *domain.Board) bool {
 	})
 }
 
+func (a *webApp) canReadMail(user *domain.User) bool {
+	return a.evalACS(strings.TrimSpace(os.Getenv("WOLFBBS_ACS_MAIL_READ")), user, map[string]string{
+		"area": "mail",
+		"mode": "read",
+	})
+}
+
+func (a *webApp) canSendMail(user *domain.User) bool {
+	return a.evalACS(strings.TrimSpace(os.Getenv("WOLFBBS_ACS_MAIL_SEND")), user, map[string]string{
+		"area": "mail",
+		"mode": "compose",
+	})
+}
+
+func (a *webApp) canReadFiles(user *domain.User, mode string) bool {
+	mode = strings.TrimSpace(mode)
+	if mode == "" {
+		mode = "read"
+	}
+	return a.evalACS(strings.TrimSpace(os.Getenv("WOLFBBS_ACS_FILES_READ")), user, map[string]string{
+		"area": "files",
+		"mode": mode,
+	})
+}
+
+func (a *webApp) canAccessAdminPath(user *domain.User, path string) bool {
+	path = strings.TrimSpace(path)
+	return a.evalACS(strings.TrimSpace(os.Getenv("WOLFBBS_ACS_ADMIN")), user, map[string]string{
+		"area": "admin",
+		"path": path,
+		"mode": "admin",
+	})
+}
+
 func (a *webApp) evalACS(expr string, user *domain.User, attrs map[string]string) bool {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
@@ -3367,6 +3676,10 @@ func (a *webApp) mustBeRole(minRole string, next http.HandlerFunc) http.Handler 
 			return
 		}
 		if !a.hasRole(u, minRole) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.URL.Path)), "/admin") && !a.canAccessAdminPath(u, r.URL.Path) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -3623,6 +3936,25 @@ func checkedAttr(active bool) string {
 		return "checked"
 	}
 	return ""
+}
+
+func buildThemeOptionsHTML(current string) string {
+	current = strings.TrimSpace(current)
+	options := ui.ThemeNames()
+	found := false
+	var b strings.Builder
+	for _, name := range options {
+		selected := ""
+		if strings.EqualFold(name, current) {
+			selected = " selected"
+			found = true
+		}
+		b.WriteString(`<option value="` + htmlEscape(name) + `"` + selected + `>` + htmlEscape(name) + `</option>`)
+	}
+	if !found && current != "" {
+		b.WriteString(`<option value="` + htmlEscape(current) + `" selected>` + htmlEscape(current) + ` (custom)</option>`)
+	}
+	return b.String()
 }
 
 func parseCheckbox(value string) bool {

@@ -62,6 +62,7 @@ This version ships a read/write web-first control panel with role-aware routes a
 ## Session and Security
 - Cookie-based session, `HttpOnly` and `SameSite=Strict`.
 - CSRF protection on mutating POST endpoints.
+- Optional ACS gate for `/admin/*` via `WOLFBBS_ACS_ADMIN` (evaluated after role checks).
 - Optional 2FA (TOTP) for sysop accounts.
 - Audit trail required for all sysop/admin writes with actor, target, action, reason.
 - User settings updates (password/2FA/preferences) also require CSRF.
@@ -76,7 +77,7 @@ This version ships a read/write web-first control panel with role-aware routes a
 - `/reset/complete` (public token redemption endpoint)
 - `/admin`
 - `/admin/users` (search + enable/disable + ban/unban + reset + role + verify/unverify)
-- `/admin/boards` (create/delete boards)
+- `/admin/boards` (board CRUD + moderation queue + delete/lock/move/resolve actions)
 - `/admin/mail` (per-user outbound email policy)
 - `/admin/files` (file areas + indexing + tagged file search + ratings + filters + queue + ticket issuance)
 - `/admin/gateways` (SMTP/web gateway limit settings)
@@ -104,6 +105,8 @@ This version ships a read/write web-first control panel with role-aware routes a
   - `oputil network status`
   - `oputil network export --format <ftn|bso|qwk> --board <id> [--out <path>]`
   - `oputil network import --in <packet.json> [--board <id>] [--author <id>]`
+  - `oputil network sync-in`
+  - `oputil network sync-out`
   - `oputil network queue-netmail --from <uid> --to <handle> --subject <s> --body <b>`
   - `oputil network import-queue [--board <id>] [--author <id>]`
   - `oputil mods list`

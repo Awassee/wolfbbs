@@ -30,7 +30,7 @@ func TestBuildSinceLastCall(t *testing.T) {
 		t.Fatalf("update user: %v", err)
 	}
 
-	if err := boards.Create(&domain.Board{Name: "General", Description: "Main", CreatedBy: user.ID}); err != nil {
+	if err := boards.Create(&domain.Board{Name: "General", Conference: "Public", Description: "Main", CreatedBy: user.ID}); err != nil {
 		t.Fatalf("create board: %v", err)
 	}
 
@@ -106,5 +106,13 @@ func TestBuildSinceLastCall(t *testing.T) {
 	ai := BuildAICatchUpLine(result.Items)
 	if !strings.Contains(ai, "[AI-LABEL]") {
 		t.Fatalf("expected ai label in summary, got %q", ai)
+	}
+
+	summary := BuildConferenceSummary(result.Items, 3)
+	if len(summary) == 0 {
+		t.Fatal("expected conference summary lines")
+	}
+	if !strings.Contains(strings.ToLower(summary[0]), "public") {
+		t.Fatalf("expected conference summary to include Public, got %q", summary[0])
 	}
 }

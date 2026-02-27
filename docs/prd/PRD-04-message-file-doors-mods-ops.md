@@ -76,5 +76,6 @@ This slice finishes core BBS depth:
   - SSH files queue parity (`D`) with queue remove, one-time ticket issue, and batch handoff hints.
   - ANSI Art Gallery native door reads `.ans/.asc/.txt`, parses SAUCE metadata, and renders through terminal output profiles.
   - Bunyan-compatible structured logging pipeline for app/web/irc/mailin/oputil via `internal/logging`.
+  - Message network routing depth: board/conference route keys and netmail handle alias/domain routing for inbound packet import.
 - Pending:
-  - Message network depth finalization (advanced external tosser routing/policy parity).
+  - None for PRD-04 baseline scope.

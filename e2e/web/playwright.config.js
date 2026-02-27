@@ -1,7 +1,7 @@
 const path = require("path");
 const { defineConfig } = require("@playwright/test");
 
-const repoRoot = path.resolve(__dirname, "..", "..");
+const repoRoot = process.env.WOLFBBS_E2E_REPO_ROOT || path.resolve(__dirname, "..", "..");
 const baseURL = process.env.WOLFBBS_E2E_BASE_URL || "http://127.0.0.1:18080";
 const sqlitePath = process.env.WOLFBBS_E2E_SQLITE_PATH || "/tmp/wolfbbs-playwright-e2e.db";
 

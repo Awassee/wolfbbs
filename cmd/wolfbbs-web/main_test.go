@@ -18,6 +18,7 @@ import (
 	"wolfbbs/internal/chat"
 	"wolfbbs/internal/config"
 	"wolfbbs/internal/domain"
+	"wolfbbs/internal/gateway"
 	"wolfbbs/internal/repository"
 )
 
@@ -74,6 +75,174 @@ func TestMustBeRoleAdminBlocksNonAdmin(t *testing.T) {
 	protected.ServeHTTP(rr, adminBoardsReq)
 	if rr.Result().StatusCode != http.StatusOK {
 		t.Fatalf("/admin/boards expected 200 for admin, got %d", rr.Result().StatusCode)
+	}
+}
+
+func TestMustBeRoleAdminAppliesACSRule(t *testing.T) {
+	t.Setenv("WOLFBBS_ACS_ADMIN", "handle=allowed")
+	app := &webApp{
+		authSvc:  auth.NewService(repository.NewInMemoryUserRepository()),
+		sessions: map[string]sessionState{},
+	}
+	_, _ = app.authSvc.Register("allowed", "password123")
+	_, _ = app.authSvc.Register("blocked", "password123")
+	if err := app.authSvc.SetRole("allowed", roleAdmin); err != nil {
+		t.Fatalf("set role: %v", err)
+	}
+	if err := app.authSvc.SetRole("blocked", roleAdmin); err != nil {
+		t.Fatalf("set role: %v", err)
+	}
+	allowedSession, ok := app.createSession("allowed")
+	if !ok {
+		t.Fatal("allowed session creation failed")
+	}
+	blockedSession, ok := app.createSession("blocked")
+	if !ok {
+		t.Fatal("blocked session creation failed")
+	}
+	protected := app.mustBeRole(roleAdmin, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/system", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: blockedSession})
+	rr := httptest.NewRecorder()
+	protected.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected blocked sysop to fail ACS, got %d", rr.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/admin/system", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: allowedSession})
+	rr = httptest.NewRecorder()
+	protected.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected allowed sysop to pass ACS, got %d", rr.Code)
+	}
+}
+
+func TestMailAndFileGatewayACS(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	mailRepo := repository.NewInMemoryPrivateMailRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
+	if _, err := authSvc.Register("reader", "password123"); err != nil {
+		t.Fatalf("register user: %v", err)
+	}
+	app := &webApp{
+		authSvc:   authSvc,
+		userRepo:  userRepo,
+		mailRepo:  mailRepo,
+		adminRepo: adminRepo,
+		sessions:  map[string]sessionState{},
+	}
+	sid, ok := app.createSession("reader")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+
+	t.Setenv("WOLFBBS_ACS_MAIL_READ", "role=moderator")
+	req := httptest.NewRequest(http.MethodGet, "/mail", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.handleMail(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected /mail to be forbidden by ACS, got %d", rr.Code)
+	}
+
+	t.Setenv("WOLFBBS_ACS_MAIL_READ", "")
+	t.Setenv("WOLFBBS_ACS_MAIL_SEND", "role=moderator")
+	form := url.Values{}
+	form.Set("to", "reader")
+	form.Set("subject", "hello")
+	form.Set("body", "world")
+	form.Set("csrf_token", "token")
+	req = httptest.NewRequest(http.MethodPost, "/mail", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	app.sessions[sid] = sessionState{handle: "reader", expire: time.Now().Add(time.Hour), csrf: "token"}
+	rr = httptest.NewRecorder()
+	app.handleMail(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected /mail post to be forbidden by ACS send rule, got %d", rr.Code)
+	}
+
+	t.Setenv("WOLFBBS_ACS_FILES_READ", "role=moderator")
+	req = httptest.NewRequest(http.MethodGet, "/gateway?view=files", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleGateway(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected file gateway to be forbidden by ACS, got %d", rr.Code)
+	}
+}
+
+func TestAdminMailDisableOutboundBlocksExternalSend(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
+	mailRepo := repository.NewInMemoryPrivateMailRepository()
+	authSvc := auth.NewService(userRepo)
+	if _, err := authSvc.Register("sysop", "password123"); err != nil {
+		t.Fatalf("register sysop: %v", err)
+	}
+	if _, err := authSvc.Register("caller", "password123"); err != nil {
+		t.Fatalf("register caller: %v", err)
+	}
+	if err := authSvc.SetRole("sysop", roleAdmin); err != nil {
+		t.Fatalf("set sysop role: %v", err)
+	}
+	if err := authSvc.SetVerified("caller", true); err != nil {
+		t.Fatalf("set caller verified: %v", err)
+	}
+	app := &webApp{
+		authSvc:   authSvc,
+		userRepo:  userRepo,
+		adminRepo: adminRepo,
+		mailRepo:  mailRepo,
+		sessions:  map[string]sessionState{},
+		email:     gateway.NewEmailGateway(gateway.EmailConfig{}),
+	}
+	sysopSID, ok := app.createSession("sysop")
+	if !ok {
+		t.Fatal("sysop session creation failed")
+	}
+	callerSID, ok := app.createSession("caller")
+	if !ok {
+		t.Fatal("caller session creation failed")
+	}
+	sysopCSRF := app.sessions[sysopSID].csrf
+	callerCSRF := app.sessions[callerSID].csrf
+
+	form := url.Values{}
+	form.Set("handle", "caller")
+	form.Set("action", "disable_outbound")
+	form.Set("csrf_token", sysopCSRF)
+	req := httptest.NewRequest(http.MethodPost, "/admin/mail", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sysopSID})
+	rr := httptest.NewRecorder()
+	app.mustBeRole(roleAdmin, http.HandlerFunc(app.handleAdminMail)).ServeHTTP(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("expected admin mail update redirect, got %d", rr.Code)
+	}
+
+	policy, err := adminRepo.GetMailOutboundPolicy("caller")
+	if err != nil || policy == nil || !policy.OutboundDisabled {
+		t.Fatalf("expected outbound policy disabled, got policy=%+v err=%v", policy, err)
+	}
+
+	send := url.Values{}
+	send.Set("to", "target@example.net")
+	send.Set("subject", "blocked")
+	send.Set("body", "blocked test")
+	send.Set("csrf_token", callerCSRF)
+	req = httptest.NewRequest(http.MethodPost, "/mail", strings.NewReader(send.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleMail(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected external send blocked with 403, got %d", rr.Code)
 	}
 }
 
@@ -649,6 +818,221 @@ func TestBoardsACSAndPointers(t *testing.T) {
 	}
 	if ptr.LastReadID != seedMsgs[0].ID {
 		t.Fatalf("pointer last read id = %d, want %d", ptr.LastReadID, seedMsgs[0].ID)
+	}
+}
+
+func TestBoardsCreateReportFromReader(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	boardRepo := repository.NewInMemoryBoardRepository()
+	msgRepo := repository.NewInMemoryMessageRepository()
+	authSvc := auth.NewService(userRepo)
+	author, err := authSvc.Register("author", "password123")
+	if err != nil {
+		t.Fatalf("register author: %v", err)
+	}
+	reporter, err := authSvc.Register("reporter", "password123")
+	if err != nil {
+		t.Fatalf("register reporter: %v", err)
+	}
+	board := &domain.Board{Name: "General", Conference: "Public", ReadACS: "role=user", WriteACS: "role=user", CreatedBy: author.ID}
+	if err := boardRepo.Create(board); err != nil {
+		t.Fatalf("create board: %v", err)
+	}
+	msg := &domain.Message{BoardID: board.ID, AuthorID: author.ID, Subject: "Welcome", Body: "hello"}
+	if err := msgRepo.CreateMessage(msg); err != nil {
+		t.Fatalf("create message: %v", err)
+	}
+
+	app := &webApp{
+		authSvc:   authSvc,
+		userRepo:  userRepo,
+		boardRepo: boardRepo,
+		msgRepo:   msgRepo,
+		sessions:  map[string]sessionState{},
+	}
+	sid, ok := app.createSession(reporter.Handle)
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+	app.Lock()
+	csrf := app.sessions[sid].csrf
+	app.Unlock()
+
+	form := url.Values{}
+	form.Set("action", "report")
+	form.Set("board_id", strconv.FormatInt(board.ID, 10))
+	form.Set("message_id", strconv.FormatInt(msg.ID, 10))
+	form.Set("reason", "spam")
+	form.Set("csrf_token", csrf)
+	req := httptest.NewRequest(http.MethodPost, "/boards", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.handleBoards(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("expected redirect after report, got %d", rr.Code)
+	}
+	reports, err := msgRepo.ListReports(10, "open")
+	if err != nil {
+		t.Fatalf("list reports: %v", err)
+	}
+	if len(reports) != 1 {
+		t.Fatalf("expected one report, got %d", len(reports))
+	}
+	if reports[0].MessageID != msg.ID || reports[0].ReporterID != reporter.ID || reports[0].Reason != "spam" {
+		t.Fatalf("unexpected report row: %+v", reports[0])
+	}
+}
+
+func TestAdminBoardsModerationActions(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	boardRepo := repository.NewInMemoryBoardRepository()
+	msgRepo := repository.NewInMemoryMessageRepository()
+	authSvc := auth.NewService(userRepo)
+	sysop, err := authSvc.Register("sysop", "password123")
+	if err != nil {
+		t.Fatalf("register sysop: %v", err)
+	}
+	poster, err := authSvc.Register("poster", "password123")
+	if err != nil {
+		t.Fatalf("register poster: %v", err)
+	}
+	reporter, err := authSvc.Register("reporter", "password123")
+	if err != nil {
+		t.Fatalf("register reporter: %v", err)
+	}
+	if err := authSvc.SetRole("sysop", roleAdmin); err != nil {
+		t.Fatalf("set sysop role: %v", err)
+	}
+	source := &domain.Board{Name: "General", Conference: "Public", ReadACS: "role=user", WriteACS: "role=user", CreatedBy: sysop.ID}
+	if err := boardRepo.Create(source); err != nil {
+		t.Fatalf("create source board: %v", err)
+	}
+	target := &domain.Board{Name: "Ops", Conference: "Ops", ReadACS: "role=user", WriteACS: "role=user", CreatedBy: sysop.ID}
+	if err := boardRepo.Create(target); err != nil {
+		t.Fatalf("create target board: %v", err)
+	}
+	msg := &domain.Message{BoardID: source.ID, AuthorID: poster.ID, Subject: "Thread", Body: "body"}
+	if err := msgRepo.CreateMessage(msg); err != nil {
+		t.Fatalf("create message: %v", err)
+	}
+	if err := msgRepo.CreateReport(&domain.MessageReport{
+		MessageID:  msg.ID,
+		ReporterID: reporter.ID,
+		Reason:     "abuse",
+		Status:     "open",
+	}); err != nil {
+		t.Fatalf("create report: %v", err)
+	}
+
+	app := &webApp{
+		authSvc:   authSvc,
+		userRepo:  userRepo,
+		boardRepo: boardRepo,
+		msgRepo:   msgRepo,
+		sessions:  map[string]sessionState{},
+	}
+	sid, ok := app.createSession("sysop")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+	app.Lock()
+	csrf := app.sessions[sid].csrf
+	app.Unlock()
+
+	getReq := httptest.NewRequest(http.MethodGet, "/admin/boards?manage_board="+strconv.FormatInt(source.ID, 10), nil)
+	getReq.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	getRR := httptest.NewRecorder()
+	app.mustBeRole(roleAdmin, http.HandlerFunc(app.handleAdminBoards)).ServeHTTP(getRR, getReq)
+	if getRR.Code != http.StatusOK {
+		t.Fatalf("admin boards get status = %d", getRR.Code)
+	}
+	body := getRR.Body.String()
+	if !strings.Contains(body, "Moderation Queue") || !strings.Contains(body, "abuse") {
+		t.Fatalf("expected moderation queue with report details, body=%s", body)
+	}
+
+	lockForm := url.Values{}
+	lockForm.Set("action", "lock_thread")
+	lockForm.Set("thread_id", strconv.FormatInt(msg.ThreadID, 10))
+	lockForm.Set("redirect_to", "/admin/boards?manage_board="+strconv.FormatInt(source.ID, 10))
+	lockForm.Set("csrf_token", csrf)
+	lockReq := httptest.NewRequest(http.MethodPost, "/admin/boards", strings.NewReader(lockForm.Encode()))
+	lockReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	lockReq.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	lockRR := httptest.NewRecorder()
+	app.mustBeRole(roleAdmin, http.HandlerFunc(app.handleAdminBoards)).ServeHTTP(lockRR, lockReq)
+	if lockRR.Code != http.StatusFound {
+		t.Fatalf("lock thread status = %d", lockRR.Code)
+	}
+	locked, err := msgRepo.IsThreadLocked(msg.ThreadID)
+	if err != nil {
+		t.Fatalf("is thread locked: %v", err)
+	}
+	if !locked {
+		t.Fatal("expected thread to be locked")
+	}
+
+	reports, err := msgRepo.ListReports(10, "open")
+	if err != nil || len(reports) != 1 {
+		t.Fatalf("list open reports: len=%d err=%v", len(reports), err)
+	}
+	resolveForm := url.Values{}
+	resolveForm.Set("action", "resolve_report")
+	resolveForm.Set("report_id", strconv.FormatInt(reports[0].ID, 10))
+	resolveForm.Set("redirect_to", "/admin/boards?manage_board="+strconv.FormatInt(source.ID, 10))
+	resolveForm.Set("csrf_token", csrf)
+	resolveReq := httptest.NewRequest(http.MethodPost, "/admin/boards", strings.NewReader(resolveForm.Encode()))
+	resolveReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resolveReq.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	resolveRR := httptest.NewRecorder()
+	app.mustBeRole(roleAdmin, http.HandlerFunc(app.handleAdminBoards)).ServeHTTP(resolveRR, resolveReq)
+	if resolveRR.Code != http.StatusFound {
+		t.Fatalf("resolve report status = %d", resolveRR.Code)
+	}
+	resolved, err := msgRepo.ListReports(10, "resolved")
+	if err != nil || len(resolved) != 1 {
+		t.Fatalf("resolved reports: len=%d err=%v", len(resolved), err)
+	}
+
+	moveForm := url.Values{}
+	moveForm.Set("action", "move_thread")
+	moveForm.Set("thread_id", strconv.FormatInt(msg.ThreadID, 10))
+	moveForm.Set("to_board_id", strconv.FormatInt(target.ID, 10))
+	moveForm.Set("redirect_to", "/admin/boards?manage_board="+strconv.FormatInt(target.ID, 10))
+	moveForm.Set("csrf_token", csrf)
+	moveReq := httptest.NewRequest(http.MethodPost, "/admin/boards", strings.NewReader(moveForm.Encode()))
+	moveReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	moveReq.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	moveRR := httptest.NewRecorder()
+	app.mustBeRole(roleAdmin, http.HandlerFunc(app.handleAdminBoards)).ServeHTTP(moveRR, moveReq)
+	if moveRR.Code != http.StatusFound {
+		t.Fatalf("move thread status = %d", moveRR.Code)
+	}
+	movedMsg, err := msgRepo.GetMessage(msg.ID)
+	if err != nil {
+		t.Fatalf("get moved message: %v", err)
+	}
+	if movedMsg.BoardID != target.ID {
+		t.Fatalf("message board id = %d, want %d", movedMsg.BoardID, target.ID)
+	}
+
+	deleteForm := url.Values{}
+	deleteForm.Set("action", "delete_message")
+	deleteForm.Set("message_id", strconv.FormatInt(msg.ID, 10))
+	deleteForm.Set("reason", "rule violation")
+	deleteForm.Set("redirect_to", "/admin/boards?manage_board="+strconv.FormatInt(target.ID, 10))
+	deleteForm.Set("csrf_token", csrf)
+	deleteReq := httptest.NewRequest(http.MethodPost, "/admin/boards", strings.NewReader(deleteForm.Encode()))
+	deleteReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	deleteReq.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	deleteRR := httptest.NewRecorder()
+	app.mustBeRole(roleAdmin, http.HandlerFunc(app.handleAdminBoards)).ServeHTTP(deleteRR, deleteReq)
+	if deleteRR.Code != http.StatusFound {
+		t.Fatalf("delete message status = %d", deleteRR.Code)
+	}
+	if _, err := msgRepo.GetMessage(msg.ID); err == nil {
+		t.Fatal("expected deleted message to be missing")
 	}
 }
 

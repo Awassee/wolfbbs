@@ -449,6 +449,10 @@ func (s *Server) handleSession(sess gssh.Session) {
 				if err == nil {
 					since = digest.Since
 					digestLines = make([]string, 0, len(digest.Items)+2)
+					if summary := discovery.BuildConferenceSummary(digest.Items, 4); len(summary) > 0 {
+						digestLines = append(digestLines, summary...)
+						digestLines = append(digestLines, "")
+					}
 					for _, row := range digest.Items {
 						digestLines = append(digestLines, row.Line)
 					}
@@ -2022,9 +2026,24 @@ func (s *Server) runBoardReader(sess gssh.Session, reader *bufio.Reader, termWid
 		}
 		lines := strings.Split(strings.ReplaceAll(msg.Body, "\r\n", "\n"), "\n")
 		title := fmt.Sprintf("#%d %s", msg.ID, msg.Subject)
+		shouldPage := currentUser != nil && currentUser.PagingEnabled && len(lines) > 20
 		writeClear(sess, ansiEnabled)
 		renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, boardName, handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
-		renderFrame(sess, termWidth, renderWidth, ui.RenderMessageReader(renderWidth, title, lines, index+1, len(msgs))+"\r\n", ansiEnabled, encoding)
+		if shouldPage {
+			summary := []string{
+				title,
+				strings.Repeat("-", 30),
+				"Long body detected; pager enabled.",
+				"Space/Enter for more, Q/Esc to stop paging.",
+			}
+			renderFrame(sess, termWidth, renderWidth, ui.DrawBox(renderWidth, len(summary)+2, "Message Reader", summary, ui.CP437Box, ui.FgCyan, ui.BgBlack), ansiEnabled, encoding)
+			io.WriteString(sess, "\r\n")
+			pagerWrite(sess, reader, strings.Join(lines, "\n"))
+			io.WriteString(sess, "\r\n")
+			io.WriteString(sess, ui.FooterPrompt(renderWidth, fmt.Sprintf("(R)eply (N)ext (P)rev (Q)uit (?)Help   Msg %d/%d", index+1, len(msgs)))+"\r\n")
+		} else {
+			renderFrame(sess, termWidth, renderWidth, ui.RenderMessageReader(renderWidth, title, lines, index+1, len(msgs))+"\r\n", ansiEnabled, encoding)
+		}
 		io.WriteString(sess, "\r\nCommand (R/N/P/Q/?): ")
 		key, err := readKey(reader)
 		if err != nil {
@@ -2229,6 +2248,104 @@ func (s *Server) runMail(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 				"user": handle,
 				"to":   to,
 			})
+		case "P":
+			io.WriteString(sess, "Reply to Mail ID: ")
+			rawID, err := readLine(reader, 16)
+			if err != nil {
+				return
+			}
+			mailID, err := strconv.ParseInt(strings.TrimSpace(rawID), 10, 64)
+			if err != nil {
+				io.WriteString(sess, "\r\nInvalid mail ID. Press any key.")
+				_, _ = readKey(reader)
+				touch()
+				continue
+			}
+			row, err := s.mail.GetMail(mailID)
+			if err != nil {
+				io.WriteString(sess, "\r\nMail not found. Press any key.")
+				_, _ = readKey(reader)
+				touch()
+				continue
+			}
+			if row.ToUserID != currentUser.ID && row.FromUserID != currentUser.ID {
+				io.WriteString(sess, "\r\nNot authorized to reply to that mail. Press any key.")
+				_, _ = readKey(reader)
+				touch()
+				continue
+			}
+			var toUserID int64
+			var externalTo *string
+			if row.ToUserID == currentUser.ID {
+				toUserID = row.FromUserID
+			} else {
+				toUserID = row.ToUserID
+				if row.ExternalTo != nil {
+					trimmed := strings.TrimSpace(*row.ExternalTo)
+					if trimmed != "" {
+						externalTo = &trimmed
+					}
+				}
+			}
+			if toUserID <= 0 && externalTo == nil {
+				io.WriteString(sess, "\r\nCould not determine reply target. Press any key.")
+				_, _ = readKey(reader)
+				touch()
+				continue
+			}
+			subject := strings.TrimSpace(row.Subject)
+			if subject == "" {
+				subject = "Re: (no subject)"
+			} else if !strings.HasPrefix(strings.ToLower(subject), "re:") {
+				subject = "Re: " + subject
+			}
+			writeClear(sess, ansiEnabled)
+			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "WolfBBS Mail Reply", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
+			renderFrame(sess, termWidth, renderWidth, ui.RenderPostEditor(renderWidth, subject)+"\r\n", ansiEnabled, encoding)
+			io.WriteString(sess, "Subject ["+subject+"]: ")
+			inputSubject, err := readLine(reader, 120)
+			if err != nil {
+				return
+			}
+			touch()
+			inputSubject = strings.TrimSpace(inputSubject)
+			if inputSubject != "" {
+				subject = inputSubject
+			}
+			io.WriteString(sess, "\r\nEnter reply body, end with '.' on a line by itself.\r\n")
+			replyBody, err := readMessageBody(reader, 80, 4096)
+			if err != nil {
+				return
+			}
+			touch()
+			replyBody = strings.TrimSpace(replyBody)
+			if replyBody == "" {
+				io.WriteString(sess, "\r\nReply body is required. Press any key.")
+				_, _ = readKey(reader)
+				touch()
+				continue
+			}
+			replyBody = strings.TrimSpace(replyBody + "\n\n" + quoteMessage(row.Body))
+			reply := &domain.PrivateMail{
+				FromUserID: currentUser.ID,
+				ToUserID:   toUserID,
+				ExternalTo: externalTo,
+				Subject:    subject,
+				Body:       replyBody,
+			}
+			if err := s.mail.CreateMail(reply); err != nil {
+				io.WriteString(sess, "\r\nCould not send reply: "+err.Error()+"\r\nPress any key.")
+				_, _ = readKey(reader)
+				touch()
+				continue
+			}
+			s.publishEvent("mail.reply", map[string]string{
+				"user": handle,
+				"id":   strconv.FormatInt(reply.ID, 10),
+			})
+			io.WriteString(sess, "\r\nReply sent. Press any key.")
+			_, _ = readKey(reader)
+			touch()
 		case "R":
 			io.WriteString(sess, "Mail ID: ")
 			rawID, err := readLine(reader, 16)
@@ -2266,7 +2383,137 @@ func (s *Server) runMail(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 				io.WriteString(sess, "External To: "+*row.ExternalTo+"\r\n")
 			}
 			io.WriteString(sess, "\r\n"+row.Body+"\r\n")
-			io.WriteString(sess, "\r\nPress any key.")
+			io.WriteString(sess, "\r\nReader commands: (P) reply  (D) delete  (Q) back")
+			key, keyErr := readKey(reader)
+			if keyErr != nil {
+				return
+			}
+			touch()
+			switch strings.ToUpper(strings.TrimSpace(key)) {
+			case "P":
+				replySubject := strings.TrimSpace(row.Subject)
+				if replySubject == "" {
+					replySubject = "Re: (no subject)"
+				} else if !strings.HasPrefix(strings.ToLower(replySubject), "re:") {
+					replySubject = "Re: " + replySubject
+				}
+				var toUserID int64
+				var externalTo *string
+				if row.ToUserID == currentUser.ID {
+					toUserID = row.FromUserID
+				} else {
+					toUserID = row.ToUserID
+					if row.ExternalTo != nil {
+						trimmed := strings.TrimSpace(*row.ExternalTo)
+						if trimmed != "" {
+							externalTo = &trimmed
+						}
+					}
+				}
+				if toUserID <= 0 && externalTo == nil {
+					io.WriteString(sess, "\r\nCould not determine reply target. Press any key.")
+					_, _ = readKey(reader)
+					touch()
+					continue
+				}
+				io.WriteString(sess, "\r\nSubject ["+replySubject+"]: ")
+				override, err := readLine(reader, 120)
+				if err != nil {
+					return
+				}
+				touch()
+				override = strings.TrimSpace(override)
+				if override != "" {
+					replySubject = override
+				}
+				io.WriteString(sess, "\r\nEnter reply body, end with '.' on a line by itself.\r\n")
+				replyBody, err := readMessageBody(reader, 80, 4096)
+				if err != nil {
+					return
+				}
+				touch()
+				replyBody = strings.TrimSpace(replyBody)
+				if replyBody == "" {
+					io.WriteString(sess, "\r\nReply body is required. Press any key.")
+					_, _ = readKey(reader)
+					touch()
+					continue
+				}
+				replyBody = strings.TrimSpace(replyBody + "\n\n" + quoteMessage(row.Body))
+				reply := &domain.PrivateMail{
+					FromUserID: currentUser.ID,
+					ToUserID:   toUserID,
+					ExternalTo: externalTo,
+					Subject:    replySubject,
+					Body:       replyBody,
+				}
+				if err := s.mail.CreateMail(reply); err != nil {
+					io.WriteString(sess, "\r\nCould not send reply: "+err.Error()+"\r\nPress any key.")
+					_, _ = readKey(reader)
+					touch()
+					continue
+				}
+				s.publishEvent("mail.reply", map[string]string{
+					"user": handle,
+					"id":   strconv.FormatInt(reply.ID, 10),
+				})
+				io.WriteString(sess, "\r\nReply sent. Press any key.")
+				_, _ = readKey(reader)
+				touch()
+			case "D":
+				if err := s.mail.DeleteMail(row.ID); err != nil {
+					io.WriteString(sess, "\r\nCould not delete mail: "+err.Error()+"\r\nPress any key.")
+					_, _ = readKey(reader)
+					touch()
+					continue
+				}
+				s.publishEvent("mail.deleted", map[string]string{
+					"user": handle,
+					"id":   strconv.FormatInt(row.ID, 10),
+				})
+				io.WriteString(sess, "\r\nMail deleted. Press any key.")
+				_, _ = readKey(reader)
+				touch()
+			default:
+				// Return to mail menu.
+			}
+		case "D":
+			io.WriteString(sess, "Delete Mail ID: ")
+			rawID, err := readLine(reader, 16)
+			if err != nil {
+				return
+			}
+			mailID, err := strconv.ParseInt(strings.TrimSpace(rawID), 10, 64)
+			if err != nil {
+				io.WriteString(sess, "\r\nInvalid mail ID. Press any key.")
+				_, _ = readKey(reader)
+				touch()
+				continue
+			}
+			row, err := s.mail.GetMail(mailID)
+			if err != nil {
+				io.WriteString(sess, "\r\nMail not found. Press any key.")
+				_, _ = readKey(reader)
+				touch()
+				continue
+			}
+			if row.ToUserID != currentUser.ID && row.FromUserID != currentUser.ID {
+				io.WriteString(sess, "\r\nNot authorized to delete that mail. Press any key.")
+				_, _ = readKey(reader)
+				touch()
+				continue
+			}
+			if err := s.mail.DeleteMail(mailID); err != nil {
+				io.WriteString(sess, "\r\nCould not delete mail: "+err.Error()+"\r\nPress any key.")
+				_, _ = readKey(reader)
+				touch()
+				continue
+			}
+			s.publishEvent("mail.deleted", map[string]string{
+				"user": handle,
+				"id":   strconv.FormatInt(mailID, 10),
+			})
+			io.WriteString(sess, "\r\nMail deleted. Press any key.")
 			_, _ = readKey(reader)
 			touch()
 		default:
@@ -2869,20 +3116,7 @@ func (s *Server) runSettingsMCI(sess gssh.Session, reader *bufio.Reader, termWid
 			selectedTheme = 0
 		}
 		user.Theme = themes[selectedTheme]
-		view, err := mci.Normalize(mci.View{
-			ID:     "settings",
-			Title:  "Settings",
-			Footer: "T theme, A ansi, P paging, C clock, S save, Q quit",
-			Controls: []mci.Control{
-				{Type: mci.ControlLabel, Label: "WolfBBS user preferences"},
-				{Type: mci.ControlInput, ID: "theme", Label: "Theme", Value: user.Theme},
-				{Type: mci.ControlToggle, ID: "ansi", Label: "ANSI enabled", Value: boolText(user.ANSIEnabled)},
-				{Type: mci.ControlToggle, ID: "paging", Label: "Paging enabled", Value: boolText(user.PagingEnabled)},
-				{Type: mci.ControlToggle, ID: "clock", Label: "24-hour clock", Value: boolText(user.TimeFormat24h)},
-				{Type: mci.ControlLightbar, ID: "theme_list", Label: "Themes", Options: themes, Selected: selectedTheme},
-				{Type: mci.ControlButton, ID: "save", Label: "Save Preferences"},
-			},
-		})
+		view, err := mci.Normalize(s.buildSettingsMCIView(user, themes, selectedTheme))
 		if err != nil {
 			return user, err
 		}
@@ -2935,6 +3169,61 @@ func (s *Server) runSettingsMCI(sess gssh.Session, reader *bufio.Reader, termWid
 			touch()
 		}
 	}
+}
+
+func (s *Server) buildSettingsMCIView(user *domain.User, themes []string, selectedTheme int) mci.View {
+	base := mci.View{
+		ID:     "settings",
+		Title:  "Settings",
+		Footer: "T theme, A ansi, P paging, C clock, S save, Q quit",
+		Controls: []mci.Control{
+			{Type: mci.ControlLabel, ID: "header", Label: "WolfBBS user preferences"},
+			{Type: mci.ControlInput, ID: "theme", Label: "Theme", Value: user.Theme},
+			{Type: mci.ControlToggle, ID: "ansi", Label: "ANSI enabled", Value: boolText(user.ANSIEnabled)},
+			{Type: mci.ControlToggle, ID: "paging", Label: "Paging enabled", Value: boolText(user.PagingEnabled)},
+			{Type: mci.ControlToggle, ID: "clock", Label: "24-hour clock", Value: boolText(user.TimeFormat24h)},
+			{Type: mci.ControlLightbar, ID: "theme_list", Label: "Themes", Options: themes, Selected: selectedTheme},
+			{Type: mci.ControlButton, ID: "save", Label: "Save Preferences"},
+		},
+	}
+	templatePath := strings.TrimSpace(os.Getenv("WOLFBBS_MCI_SETTINGS_FILE"))
+	if templatePath == "" {
+		return base
+	}
+	view, err := mci.LoadViewFile(templatePath)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn("mci settings template load failed", "path", templatePath, "error", err)
+		}
+		return base
+	}
+	if strings.TrimSpace(view.Footer) == "" {
+		view.Footer = base.Footer
+	}
+	if strings.TrimSpace(view.Title) == "" {
+		view.Title = base.Title
+	}
+	setControl := func(control mci.Control) {
+		id := strings.ToLower(strings.TrimSpace(control.ID))
+		for i := range view.Controls {
+			if strings.ToLower(strings.TrimSpace(view.Controls[i].ID)) != id {
+				continue
+			}
+			if strings.TrimSpace(view.Controls[i].Label) != "" {
+				control.Label = view.Controls[i].Label
+			}
+			view.Controls[i] = control
+			return
+		}
+		view.Controls = append(view.Controls, control)
+	}
+	setControl(mci.Control{Type: mci.ControlInput, ID: "theme", Label: "Theme", Value: user.Theme})
+	setControl(mci.Control{Type: mci.ControlToggle, ID: "ansi", Label: "ANSI enabled", Value: boolText(user.ANSIEnabled)})
+	setControl(mci.Control{Type: mci.ControlToggle, ID: "paging", Label: "Paging enabled", Value: boolText(user.PagingEnabled)})
+	setControl(mci.Control{Type: mci.ControlToggle, ID: "clock", Label: "24-hour clock", Value: boolText(user.TimeFormat24h)})
+	setControl(mci.Control{Type: mci.ControlLightbar, ID: "theme_list", Label: "Themes", Options: themes, Selected: selectedTheme})
+	setControl(mci.Control{Type: mci.ControlButton, ID: "save", Label: "Save Preferences"})
+	return view
 }
 
 func readMessageBody(reader *bufio.Reader, maxLines, maxChars int) (string, error) {

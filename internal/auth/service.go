@@ -99,10 +99,12 @@ func (s *Service) Login(handle, password string) (*domain.User, error) {
 		s.publish("auth.login_failed", map[string]string{"handle": handle, "reason": "bad_password"})
 		return nil, ErrInvalidCredentials
 	}
+	previousLogin := cloneTimePtr(user.LastLoginAt)
 	now := time.Now().UTC()
 	user.LastLoginAt = &now
 	_ = s.users.Update(user)
 	s.publish("auth.login_success", map[string]string{"handle": user.Handle})
+	user.LastLoginAt = previousLogin
 	return user, nil
 }
 
@@ -133,11 +135,21 @@ func (s *Service) Authenticate(handle, password, secondFactor string) (*domain.U
 		s.publish("auth.login_failed", map[string]string{"handle": handle, "reason": "2fa"})
 		return nil, err
 	}
+	previousLogin := cloneTimePtr(user.LastLoginAt)
 	now := time.Now().UTC()
 	user.LastLoginAt = &now
 	_ = s.users.Update(user)
 	s.publish("auth.login_success", map[string]string{"handle": user.Handle})
+	user.LastLoginAt = previousLogin
 	return user, nil
+}
+
+func cloneTimePtr(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	clone := value.UTC()
+	return &clone
 }
 
 func (s *Service) VerifySecondFactor(handle, code string) error {

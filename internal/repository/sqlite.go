@@ -66,6 +66,22 @@ func ensureSQLiteSchema(ctx context.Context, db *sql.DB) error {
   PRIMARY KEY (user_id, board_id)
 )`,
 		`CREATE INDEX IF NOT EXISTS idx_message_pointers_user_board ON message_pointers(user_id, board_id)`,
+		`CREATE TABLE IF NOT EXISTS message_thread_locks (
+  thread_id INTEGER PRIMARY KEY,
+  locked INTEGER NOT NULL DEFAULT 1,
+  updated_at TEXT NOT NULL
+)`,
+		`CREATE TABLE IF NOT EXISTS message_reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  message_id INTEGER NOT NULL,
+  reporter_id INTEGER NOT NULL,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open',
+  created_at TEXT NOT NULL,
+  resolved_at TEXT,
+  resolved_by TEXT NOT NULL DEFAULT ''
+)`,
+		`CREATE INDEX IF NOT EXISTS idx_message_reports_status_created ON message_reports(status, created_at DESC, id DESC)`,
 		`CREATE TABLE IF NOT EXISTS private_mail (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   from_user_id INTEGER NOT NULL,
@@ -533,6 +549,13 @@ func (r *SQLiteMessageRepository) CreateMessage(msg *domain.Message) error {
 		} else {
 			msg.ThreadID = msg.ParentID
 		}
+		locked, err := r.IsThreadLocked(msg.ThreadID)
+		if err != nil {
+			return err
+		}
+		if locked {
+			return errors.New("thread is locked")
+		}
 	}
 	if msg.ThreadID > 0 {
 		threadID = msg.ThreadID
@@ -613,6 +636,187 @@ ORDER BY thread_id ASC, created_at ASC, id ASC`, boardID)
 		out = append(out, msg)
 	}
 	return out, rows.Err()
+}
+
+func (r *SQLiteMessageRepository) DeleteMessage(id int64) error {
+	if id <= 0 {
+		return errors.New("message id is required")
+	}
+	res, err := r.db.ExecContext(context.Background(), `DELETE FROM messages WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *SQLiteMessageRepository) MoveThread(threadID, toBoardID int64) error {
+	if threadID <= 0 || toBoardID <= 0 {
+		return errors.New("thread id and destination board id are required")
+	}
+	res, err := r.db.ExecContext(context.Background(), `UPDATE messages SET board_id = ? WHERE thread_id = ?`, toBoardID, threadID)
+	if err != nil {
+		return err
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *SQLiteMessageRepository) SetThreadLocked(threadID int64, locked bool) error {
+	if threadID <= 0 {
+		return errors.New("thread id is required")
+	}
+	now := formatSQLiteTime(time.Now().UTC())
+	lockedInt := 0
+	if locked {
+		lockedInt = 1
+	}
+	_, err := r.db.ExecContext(context.Background(), `
+INSERT INTO message_thread_locks(thread_id, locked, updated_at)
+VALUES (?, ?, ?)
+ON CONFLICT(thread_id) DO UPDATE SET
+  locked = excluded.locked,
+  updated_at = excluded.updated_at`,
+		threadID, lockedInt, now)
+	return err
+}
+
+func (r *SQLiteMessageRepository) IsThreadLocked(threadID int64) (bool, error) {
+	if threadID <= 0 {
+		return false, errors.New("thread id is required")
+	}
+	var locked int
+	err := r.db.QueryRowContext(context.Background(), `
+SELECT locked
+FROM message_thread_locks
+WHERE thread_id = ?
+LIMIT 1`, threadID).Scan(&locked)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return locked != 0, nil
+}
+
+func (r *SQLiteMessageRepository) CreateReport(report *domain.MessageReport) error {
+	if report == nil {
+		return errors.New("report is required")
+	}
+	if report.MessageID <= 0 || report.ReporterID <= 0 {
+		return errors.New("message id and reporter id are required")
+	}
+	report.Reason = strings.TrimSpace(report.Reason)
+	if report.Reason == "" {
+		return errors.New("report reason is required")
+	}
+	if report.Status == "" {
+		report.Status = "open"
+	}
+	if report.CreatedAt.IsZero() {
+		report.CreatedAt = time.Now().UTC()
+	}
+	res, err := r.db.ExecContext(context.Background(), `
+INSERT INTO message_reports(message_id, reporter_id, reason, status, created_at, resolved_at, resolved_by)
+VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		report.MessageID,
+		report.ReporterID,
+		report.Reason,
+		strings.TrimSpace(report.Status),
+		formatSQLiteTime(report.CreatedAt),
+		nullableSQLiteTime(report.ResolvedAt),
+		strings.TrimSpace(report.ResolvedBy),
+	)
+	if err != nil {
+		return err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return err
+	}
+	report.ID = id
+	return nil
+}
+
+func (r *SQLiteMessageRepository) ListReports(limit int, status string) ([]domain.MessageReport, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	status = strings.TrimSpace(status)
+	baseQuery := `
+SELECT id, message_id, reporter_id, reason, status, created_at, resolved_at, resolved_by
+FROM message_reports`
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if status == "" {
+		rows, err = r.db.QueryContext(context.Background(), baseQuery+`
+ORDER BY created_at DESC, id DESC
+LIMIT ?`, limit)
+	} else {
+		rows, err = r.db.QueryContext(context.Background(), baseQuery+`
+WHERE status = ?
+ORDER BY created_at DESC, id DESC
+LIMIT ?`, status, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]domain.MessageReport, 0, limit)
+	for rows.Next() {
+		var row domain.MessageReport
+		var createdAt string
+		var resolvedAt sql.NullString
+		var resolvedBy sql.NullString
+		if err := rows.Scan(&row.ID, &row.MessageID, &row.ReporterID, &row.Reason, &row.Status, &createdAt, &resolvedAt, &resolvedBy); err != nil {
+			return nil, err
+		}
+		row.CreatedAt = parseSQLiteTime(createdAt)
+		if resolvedAt.Valid && strings.TrimSpace(resolvedAt.String) != "" {
+			ts := parseSQLiteTime(resolvedAt.String)
+			row.ResolvedAt = &ts
+		}
+		if resolvedBy.Valid {
+			row.ResolvedBy = resolvedBy.String
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+func (r *SQLiteMessageRepository) ResolveReport(id int64, resolvedBy string, resolvedAt time.Time) error {
+	if id <= 0 {
+		return errors.New("report id is required")
+	}
+	resolvedBy = strings.TrimSpace(resolvedBy)
+	if resolvedBy == "" {
+		return errors.New("resolved by is required")
+	}
+	if resolvedAt.IsZero() {
+		resolvedAt = time.Now().UTC()
+	}
+	res, err := r.db.ExecContext(context.Background(), `
+UPDATE message_reports
+SET status = 'resolved', resolved_by = ?, resolved_at = ?
+WHERE id = ?`, resolvedBy, formatSQLiteTime(resolvedAt), id)
+	if err != nil {
+		return err
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (r *SQLiteMessageRepository) GetPointer(userID, boardID int64) (*domain.MessagePointer, error) {
@@ -793,6 +997,18 @@ func (r *SQLitePrivateMailRepository) MarkRead(id int64, readAt time.Time) error
 		readAt = time.Now().UTC()
 	}
 	res, err := r.db.ExecContext(context.Background(), `UPDATE private_mail SET read_at = ? WHERE id = ?`, formatSQLiteTime(readAt), id)
+	if err != nil {
+		return err
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *SQLitePrivateMailRepository) DeleteMail(id int64) error {
+	res, err := r.db.ExecContext(context.Background(), `DELETE FROM private_mail WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}

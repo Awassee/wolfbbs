@@ -11,11 +11,12 @@ import (
 )
 
 type Item struct {
-	Kind      string
-	BoardID   int64
-	MessageID int64
-	When      time.Time
-	Line      string
+	Kind       string
+	Conference string
+	BoardID    int64
+	MessageID  int64
+	When       time.Time
+	Line       string
 }
 
 type Result struct {
@@ -54,9 +55,11 @@ func BuildSinceLastCall(
 	}
 
 	boardNames := map[int64]string{}
+	boardConferences := map[int64]string{}
 	boardPointers := map[int64]int64{}
 	for _, board := range boards {
 		boardNames[board.ID] = strings.TrimSpace(board.Name)
+		boardConferences[board.ID] = strings.TrimSpace(board.Conference)
 		if ptr, ptrErr := msgRepo.GetPointer(user.ID, board.ID); ptrErr == nil && ptr != nil {
 			boardPointers[board.ID] = ptr.LastReadID
 		}
@@ -105,27 +108,31 @@ func BuildSinceLastCall(
 			}
 			subject := cleanText(msg.Subject, 42)
 			boardName := fallback(boardNames[boardID], fmt.Sprintf("Board %d", boardID))
+			conference := fallback(boardConferences[boardID], "General")
+			areaLabel := conference + "/" + boardName
 			stamp := msg.CreatedAt.Local().Format("01-02 15:04")
 
 			combined := strings.ToLower(msg.Subject + "\n" + msg.Body)
 			if handleLower != "" && strings.Contains(combined, handleLower) {
 				push(Item{
-					Kind:      "mention",
-					BoardID:   boardID,
-					MessageID: msg.ID,
-					When:      msg.CreatedAt.UTC(),
-					Line:      fmt.Sprintf("%s mention in %s: %s", stamp, boardName, subject),
+					Kind:       "mention",
+					Conference: conference,
+					BoardID:    boardID,
+					MessageID:  msg.ID,
+					When:       msg.CreatedAt.UTC(),
+					Line:       fmt.Sprintf("%s mention in %s: %s", stamp, areaLabel, subject),
 				})
 			}
 
 			if msg.ParentID > 0 {
 				if _, ok := authored[msg.ParentID]; ok {
 					push(Item{
-						Kind:      "reply",
-						BoardID:   boardID,
-						MessageID: msg.ID,
-						When:      msg.CreatedAt.UTC(),
-						Line:      fmt.Sprintf("%s reply in %s: %s", stamp, boardName, subject),
+						Kind:       "reply",
+						Conference: conference,
+						BoardID:    boardID,
+						MessageID:  msg.ID,
+						When:       msg.CreatedAt.UTC(),
+						Line:       fmt.Sprintf("%s reply in %s: %s", stamp, areaLabel, subject),
 					})
 				}
 			}
@@ -133,11 +140,12 @@ func BuildSinceLastCall(
 			// Keep this explicit and transparent: no hidden ranking.
 			if boardActivityCount[boardID] < 2 {
 				push(Item{
-					Kind:      "board",
-					BoardID:   boardID,
-					MessageID: msg.ID,
-					When:      msg.CreatedAt.UTC(),
-					Line:      fmt.Sprintf("%s new in %s: %s", stamp, boardName, subject),
+					Kind:       "board",
+					Conference: conference,
+					BoardID:    boardID,
+					MessageID:  msg.ID,
+					When:       msg.CreatedAt.UTC(),
+					Line:       fmt.Sprintf("%s new in %s: %s", stamp, areaLabel, subject),
 				})
 				boardActivityCount[boardID]++
 			}
@@ -197,6 +205,45 @@ func BuildAICatchUpLine(items []Item) string {
 		}
 	}
 	return fmt.Sprintf("[AI-LABEL] Catch-up: %d replies, %d mentions, %d mail, %d board updates.", reply, mention, mail, board)
+}
+
+func BuildConferenceSummary(items []Item, limit int) []string {
+	if limit <= 0 {
+		limit = 4
+	}
+	counts := map[string]int{}
+	for _, item := range items {
+		conf := fallback(item.Conference, "General")
+		if item.BoardID <= 0 || item.Kind == "mail" {
+			continue
+		}
+		counts[conf]++
+	}
+	if len(counts) == 0 {
+		return nil
+	}
+	type row struct {
+		conference string
+		count      int
+	}
+	rows := make([]row, 0, len(counts))
+	for conf, count := range counts {
+		rows = append(rows, row{conference: conf, count: count})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].count == rows[j].count {
+			return rows[i].conference < rows[j].conference
+		}
+		return rows[i].count > rows[j].count
+	})
+	if len(rows) > limit {
+		rows = rows[:limit]
+	}
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, fmt.Sprintf("Area %s: %d new item(s)", row.conference, row.count))
+	}
+	return out
 }
 
 func cleanText(value string, limit int) string {

@@ -278,6 +278,13 @@ WHERE id = $1`, msg.ParentID).Scan(&parentBoardID, &parentThreadID)
 		} else {
 			msg.ThreadID = msg.ParentID
 		}
+		locked, err := r.IsThreadLocked(msg.ThreadID)
+		if err != nil {
+			return err
+		}
+		if locked {
+			return errors.New("thread is locked")
+		}
 	}
 	threadID := sql.NullInt64{}
 	if msg.ThreadID > 0 {
@@ -353,6 +360,174 @@ ORDER BY thread_id ASC, created_at ASC, id ASC`, boardID)
 		out = append(out, msg)
 	}
 	return out, rows.Err()
+}
+
+func (r *PostgresMessageRepository) DeleteMessage(id int64) error {
+	if id <= 0 {
+		return errors.New("message id is required")
+	}
+	res, err := r.db.ExecContext(context.Background(), `DELETE FROM messages WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *PostgresMessageRepository) MoveThread(threadID, toBoardID int64) error {
+	if threadID <= 0 || toBoardID <= 0 {
+		return errors.New("thread id and destination board id are required")
+	}
+	res, err := r.db.ExecContext(context.Background(), `UPDATE messages SET board_id = $1 WHERE thread_id = $2`, toBoardID, threadID)
+	if err != nil {
+		return err
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *PostgresMessageRepository) SetThreadLocked(threadID int64, locked bool) error {
+	if threadID <= 0 {
+		return errors.New("thread id is required")
+	}
+	_, err := r.db.ExecContext(context.Background(), `
+INSERT INTO message_thread_locks(thread_id, locked, updated_at)
+VALUES ($1, $2, $3)
+ON CONFLICT(thread_id) DO UPDATE SET
+  locked = EXCLUDED.locked,
+  updated_at = EXCLUDED.updated_at`,
+		threadID,
+		locked,
+		time.Now().UTC(),
+	)
+	return err
+}
+
+func (r *PostgresMessageRepository) IsThreadLocked(threadID int64) (bool, error) {
+	if threadID <= 0 {
+		return false, errors.New("thread id is required")
+	}
+	var locked bool
+	err := r.db.QueryRowContext(context.Background(), `
+SELECT locked
+FROM message_thread_locks
+WHERE thread_id = $1
+LIMIT 1`, threadID).Scan(&locked)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return locked, nil
+}
+
+func (r *PostgresMessageRepository) CreateReport(report *domain.MessageReport) error {
+	if report == nil {
+		return errors.New("report is required")
+	}
+	if report.MessageID <= 0 || report.ReporterID <= 0 {
+		return errors.New("message id and reporter id are required")
+	}
+	report.Reason = strings.TrimSpace(report.Reason)
+	if report.Reason == "" {
+		return errors.New("report reason is required")
+	}
+	report.Status = strings.TrimSpace(report.Status)
+	if report.Status == "" {
+		report.Status = "open"
+	}
+	if report.CreatedAt.IsZero() {
+		report.CreatedAt = time.Now().UTC()
+	}
+	return r.db.QueryRowContext(context.Background(), `
+INSERT INTO message_reports(message_id, reporter_id, reason, status, created_at, resolved_at, resolved_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id`,
+		report.MessageID,
+		report.ReporterID,
+		report.Reason,
+		report.Status,
+		report.CreatedAt,
+		report.ResolvedAt,
+		nullString(report.ResolvedBy),
+	).Scan(&report.ID)
+}
+
+func (r *PostgresMessageRepository) ListReports(limit int, status string) ([]domain.MessageReport, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	status = strings.TrimSpace(status)
+	baseQuery := `
+SELECT id, message_id, reporter_id, reason, status, created_at, resolved_at, COALESCE(resolved_by, '')
+FROM message_reports`
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if status == "" {
+		rows, err = r.db.QueryContext(context.Background(), baseQuery+`
+ORDER BY created_at DESC, id DESC
+LIMIT $1`, limit)
+	} else {
+		rows, err = r.db.QueryContext(context.Background(), baseQuery+`
+WHERE status = $1
+ORDER BY created_at DESC, id DESC
+LIMIT $2`, status, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]domain.MessageReport, 0, limit)
+	for rows.Next() {
+		var (
+			row        domain.MessageReport
+			resolvedAt sql.NullTime
+		)
+		if err := rows.Scan(&row.ID, &row.MessageID, &row.ReporterID, &row.Reason, &row.Status, &row.CreatedAt, &resolvedAt, &row.ResolvedBy); err != nil {
+			return nil, err
+		}
+		if resolvedAt.Valid {
+			ts := resolvedAt.Time
+			row.ResolvedAt = &ts
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+func (r *PostgresMessageRepository) ResolveReport(id int64, resolvedBy string, resolvedAt time.Time) error {
+	if id <= 0 {
+		return errors.New("report id is required")
+	}
+	resolvedBy = strings.TrimSpace(resolvedBy)
+	if resolvedBy == "" {
+		return errors.New("resolved by is required")
+	}
+	if resolvedAt.IsZero() {
+		resolvedAt = time.Now().UTC()
+	}
+	res, err := r.db.ExecContext(context.Background(), `
+UPDATE message_reports
+SET status = 'resolved', resolved_by = $1, resolved_at = $2
+WHERE id = $3`, resolvedBy, resolvedAt.UTC(), id)
+	if err != nil {
+		return err
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (r *PostgresMessageRepository) GetPointer(userID, boardID int64) (*domain.MessagePointer, error) {
@@ -638,6 +813,21 @@ func (r *PostgresPrivateMailRepository) MarkRead(id int64, readAt time.Time) err
 	res, err := r.db.ExecContext(context.Background(), `
 UPDATE private_mail SET read_at = $1
 WHERE id = $2`, readAt, id)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *PostgresPrivateMailRepository) DeleteMail(id int64) error {
+	res, err := r.db.ExecContext(context.Background(), `DELETE FROM private_mail WHERE id = $1`, id)
 	if err != nil {
 		return err
 	}

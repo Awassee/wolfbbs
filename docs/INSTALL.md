@@ -103,6 +103,13 @@ bash install.sh --with-docker --ssh-port 2222 --web-port 8080 --irc-port 6667
 - `--repo <owner/repo|url>`: clone target for standalone bootstrap
 - `--repo-url <url>`: alias for `--repo`
 - `--status`: show current install status/endpoints
+- `--doctor`: run non-mutating diagnostics (preflight + current install health)
+- `--start`: start existing WolfBBS services
+- `--stop`: stop existing WolfBBS services
+- `--restart`: restart existing WolfBBS services
+- `--logs`: show recent service logs
+- `--repair`: self-heal install (ensure deps/env, rebuild, verify)
+- `--deps-only`: install/check prerequisites and Docker runtime only
 - `--upgrade`: pull/rebuild/restart stack in existing install
 - `--uninstall`: stop services and optionally remove data
 - `--purge`: with uninstall, remove volumes/data
@@ -128,6 +135,33 @@ Status:
 
 ```bash
 bash install.sh --status
+```
+
+Doctor (safe, non-mutating diagnostics):
+
+```bash
+bash install.sh --doctor
+```
+
+Repair (recommended when something is broken):
+
+```bash
+bash install.sh --repair
+```
+
+Service lifecycle management:
+
+```bash
+bash install.sh --start
+bash install.sh --stop
+bash install.sh --restart
+bash install.sh --logs
+```
+
+Dependencies/runtime bootstrap only:
+
+```bash
+bash install.sh --deps-only
 ```
 
 Upgrade:
@@ -182,6 +216,13 @@ scripts/run-e2e.sh --no-web
 scripts/run-e2e.sh
 ```
 
+Single-command build + QA:
+
+```bash
+scripts/build.sh --quick
+scripts/build.sh --full
+```
+
 macOS Node 25 fallback (preferred for Playwright stability):
 
 ```bash
@@ -231,6 +272,7 @@ First sysop pass (recommended):
   - macOS Docker Desktop: `open -a Docker`
   - macOS Colima: `colima start`
   - Linux systemd: `sudo systemctl start docker`
+  - then run: `bash install.sh --repair`
 - Docker compose/socket hangs or EOF on Colima
   - restart Colima: `colima stop -f && colima start`
   - verify daemon reachability: `docker info`

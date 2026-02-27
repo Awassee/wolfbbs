@@ -117,6 +117,7 @@ type PrivateMailRepository interface {
 	ListInbox(userID int64, limit int) ([]domain.PrivateMail, error)
 	ListOutbox(userID int64, limit int) ([]domain.PrivateMail, error)
 	MarkRead(id int64, readAt time.Time) error
+	DeleteMail(id int64) error
 }
 
 type InMemoryPrivateMailRepository struct {
@@ -220,6 +221,16 @@ func (r *InMemoryPrivateMailRepository) MarkRead(id int64, readAt time.Time) err
 	}
 	row.ReadAt = &readAt
 	r.byID[id] = row
+	return nil
+}
+
+func (r *InMemoryPrivateMailRepository) DeleteMail(id int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.byID[id]; !ok {
+		return ErrNotFound
+	}
+	delete(r.byID, id)
 	return nil
 }
 

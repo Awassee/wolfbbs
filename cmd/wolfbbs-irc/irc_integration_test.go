@@ -87,6 +87,58 @@ func TestIRCGatewayFlow(t *testing.T) {
 	_, _ = receiver.Write([]byte("QUIT :done\r\n"))
 }
 
+func TestIRCGatewayModerationEnforced(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	svc := chat.NewServiceForTest()
+	repo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(repo)
+	_, _ = authSvc.Register("ircuser", "ircpass1")
+	_, _ = authSvc.Register("sysop", "syspass1")
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		handleIRCConn(conn, svc, authSvc, "127.0.0.1")
+	}()
+
+	client, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client.Close()
+
+	if !waitForLineContains(client, "Welcome", 3*time.Second) {
+		t.Fatal("missing initial welcome")
+	}
+
+	_, _ = client.Write([]byte("PASS ircpass1\r\n"))
+	_, _ = client.Write([]byte("NICK ircuser\r\n"))
+	_, _ = client.Write([]byte("USER ircuser 0 * :ircuser\r\n"))
+	_, _ = client.Write([]byte("JOIN #lobby\r\n"))
+	if !waitForLineContains(client, " 366 ", 3*time.Second) {
+		t.Fatal("join did not complete")
+	}
+
+	svc.Mute("#lobby", "ircuser", "sysop", "integration mute", "2m")
+	_, _ = client.Write([]byte("PRIVMSG #lobby :muted message\r\n"))
+	if !waitForLineContains(client, " 437 ", 3*time.Second) {
+		t.Fatal("expected moderated PRIVMSG to fail with numeric 437")
+	}
+
+	svc.Unmute("#lobby", "ircuser")
+	_, _ = client.Write([]byte("PRIVMSG #lobby :after unmute\r\n"))
+	if !waitForLineContains(client, "after unmute", 3*time.Second) {
+		t.Fatal("expected unmuted user message to deliver")
+	}
+}
+
 func waitForLineContains(conn net.Conn, needle string, timeout time.Duration) bool {
 	r := bufio.NewReader(conn)
 	deadline := time.Now().Add(timeout)

@@ -20,10 +20,28 @@ Optional `curl|bash` (requires public raw URL access):
 curl -fsSL "https://raw.githubusercontent.com/seanheiney/New-project/main/install.sh" | bash -s -- --yes
 ```
 
+Easy-button self-heal / manage commands:
+
+```bash
+bash install.sh --doctor      # non-mutating diagnostics
+bash install.sh --repair      # ensure deps/env, rebuild, verify
+bash install.sh --start       # start services
+bash install.sh --stop        # stop services
+bash install.sh --restart     # restart services
+bash install.sh --logs        # tail recent logs
+bash install.sh --deps-only   # only install/check prerequisites
+```
+
 ## Install from local clone
 
 ```bash
 bash install.sh --with-docker
+```
+
+## Preflight doctor (no changes)
+
+```bash
+bash install.sh --doctor
 ```
 
 ## Connect
@@ -46,6 +64,13 @@ go test ./...
 go build ./...
 scripts/verify.sh --fast
 scripts/run-e2e.sh
+```
+
+One-command build/QA runner:
+
+```bash
+scripts/build.sh --quick   # fast local check
+scripts/build.sh --full    # full smoke + e2e
 ```
 
 If local Node is 25+, install/use Node 24 on macOS:

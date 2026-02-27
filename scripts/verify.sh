@@ -10,6 +10,8 @@ MUST_FAILURES=0
 SHOULD_FAILURES=0
 COMPOSE_UP_TIMEOUT_SECONDS="${COMPOSE_UP_TIMEOUT_SECONDS:-900}"
 COMPOSE_CMD_TIMEOUT_SECONDS="${COMPOSE_CMD_TIMEOUT_SECONDS:-30}"
+SMOKE_LOCK_TIMEOUT_SECONDS="${SMOKE_LOCK_TIMEOUT_SECONDS:-120}"
+VERIFY_COMPOSE_PROJECT="${VERIFY_COMPOSE_PROJECT:-wolfbbsverify}"
 
 SSH_PORT="${SSH_PORT:-2222}"
 WEB_PORT="${WEB_PORT:-8080}"
@@ -148,10 +150,10 @@ run_compose() {
   local ccmd="$1"
   shift
   if [[ "$ccmd" == "docker compose" ]]; then
-    docker compose "$@"
+    docker compose -p "$VERIFY_COMPOSE_PROJECT" "$@"
     return
   fi
-  docker-compose "$@"
+  COMPOSE_PROJECT_NAME="$VERIFY_COMPOSE_PROJECT" docker-compose "$@"
 }
 
 ensure_docker_host() {
@@ -355,6 +357,18 @@ run_static_checks() {
 }
 
 run_smoke_checks() {
+  local lock_dir="/tmp/wolfbbs-verify-smoke.lock"
+  local waited=0
+  while ! mkdir "$lock_dir" >/dev/null 2>&1; do
+    if (( waited >= SMOKE_LOCK_TIMEOUT_SECONDS )); then
+      fail_must "C-008" "smoke lock acquisition timed out (another smoke run is active)"
+      return
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  trap 'rmdir "'"$lock_dir"'" >/dev/null 2>&1 || true' EXIT
+
   local cfile
   cfile="$(compose_file || true)"
   ensure_docker_host
@@ -375,15 +389,23 @@ run_smoke_checks() {
   fi
   pass "C-001" "docker compose config is valid"
 
+  # Reset smoke project state to avoid stale DB volume credential mismatches.
+  run_with_timeout "$COMPOSE_CMD_TIMEOUT_SECONDS" run_compose "$ccmd" -f "$cfile" down -v --remove-orphans >/dev/null 2>&1 || true
+
   if run_with_timeout "$COMPOSE_UP_TIMEOUT_SECONDS" run_compose "$ccmd" -f "$cfile" up -d --build >/dev/null; then
     pass "C-008" "stack starts with docker compose up -d --build"
   else
-    fail_must "C-008" "stack starts with docker compose up -d --build"
-    return
+    warn_should "C-008-BUILD" "compose up -d --build failed/timed out; retrying without build"
+    if run_with_timeout "$COMPOSE_UP_TIMEOUT_SECONDS" run_compose "$ccmd" -f "$cfile" up -d --no-build >/dev/null; then
+      pass "C-008" "stack starts with docker compose up -d --no-build (build fallback)"
+    else
+      fail_must "C-008" "stack starts with docker compose up -d --build (or fallback up -d)"
+      return
+    fi
   fi
 
   if [[ "$KEEP_STACK" != "true" ]]; then
-    trap 'run_compose "'"$ccmd"'" -f "'"$cfile"'" down -v --remove-orphans >/dev/null 2>&1 || true' EXIT
+    trap 'run_compose "'"$ccmd"'" -f "'"$cfile"'" down -v --remove-orphans >/dev/null 2>&1 || true; rmdir "'"$lock_dir"'" >/dev/null 2>&1 || true' EXIT
   fi
 
   local health_url="http://127.0.0.1:${WEB_PORT}/healthz"

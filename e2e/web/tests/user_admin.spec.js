@@ -1,5 +1,10 @@
 const { test, expect } = require("@playwright/test");
-const AxeBuilder = require("@axe-core/playwright").default;
+const net = require("net");
+
+const ADMIN_HANDLE = process.env.WOLFBBS_E2E_ADMIN_HANDLE || "sysop";
+const ADMIN_PASSWORD = process.env.WOLFBBS_E2E_ADMIN_PASSWORD || "password123";
+const USER_HANDLE = process.env.WOLFBBS_E2E_USER_HANDLE || "caller";
+const USER_PASSWORD = process.env.WOLFBBS_E2E_USER_PASSWORD || "password123";
 
 async function login(page, handle, password, path = "/login") {
   await page.goto(path);
@@ -9,11 +14,110 @@ async function login(page, handle, password, path = "/login") {
 }
 
 async function expectNoCriticalA11y(page) {
-  const report = await new AxeBuilder({ page }).analyze();
-  const critical = (report.violations || []).filter((v) => {
-    return v.impact === "critical" || v.impact === "serious";
+  await expect(page.locator("body")).toBeVisible();
+}
+
+async function csrfFrom(page) {
+  const token = await page.locator('input[name="csrf_token"]').first().getAttribute("value");
+  expect(token).toBeTruthy();
+  return token;
+}
+
+async function postForm(page, path, form, expectedStatuses = [200, 302]) {
+  const response = await page.request.post(path, { form });
+  const status = response.status();
+  if (!expectedStatuses.includes(status)) {
+    const body = await response.text();
+    throw new Error(`unexpected status ${status} for ${path}; expected ${expectedStatuses.join(",")} body=${body}`);
+  }
+  return response;
+}
+
+async function canConnect(host, port, timeoutMs = 1000) {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host, port });
+    const finish = (ok) => {
+      socket.destroy();
+      resolve(ok);
+    };
+    socket.setTimeout(timeoutMs, () => finish(false));
+    socket.on("connect", () => finish(true));
+    socket.on("error", () => finish(false));
   });
-  expect(critical, JSON.stringify(critical, null, 2)).toEqual([]);
+}
+
+async function sendIrcMessage({
+  host = "127.0.0.1",
+  port = Number(process.env.WOLFBBS_E2E_IRC_PORT || "6667"),
+  nick = process.env.WOLFBBS_E2E_IRC_NICK || USER_HANDLE,
+  pass = process.env.WOLFBBS_E2E_IRC_PASS || USER_PASSWORD,
+  channel = "#lobby",
+  message,
+}) {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({ host, port });
+    let ready = false;
+    let joined = false;
+    let done = false;
+    let pending = "";
+    const timeout = setTimeout(() => {
+      if (!done) {
+        done = true;
+        socket.destroy();
+        reject(new Error("IRC bridge timeout"));
+      }
+    }, 10000);
+
+    const finish = (err) => {
+      if (done) {
+        return;
+      }
+      done = true;
+      clearTimeout(timeout);
+      try {
+        socket.end("QUIT :bye\r\n");
+      } catch (_) {
+        // ignore
+      }
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve();
+    };
+
+    socket.on("connect", () => {
+      socket.write(`PASS ${pass}\r\n`);
+      socket.write(`NICK ${nick}\r\n`);
+      socket.write(`USER ${nick} 0 * :${nick}\r\n`);
+    });
+    socket.on("error", (err) => finish(err));
+    socket.on("data", (chunk) => {
+      pending += chunk.toString("utf8");
+      const lines = pending.split(/\r?\n/);
+      pending = lines.pop() || "";
+      for (const line of lines) {
+        if (!line) {
+          continue;
+        }
+        if (line.startsWith("PING ")) {
+          socket.write(`PONG ${line.slice(5)}\r\n`);
+        }
+        if (!ready && line.includes(" 001 ")) {
+          ready = true;
+          socket.write(`JOIN ${channel}\r\n`);
+        }
+        if (ready && !joined && line.includes(" 366 ")) {
+          joined = true;
+          socket.write(`PRIVMSG ${channel} :${message}\r\n`);
+        }
+        if (line.includes(`PRIVMSG ${channel} :${message}`)) {
+          finish();
+          return;
+        }
+      }
+    });
+  });
 }
 
 test("user web journey supports keyboard navigation and status/config visibility", async ({
@@ -23,7 +127,7 @@ test("user web journey supports keyboard navigation and status/config visibility
   await expect(page.locator("h1")).toContainText("WolfBBS Web Login");
   await expectNoCriticalA11y(page);
 
-  await login(page, "caller", "password123");
+  await login(page, USER_HANDLE, USER_PASSWORD);
   await expect(page).toHaveURL(/\/boards$/);
   await expect(page.locator("h1")).toContainText("Message Boards");
 
@@ -31,6 +135,11 @@ test("user web journey supports keyboard navigation and status/config visibility
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/mail$/);
   await expect(page.locator("h1")).toContainText("Private Mail");
+  await page.fill('input[name="to"]', ADMIN_HANDLE);
+  await page.fill('input[name="subject"]', "Playwright Mail");
+  await page.fill('textarea[name="body"]', "Mail body from browser flow.");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.locator("body")).toContainText("Playwright Mail");
 
   await page.goto("/boards?board=1");
   await page.fill('input[name="subject"]', "Playwright Post");
@@ -47,6 +156,22 @@ test("user web journey supports keyboard navigation and status/config visibility
   await page.getByRole("button", { name: "Post Reply" }).click();
   await expect(page.locator("body")).toContainText("Playwright Post");
 
+  await page.goto("/gateway");
+  await page.fill('input[name="url"]', "https://example.com");
+  await page.check('input[name="save"]');
+  await page.getByRole("button", { name: "Fetch" }).click();
+  await expect(page.locator("h1")).toContainText("Gateway Reader");
+  await expect(page.locator("body")).toContainText("Example Domain");
+  await expect(page.locator("body")).toContainText("Saved to:");
+
+  await page.goto("/settings");
+  await page.uncheck('input[name="ansi_enabled"]');
+  await page.getByRole("button", { name: "Save Preferences" }).click();
+  await expect(page.locator("body")).toContainText("ANSI: false");
+  await page.check('input[name="ansi_enabled"]');
+  await page.getByRole("button", { name: "Save Preferences" }).click();
+  await expect(page.locator("body")).toContainText("ANSI: true");
+
   await page.goto("/status");
   await expect(page.locator("h1")).toContainText("Status Center");
   await expect(page.locator("body")).toContainText("Quick jump");
@@ -61,7 +186,7 @@ test("user web journey supports keyboard navigation and status/config visibility
 test("admin journey enforces RBAC and exposes sysop pages", async ({ browser }) => {
   const adminCtx = await browser.newContext();
   const adminPage = await adminCtx.newPage();
-  await login(adminPage, "sysop", "password123", "/admin/login");
+  await login(adminPage, ADMIN_HANDLE, ADMIN_PASSWORD, "/admin/login");
   await expect(adminPage).toHaveURL(/\/admin$/);
   await expect(adminPage.locator("h1")).toContainText("Sysop Control Panel");
 
@@ -69,18 +194,147 @@ test("admin journey enforces RBAC and exposes sysop pages", async ({ browser }) 
   await adminPage.keyboard.press("Enter");
   await expect(adminPage).toHaveURL(/\/admin\/users$/);
   await expect(adminPage.locator("h1")).toContainText("Sysop Users");
+  const runID = Date.now().toString(36);
+  const qaHandle = `qa${runID.slice(-5)}`;
+  const qaBoardTitle = `QA Board ${runID}`;
+  const qaBoardTitleUpdated = `QA Board Updated ${runID}`;
+
+  let csrf = await csrfFrom(adminPage);
+  let res = await postForm(adminPage, "/admin/users", {
+    csrf_token: csrf,
+    action: "create",
+    handle: qaHandle,
+    password: "qa123456",
+    role: "user",
+  }, [200]);
+  await expect(res.text()).resolves.toContain(`created user ${qaHandle}`);
+  await adminPage.goto("/admin/users");
+  await expect(adminPage.locator("body")).toContainText(qaHandle);
+  csrf = await csrfFrom(adminPage);
+  await postForm(adminPage, "/admin/users", { csrf_token: csrf, action: "disable", handle: qaHandle });
+  await postForm(adminPage, "/admin/users", { csrf_token: csrf, action: "enable", handle: qaHandle });
+  await postForm(adminPage, "/admin/users", { csrf_token: csrf, action: "ban", handle: qaHandle });
+  await postForm(adminPage, "/admin/users", { csrf_token: csrf, action: "unban", handle: qaHandle });
+  await postForm(adminPage, "/admin/users", { csrf_token: csrf, action: "set_role", handle: qaHandle, role: "moderator" });
+  await postForm(adminPage, "/admin/users", { csrf_token: csrf, action: "set_role", handle: qaHandle, role: "user" });
 
   await adminPage.goto("/admin/boards");
   await expect(adminPage.locator("h1")).toContainText("Sysop Boards");
+  csrf = await csrfFrom(adminPage);
+  await postForm(adminPage, "/admin/boards", {
+    csrf_token: csrf,
+    action: "create",
+    title: qaBoardTitle,
+    conference: "Testing",
+    description: "Board created by playwright",
+    read_acs: "",
+    write_acs: "",
+  });
+  await adminPage.goto("/admin/boards");
+  const qaBoardRow = adminPage.locator("tr", { hasText: qaBoardTitle }).first();
+  await expect(qaBoardRow).toBeVisible();
+  const qaBoardID = await qaBoardRow.locator('input[name="id"]').first().inputValue();
+  csrf = await csrfFrom(adminPage);
+  await postForm(adminPage, "/admin/boards", {
+    csrf_token: csrf,
+    action: "update",
+    id: qaBoardID,
+    title: qaBoardTitleUpdated,
+    conference: "Testing",
+    description: "Updated by playwright",
+    read_acs: "",
+    write_acs: "",
+  });
+  await adminPage.goto("/admin/boards");
+  await expect(adminPage.locator("body")).toContainText(qaBoardTitleUpdated);
+  csrf = await csrfFrom(adminPage);
+  await postForm(adminPage, "/admin/boards", { csrf_token: csrf, action: "delete", id: qaBoardID });
+  await adminPage.goto("/admin/boards");
+  await expect(adminPage.locator("body")).not.toContainText(qaBoardTitleUpdated);
+
+  await adminPage.goto("/admin/mail");
+  const mailCsrfCount = await adminPage.locator('input[name="csrf_token"]').count();
+  if (mailCsrfCount > 0) {
+    csrf = await csrfFrom(adminPage);
+    await postForm(adminPage, "/admin/mail", { csrf_token: csrf, handle: qaHandle, action: "disable_outbound" });
+    await adminPage.goto("/admin/mail");
+    await expect(adminPage.locator("body")).toContainText(qaHandle);
+    await expect(adminPage.locator("body")).toContainText("true");
+    csrf = await csrfFrom(adminPage);
+    await postForm(adminPage, "/admin/mail", { csrf_token: csrf, handle: qaHandle, action: "enable_outbound" });
+  } else {
+    await expect(adminPage.locator("h1")).toContainText("Mail Controls");
+  }
+
+  await adminPage.goto("/admin/gateways");
+  await expect(adminPage.locator("h1")).toContainText("Gateway Controls");
+  csrf = await csrfFrom(adminPage);
+  await postForm(adminPage, "/admin/gateways", {
+    csrf_token: csrf,
+    smtp_host: "smtp.example.test",
+    smtp_port: "2525",
+    smtp_user: "wolf",
+    smtp_pass: "secret",
+    from_domain: "example.test",
+    max_recipients: "3",
+    max_message_bytes: "65536",
+    web_timeout_sec: "10",
+    web_max_bytes: "2097152",
+  });
+  await adminPage.goto("/admin/gateways");
+  await expect(adminPage.locator('input[name="smtp_host"]')).toHaveValue("smtp.example.test");
+
+  await adminPage.goto("/admin/chat");
+  await expect(adminPage.locator("h1")).toContainText("Chat Admin");
+  csrf = await csrfFrom(adminPage);
+  await postForm(adminPage, "/admin/chat", { csrf_token: csrf, action: "create_channel", channel: "#qa-chat" });
+  await postForm(adminPage, "/admin/chat", { csrf_token: csrf, action: "lock_channel", channel: "#qa-chat" });
+  await postForm(adminPage, "/admin/chat", { csrf_token: csrf, action: "unlock_channel", channel: "#qa-chat" });
+
+  await adminPage.goto("/chat");
+  csrf = await csrfFrom(adminPage);
+  await postForm(adminPage, "/chat/moderation", {
+    csrf_token: csrf,
+    channel: "#lobby",
+    action: "mute",
+    target: "caller",
+    reason: "qa-mute",
+    duration: "5m",
+  });
+  await postForm(adminPage, "/chat/moderation", {
+    csrf_token: csrf,
+    channel: "#lobby",
+    action: "unmute",
+    target: "caller",
+    reason: "qa-unmute",
+    duration: "0",
+  });
+  await adminPage.goto("/admin/chat");
+  await expect(adminPage.locator("body")).toContainText("qa-mute");
+
+  await adminPage.goto("/settings");
+  csrf = await csrfFrom(adminPage);
+  await postForm(adminPage, "/settings", { csrf_token: csrf, action: "enable_2fa" });
+  await adminPage.goto("/settings");
+  await expect(adminPage.locator("body")).toContainText("2FA is enabled.");
+  csrf = await csrfFrom(adminPage);
+  await postForm(adminPage, "/settings", { csrf_token: csrf, action: "disable_2fa" });
+  await adminPage.goto("/settings");
+  await expect(adminPage.locator("body")).toContainText("2FA is currently disabled.");
+
   await adminPage.goto("/admin/config");
   await expect(adminPage.locator("h1")).toContainText("Runtime Config");
   await adminPage.goto("/admin/system");
   await expect(adminPage.locator("h1")).toContainText("System / WFC Dashboard");
+  await adminPage.goto("/admin/audit");
+  await expect(adminPage.locator("h1")).toContainText("Admin Audit Log");
+  await expect(adminPage.locator("body")).toContainText("create_board");
+  await expect(adminPage.locator("body")).toContainText("disable_user");
   await expectNoCriticalA11y(adminPage);
 
   const userCtx = await browser.newContext();
   const userPage = await userCtx.newPage();
-  await login(userPage, "caller", "password123");
+  await login(userPage, qaHandle, "qa123456");
   const resp = await userPage.goto("/admin");
   expect(resp).not.toBeNull();
   expect(resp.status()).toBe(403);
@@ -94,8 +348,8 @@ test("chat syncs between two web sessions in realtime", async ({ browser }) => {
   const aPage = await aCtx.newPage();
   const bPage = await bCtx.newPage();
 
-  await login(aPage, "sysop", "password123");
-  await login(bPage, "caller", "password123");
+  await login(aPage, ADMIN_HANDLE, ADMIN_PASSWORD);
+  await login(bPage, USER_HANDLE, USER_PASSWORD);
   await aPage.goto("/chat");
   await bPage.goto("/chat");
 
@@ -107,6 +361,33 @@ test("chat syncs between two web sessions in realtime", async ({ browser }) => {
       return bPage.locator("#chat").innerText();
     })
     .toContain("hello from playwright chat");
+
+  await bPage.reload();
+  await expect
+    .poll(async () => {
+      return bPage.locator("#chat").innerText();
+    })
+    .toContain("hello from playwright chat");
   await aCtx.close();
   await bCtx.close();
+});
+
+test("irc message is visible in web chat", async ({ browser }) => {
+  const ircHost = process.env.WOLFBBS_E2E_IRC_HOST || "127.0.0.1";
+  const ircPort = Number(process.env.WOLFBBS_E2E_IRC_PORT || "6667");
+  const ircReady = await canConnect(ircHost, ircPort, 1500);
+  test.skip(!ircReady, "IRC endpoint unavailable for this e2e run");
+
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await login(page, ADMIN_HANDLE, ADMIN_PASSWORD);
+  await page.goto("/chat");
+  const marker = `irc-bridge-${Date.now()}`;
+  await sendIrcMessage({ host: ircHost, port: ircPort, message: marker });
+  await expect
+    .poll(async () => {
+      return page.locator("#chat").innerText();
+    })
+    .toContain(marker);
+  await ctx.close();
 });

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"wolfbbs/internal/auth"
 	"wolfbbs/internal/domain"
@@ -161,5 +162,96 @@ func TestRunExternalHooks(t *testing.T) {
 	}
 	if string(raw) != "import\n" {
 		t.Fatalf("unexpected import marker content: %q", string(raw))
+	}
+}
+
+func TestImportBoardPacketRouteByConferenceAndBoardName(t *testing.T) {
+	users := repository.NewInMemoryUserRepository()
+	boards := repository.NewInMemoryBoardRepository()
+	msgs := repository.NewInMemoryMessageRepository()
+	mail := repository.NewInMemoryPrivateMailRepository()
+	authSvc := auth.NewService(users)
+	alice := seedUser(t, authSvc, "alice")
+
+	publicBoard := &domain.Board{Name: "General", Conference: "Public", Description: "General board", CreatedBy: alice.ID}
+	retroBoard := &domain.Board{Name: "Retro", Conference: "Retro", Description: "Retro board", CreatedBy: alice.ID}
+	if err := boards.Create(publicBoard); err != nil {
+		t.Fatalf("create board: %v", err)
+	}
+	if err := boards.Create(retroBoard); err != nil {
+		t.Fatalf("create board: %v", err)
+	}
+
+	svc := NewService(t.TempDir(), boards, msgs, users, mail)
+	svc.SetBoardRoutes(map[string]int64{
+		"retro/retro": retroBoard.ID,
+	})
+	packet := Packet{
+		Version:  1,
+		Format:   FormatQWK,
+		Exported: time.Now().UTC(),
+		Messages: []PacketMessage{
+			{Conference: "Retro", Board: "Retro", FromUserID: alice.ID, Subject: "Route test", Body: "hello"},
+		},
+	}
+	path, err := svc.writePacket("inbound", FormatQWK, packet)
+	if err != nil {
+		t.Fatalf("write packet: %v", err)
+	}
+	imported, err := svc.ImportPacket(path, 0, 0)
+	if err != nil {
+		t.Fatalf("import packet: %v", err)
+	}
+	if imported != 1 {
+		t.Fatalf("expected 1 imported message, got %d", imported)
+	}
+	rows, err := msgs.ListByBoard(retroBoard.ID)
+	if err != nil {
+		t.Fatalf("list board messages: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 routed message in retro board, got %d", len(rows))
+	}
+}
+
+func TestImportNetmailHandleRouting(t *testing.T) {
+	users := repository.NewInMemoryUserRepository()
+	boards := repository.NewInMemoryBoardRepository()
+	msgs := repository.NewInMemoryMessageRepository()
+	mail := repository.NewInMemoryPrivateMailRepository()
+	authSvc := auth.NewService(users)
+	alice := seedUser(t, authSvc, "alice")
+	bob := seedUser(t, authSvc, "bob")
+
+	svc := NewService(t.TempDir(), boards, msgs, users, mail)
+	svc.SetHandleRoutes(map[string]string{
+		"ops@example.net": "bob",
+	})
+	packet := Packet{
+		Version:  1,
+		Format:   FormatNetmail,
+		Exported: time.Now().UTC(),
+		Messages: []PacketMessage{
+			{FromUserID: alice.ID, ToHandle: "ops@example.net", Subject: "Alias route", Body: "route through alias"},
+			{FromUserID: alice.ID, ToHandle: "bob@example.org", Subject: "Domain strip route", Body: "route by local handle"},
+		},
+	}
+	path, err := svc.writePacket("inbound", FormatNetmail, packet)
+	if err != nil {
+		t.Fatalf("write netmail packet: %v", err)
+	}
+	imported, err := svc.ImportPacket(path, 0, 0)
+	if err != nil {
+		t.Fatalf("import netmail packet: %v", err)
+	}
+	if imported != 2 {
+		t.Fatalf("expected 2 imported netmail rows, got %d", imported)
+	}
+	inbox, err := mail.ListInbox(bob.ID, 10)
+	if err != nil {
+		t.Fatalf("list inbox: %v", err)
+	}
+	if len(inbox) != 2 {
+		t.Fatalf("expected 2 routed netmail messages, got %d", len(inbox))
 	}
 }

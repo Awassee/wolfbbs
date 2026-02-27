@@ -18,6 +18,7 @@ import (
 	"wolfbbs/internal/repository"
 	"wolfbbs/internal/session"
 	"wolfbbs/internal/sshserver"
+	"wolfbbs/internal/ui"
 )
 
 type Config struct {
@@ -27,6 +28,9 @@ type Config struct {
 
 func Run(cfg Config) error {
 	logger := logging.NewLogger("wolfbbs-ssh")
+	if err := ui.LoadThemesFromEnv(); err != nil {
+		logger.Warn("theme config load failed; using built-in themes", "error", err)
+	}
 
 	storage, err := repository.OpenStorageFromEnv(cfg.DBURL)
 	if err != nil {

@@ -25,6 +25,8 @@ const (
 
 type PacketMessage struct {
 	BoardID    int64  `json:"board_id,omitempty"`
+	Board      string `json:"board,omitempty"`
+	Conference string `json:"conference,omitempty"`
 	FromUserID int64  `json:"from_user_id,omitempty"`
 	ToUserID   int64  `json:"to_user_id,omitempty"`
 	ToHandle   string `json:"to_handle,omitempty"`
@@ -57,6 +59,8 @@ type Service struct {
 	source    string
 	importCmd string
 	exportCmd string
+	boardMap  map[string]int64
+	handleMap map[string]string
 }
 
 func NewService(spoolDir string, boards repository.BoardRepository, messages repository.MessageRepository, users repository.UserRepository, mail repository.PrivateMailRepository) *Service {
@@ -73,12 +77,22 @@ func NewService(spoolDir string, boards repository.BoardRepository, messages rep
 		source:    "WolfBBS",
 		importCmd: strings.TrimSpace(os.Getenv("WOLFBBS_NET_IMPORT_CMD")),
 		exportCmd: strings.TrimSpace(os.Getenv("WOLFBBS_NET_EXPORT_CMD")),
+		boardMap:  parseBoardRoutes(strings.TrimSpace(os.Getenv("WOLFBBS_NET_BOARD_ROUTES"))),
+		handleMap: parseHandleRoutes(strings.TrimSpace(os.Getenv("WOLFBBS_NET_HANDLE_ROUTES"))),
 	}
 }
 
 func (s *Service) SetExternalCommands(importCmd, exportCmd string) {
 	s.importCmd = strings.TrimSpace(importCmd)
 	s.exportCmd = strings.TrimSpace(exportCmd)
+}
+
+func (s *Service) SetBoardRoutes(routes map[string]int64) {
+	s.boardMap = cloneBoardRoutes(routes)
+}
+
+func (s *Service) SetHandleRoutes(routes map[string]string) {
+	s.handleMap = cloneHandleRoutes(routes)
 }
 
 func normalizeFormat(format string) (string, error) {
@@ -119,6 +133,14 @@ func (s *Service) ExportBoard(format string, boardID int64) (string, error) {
 			return "", err
 		}
 	}
+	boardName := ""
+	conference := ""
+	if s.boards != nil {
+		if board, err := s.boards.Get(boardID); err == nil && board != nil {
+			boardName = strings.TrimSpace(board.Name)
+			conference = strings.TrimSpace(board.Conference)
+		}
+	}
 	msgs, err := s.messages.ListByBoard(boardID)
 	if err != nil {
 		return "", err
@@ -133,6 +155,8 @@ func (s *Service) ExportBoard(format string, boardID int64) (string, error) {
 	for _, msg := range msgs {
 		p.Messages = append(p.Messages, PacketMessage{
 			BoardID:    msg.BoardID,
+			Board:      boardName,
+			Conference: conference,
 			FromUserID: msg.AuthorID,
 			Subject:    strings.TrimSpace(msg.Subject),
 			Body:       strings.TrimSpace(msg.Body),
@@ -244,7 +268,7 @@ func (s *Service) importBoardPacket(p Packet, defaultBoardID, defaultAuthorID in
 	}
 	imported := 0
 	for _, row := range p.Messages {
-		boardID := row.BoardID
+		boardID := s.resolveBoardID(row)
 		if boardID <= 0 {
 			boardID = defaultBoardID
 		}
@@ -296,15 +320,16 @@ func (s *Service) importNetmail(p Packet) (int, error) {
 		}
 		toID := row.ToUserID
 		if toID <= 0 {
-			handle := strings.TrimSpace(row.ToHandle)
-			if handle == "" {
-				continue
+			for _, handle := range s.resolveNetmailHandles(row.ToHandle) {
+				user, err := s.users.GetByHandle(handle)
+				if err == nil && user != nil {
+					toID = user.ID
+					break
+				}
 			}
-			user, err := s.users.GetByHandle(handle)
-			if err != nil {
-				continue
-			}
-			toID = user.ID
+		}
+		if toID <= 0 {
+			continue
 		}
 		if err := s.mail.CreateMail(&domain.PrivateMail{
 			FromUserID: fromID,
@@ -371,6 +396,9 @@ func (s *Service) RunExternalExport(ctx context.Context) error {
 }
 
 func (s *Service) runExternal(ctx context.Context, command, mode string) error {
+	if _, err := s.ensureDir(); err != nil {
+		return err
+	}
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
 	cmd.Dir = s.spoolDir
 	cmd.Env = append(os.Environ(),
@@ -407,4 +435,157 @@ func (s *Service) countJSON(root string) (int, error) {
 		return nil
 	})
 	return count, err
+}
+
+func (s *Service) resolveBoardID(row PacketMessage) int64 {
+	if row.BoardID > 0 {
+		return row.BoardID
+	}
+	keys := []string{
+		normalizeRouteKey(row.Board),
+		normalizeRouteKey(row.Conference),
+		normalizeRouteKey(row.Conference + "/" + row.Board),
+	}
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		if id, ok := s.boardMap[key]; ok && id > 0 {
+			return id
+		}
+	}
+	if s.boards != nil {
+		boards, err := s.boards.List()
+		if err == nil {
+			boardKey := normalizeRouteKey(row.Board)
+			confKey := normalizeRouteKey(row.Conference)
+			fullKey := normalizeRouteKey(row.Conference + "/" + row.Board)
+			for _, board := range boards {
+				if board.ID <= 0 {
+					continue
+				}
+				nameKey := normalizeRouteKey(board.Name)
+				confName := strings.TrimSpace(board.Conference)
+				confNameKey := normalizeRouteKey(confName)
+				boardFull := normalizeRouteKey(confName + "/" + board.Name)
+				if boardKey != "" && nameKey == boardKey {
+					return board.ID
+				}
+				if confKey != "" && confNameKey == confKey {
+					return board.ID
+				}
+				if fullKey != "" && boardFull == fullKey {
+					return board.ID
+				}
+			}
+		}
+	}
+	return 0
+}
+
+func (s *Service) resolveNetmailHandles(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	candidates := []string{raw}
+	if mapped, ok := s.handleMap[normalizeRouteKey(raw)]; ok {
+		candidates = append(candidates, mapped)
+	}
+	if at := strings.Index(raw, "@"); at > 0 {
+		local := strings.TrimSpace(raw[:at])
+		if local != "" {
+			candidates = append(candidates, local)
+			if mapped, ok := s.handleMap[normalizeRouteKey(local)]; ok {
+				candidates = append(candidates, mapped)
+			}
+		}
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(candidates))
+	for _, row := range candidates {
+		row = strings.TrimSpace(row)
+		if row == "" {
+			continue
+		}
+		key := normalizeRouteKey(row)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, row)
+	}
+	return out
+}
+
+func normalizeRouteKey(raw string) string {
+	return strings.ToLower(strings.TrimSpace(raw))
+}
+
+func parseBoardRoutes(raw string) map[string]int64 {
+	out := map[string]int64{}
+	for _, row := range strings.Split(raw, ",") {
+		row = strings.TrimSpace(row)
+		if row == "" {
+			continue
+		}
+		parts := strings.SplitN(row, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := normalizeRouteKey(parts[0])
+		id := int64(0)
+		fmt.Sscan(strings.TrimSpace(parts[1]), &id)
+		if key == "" || id <= 0 {
+			continue
+		}
+		out[key] = id
+	}
+	return out
+}
+
+func parseHandleRoutes(raw string) map[string]string {
+	out := map[string]string{}
+	for _, row := range strings.Split(raw, ",") {
+		row = strings.TrimSpace(row)
+		if row == "" {
+			continue
+		}
+		parts := strings.SplitN(row, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := normalizeRouteKey(parts[0])
+		value := strings.TrimSpace(parts[1])
+		if key == "" || value == "" {
+			continue
+		}
+		out[key] = value
+	}
+	return out
+}
+
+func cloneBoardRoutes(routes map[string]int64) map[string]int64 {
+	out := map[string]int64{}
+	for key, value := range routes {
+		key = normalizeRouteKey(key)
+		if key == "" || value <= 0 {
+			continue
+		}
+		out[key] = value
+	}
+	return out
+}
+
+func cloneHandleRoutes(routes map[string]string) map[string]string {
+	out := map[string]string{}
+	for key, value := range routes {
+		key = normalizeRouteKey(key)
+		value = strings.TrimSpace(value)
+		if key == "" || value == "" {
+			continue
+		}
+		out[key] = value
+	}
+	return out
 }

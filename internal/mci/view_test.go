@@ -1,6 +1,8 @@
 package mci
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -45,5 +47,30 @@ func TestNormalizeRejectsUnknownType(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected unknown control type error")
+	}
+}
+
+func TestLoadViewFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.hjson")
+	body := `
+{
+  id: "settings"
+  title: "Settings"
+  controls: [
+    { type: "label", label: "Header" }
+    { type: "toggle", id: "ansi", label: "ANSI", value: "true" }
+  ]
+}
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write view file: %v", err)
+	}
+	view, err := LoadViewFile(path)
+	if err != nil {
+		t.Fatalf("load view file: %v", err)
+	}
+	if view.ID != "settings" {
+		t.Fatalf("unexpected view id %q", view.ID)
 	}
 }

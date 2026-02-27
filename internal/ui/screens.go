@@ -332,7 +332,7 @@ func RenderMailOverview(width int, inboxRows []string, outboxRows []string) stri
 		lines = append(lines, outboxRows...)
 	}
 	lines = append(lines, "")
-	lines = append(lines, "Commands: (C)ompose, (R)ead, (Q)uit mail, (?)help")
+	lines = append(lines, "Commands: (C)ompose, (R)ead, Re(P)ly, (D)elete, (Q)uit, (?)help")
 	lines = append(lines, "Selection:")
 	return renderPanel(width, "Private Mail", lines, FgCyan) + "\r\n"
 }
@@ -469,6 +469,8 @@ func RenderMailHelp(width int) string {
 		"",
 		"C  Compose message",
 		"R  Read message by ID",
+		"P  Reply to message by ID",
+		"D  Delete message by ID",
 		"Q  Return to Main Menu",
 		"",
 		"Compose details:",
@@ -478,6 +480,7 @@ func RenderMailHelp(width int) string {
 		"Reader details:",
 		"- Inbox mail is marked read when opened",
 		"- Outbox includes local and external destinations",
+		"- Reader hotkeys: P reply, D delete, Q back",
 	}
 	return renderHelpPanel(width, "Help: Private Mail", lines)
 }

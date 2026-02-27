@@ -24,6 +24,13 @@ INSTALL_BREW=false
 UNINSTALL=false
 UPGRADE=false
 STATUS=false
+DOCTOR=false
+START=false
+STOP=false
+RESTART=false
+LOGS=false
+REPAIR=false
+DEPS_ONLY=false
 REPO_URL="${WOLFBBS_REPO_URL:-${WOLFBBS_GH:-}}"
 OS=""
 DISTRO=""
@@ -31,12 +38,42 @@ ID_LIKE=""
 PKG_MGR=""
 ARCH=""
 
-SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_SOURCE="${BASH_SOURCE[0]:-$0}"
+if SCRIPT_PATH_TMP="$(cd "$(dirname "$SCRIPT_SOURCE")" 2>/dev/null && pwd)"; then
+  SCRIPT_PATH="$SCRIPT_PATH_TMP"
+else
+  SCRIPT_PATH="$(pwd)"
+fi
 LOG_FILE="${SCRIPT_PATH}/install.log"
 WORK_DIR="${SCRIPT_PATH}"
 PURGE=false
 ENV_FILE=""
 DOCKER_BIN="docker"
+bootstrap_handle=""
+
+init_log_file() {
+  local candidate=""
+  local dir=""
+  local candidates=()
+
+  if [[ -n "${PREFIX:-}" ]]; then
+    candidates+=("${PREFIX}/install.log")
+  fi
+  candidates+=("${SCRIPT_PATH}/install.log")
+  candidates+=("${PWD}/install.log")
+  candidates+=("/tmp/wolfbbs-install.log")
+  candidates+=("/tmp/wolfbbs-install-$$.log")
+
+  for candidate in "${candidates[@]}"; do
+    dir="$(dirname "$candidate")"
+    if mkdir -p "$dir" >/dev/null 2>&1 && touch "$candidate" >/dev/null 2>&1; then
+      LOG_FILE="$candidate"
+      return 0
+    fi
+  done
+  echo "Unable to create installer log file in any standard location."
+  exit 1
+}
 
 usage() {
   cat <<'USAGE'
@@ -61,6 +98,13 @@ Options:
   --uninstall               stop/remove services
   --upgrade                 pull/restart services in existing install
   --status                  show service status and endpoints
+  --doctor                  run non-mutating preflight + install health diagnostics
+  --start                   start existing WolfBBS services
+  --stop                    stop existing WolfBBS services
+  --restart                 restart existing WolfBBS services
+  --logs                    show recent service logs (tail)
+  --repair                  self-heal install: ensure deps/env, rebuild + verify stack
+  --deps-only               install/check prerequisites and docker runtime, then exit
   --purge                   remove docker volumes/instance on uninstall
   --repo <owner/repo|url>   GitHub slug or git URL to clone if installer is run standalone
   --repo-url <url>          alias of --repo
@@ -173,6 +217,27 @@ run() {
   eval "$*"
 }
 
+run_retry() {
+  local attempts="$1"
+  local delay_seconds="$2"
+  shift 2
+  local cmd="$*"
+  local attempt=1
+
+  while true; do
+    if run "$cmd"; then
+      return 0
+    fi
+    if (( attempt >= attempts )); then
+      log "Command failed after ${attempts} attempts: ${cmd}"
+      return 1
+    fi
+    log "Retrying in ${delay_seconds}s (${attempt}/${attempts}): ${cmd}"
+    sleep "$delay_seconds"
+    attempt=$((attempt + 1))
+  done
+}
+
 run_root() {
   local cmd="$*"
   if [[ "$(id -u)" -eq 0 ]]; then
@@ -184,6 +249,27 @@ run_root() {
     exit 1
   fi
   run "sudo $cmd"
+}
+
+run_root_retry() {
+  local attempts="$1"
+  local delay_seconds="$2"
+  shift 2
+  local cmd="$*"
+  local attempt=1
+
+  while true; do
+    if run_root "$cmd"; then
+      return 0
+    fi
+    if (( attempt >= attempts )); then
+      log "Root command failed after ${attempts} attempts: ${cmd}"
+      return 1
+    fi
+    log "Retrying root command in ${delay_seconds}s (${attempt}/${attempts}): ${cmd}"
+    sleep "$delay_seconds"
+    attempt=$((attempt + 1))
+  done
 }
 
 confirm() {
@@ -433,7 +519,7 @@ ensure_brew() {
       exit 1
     fi
   fi
-  run "/bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+  run_retry 3 3 "/bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
   if [[ -x /opt/homebrew/bin/brew ]]; then
     eval "$(/opt/homebrew/bin/brew shellenv)"
   elif [[ -x /usr/local/bin/brew ]]; then
@@ -470,23 +556,23 @@ install_base_prereqs() {
 
   if is_macos; then
     ensure_brew
-    run "brew install ${packages[*]}"
+    run_retry 3 3 "brew install ${packages[*]}"
     return
   fi
 
   case "$PKG_MGR" in
     apt)
-      run_root "apt-get update"
-      run_root "apt-get install -y ${packages[*]}"
+      run_root_retry 3 3 "apt-get update"
+      run_root_retry 3 3 "apt-get install -y ${packages[*]}"
       ;;
     dnf)
-      run_root "dnf -y install ${packages[*]}"
+      run_root_retry 3 3 "dnf -y install ${packages[*]}"
       ;;
     yum)
-      run_root "yum -y install ${packages[*]}"
+      run_root_retry 3 3 "yum -y install ${packages[*]}"
       ;;
     pacman)
-      run_root "pacman -Sy --noconfirm --needed ${packages[*]}"
+      run_root_retry 3 3 "pacman -Sy --noconfirm --needed ${packages[*]}"
       ;;
     *)
       echo "Unsupported package manager for automated dependency install."
@@ -535,7 +621,7 @@ compose_cmd() {
 
 install_colima_stack() {
   ensure_brew
-  run "brew install docker docker-compose colima"
+  run_retry 3 3 "brew install docker docker-compose colima"
   if [[ "$DRY_RUN" == "true" ]]; then
     log "DRY-RUN: would start Colima runtime"
     return
@@ -543,6 +629,19 @@ install_colima_stack() {
   if ! colima status >/dev/null 2>&1; then
     run "colima start"
   fi
+}
+
+wait_for_docker_daemon() {
+  local timeout_seconds="${1:-90}"
+  local elapsed=0
+  while (( elapsed < timeout_seconds )); do
+    if docker info >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+  return 1
 }
 
 ensure_docker_linux() {
@@ -557,8 +656,8 @@ ensure_docker_linux() {
 
   case "$PKG_MGR" in
     apt)
-      run_root "apt-get update"
-      run_root "apt-get install -y ca-certificates curl gnupg lsb-release"
+      run_root_retry 3 3 "apt-get update"
+      run_root_retry 3 3 "apt-get install -y ca-certificates curl gnupg lsb-release"
       run_root "mkdir -p /etc/apt/keyrings"
       local docker_repo_distro="ubuntu"
       if [[ "$DISTRO" == "debian" ]] || [[ "$ID_LIKE" == *"debian"* && "$DISTRO" != "ubuntu" ]]; then
@@ -576,8 +675,8 @@ ensure_docker_linux() {
       fi
       apt_arch="$(dpkg --print-architecture)"
       run_root "bash -c 'echo \"deb [arch=${apt_arch} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/${docker_repo_distro} ${codename} stable\" > /etc/apt/sources.list.d/docker.list'"
-      run_root "apt-get update"
-      run_root "apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
+      run_root_retry 3 3 "apt-get update"
+      run_root_retry 3 3 "apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
       ;;
     dnf|yum)
       if [[ "$PKG_MGR" == "dnf" ]]; then
@@ -587,10 +686,10 @@ ensure_docker_linux() {
         run_root "yum -y install yum-utils"
         run_root "yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo"
       fi
-      run_root "${PKG_MGR} -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
+      run_root_retry 3 3 "${PKG_MGR} -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
       ;;
     pacman)
-      run_root "pacman -Sy --noconfirm docker docker-compose"
+      run_root_retry 3 3 "pacman -Sy --noconfirm docker docker-compose"
       ;;
     *)
       echo "Please install Docker manually and rerun the installer."
@@ -610,6 +709,17 @@ ensure_docker_macos() {
     if docker info >/dev/null 2>&1; then
       return
     fi
+    if command -v open >/dev/null 2>&1; then
+      if [[ -d "/Applications/Docker.app" ]]; then
+        if [[ "$NON_INTERACTIVE" == "true" ]] || confirm "Docker daemon is down. Start Docker Desktop now?"; then
+          run "open -a Docker"
+          if wait_for_docker_daemon 120; then
+            return
+          fi
+          log "Docker Desktop did not become ready in time."
+        fi
+      fi
+    fi
     if command -v colima >/dev/null 2>&1; then
       if colima status >/dev/null 2>&1; then
         log "Docker CLI present and Colima is running."
@@ -623,6 +733,10 @@ ensure_docker_macos() {
         echo "Start Colima with: colima start"
         exit 1
       fi
+      if wait_for_docker_daemon 120; then
+        return
+      fi
+      log "Colima started but docker daemon is still unreachable."
       return
     fi
     echo "Docker CLI is present but Docker daemon is not reachable."
@@ -671,14 +785,14 @@ ensure_compose_runtime() {
   else
     case "$PKG_MGR" in
       apt)
-        run_root "apt-get update"
-        run_root "apt-get install -y docker-compose-plugin"
+        run_root_retry 3 3 "apt-get update"
+        run_root_retry 3 3 "apt-get install -y docker-compose-plugin"
         ;;
       dnf|yum)
-        run_root "${PKG_MGR} -y install docker-compose-plugin"
+        run_root_retry 3 3 "${PKG_MGR} -y install docker-compose-plugin"
         ;;
       pacman)
-        run_root "pacman -Sy --noconfirm docker-compose"
+        run_root_retry 3 3 "pacman -Sy --noconfirm docker-compose"
         ;;
       *)
         echo "Unsupported package manager for compose install."
@@ -784,9 +898,9 @@ ensure_compose_file() {
       return
     fi
     if [[ -d "$PREFIX/.git" ]]; then
-      run "git -C '$PREFIX' pull --ff-only"
+      run_retry 3 3 "git -C '$PREFIX' pull --ff-only"
     else
-      run "git clone '$REPO_URL' '$PREFIX'"
+      run_retry 3 3 "git clone '$REPO_URL' '$PREFIX'"
     fi
     WORK_DIR="$PREFIX"
     compose_file="$(find_compose_file || true)"
@@ -868,7 +982,7 @@ docker_compose_up() {
     echo "Docker Compose not found."
     exit 1
   fi
-  run "cd '$WORK_DIR' && $cmd -f '$(printf '%q' "$compose_file")' --env-file '$ENV_FILE' up -d --build"
+  run_retry 3 5 "cd '$WORK_DIR' && $cmd -f \"$compose_file\" --env-file \"$ENV_FILE\" up -d --build"
 }
 
 docker_compose_pull_restart() {
@@ -882,8 +996,8 @@ docker_compose_pull_restart() {
     echo "Docker Compose not found."
     exit 1
   fi
-  run "cd '$WORK_DIR' && $cmd -f '$(printf '%q' "$compose_file")' --env-file '$ENV_FILE' pull"
-  run "cd '$WORK_DIR' && $cmd -f '$(printf '%q' "$compose_file")' --env-file '$ENV_FILE' up -d --build"
+  run_retry 3 5 "cd '$WORK_DIR' && $cmd -f \"$compose_file\" --env-file \"$ENV_FILE\" pull"
+  run_retry 3 5 "cd '$WORK_DIR' && $cmd -f \"$compose_file\" --env-file \"$ENV_FILE\" up -d --build"
 }
 
 docker_compose_down() {
@@ -897,7 +1011,7 @@ docker_compose_down() {
     echo "Docker Compose not found."
     exit 1
   fi
-  run "cd '$WORK_DIR' && $cmd -f '$(printf '%q' "$compose_file")' --env-file '$ENV_FILE' down"
+  run "cd '$WORK_DIR' && $cmd -f \"$compose_file\" --env-file \"$ENV_FILE\" down"
 }
 
 docker_compose_down_purge() {
@@ -911,7 +1025,7 @@ docker_compose_down_purge() {
     echo "Docker Compose not found."
     exit 1
   fi
-  run "cd '$WORK_DIR' && $cmd -f '$(printf '%q' "$compose_file")' --env-file '$ENV_FILE' down -v --remove-orphans"
+  run "cd '$WORK_DIR' && $cmd -f \"$compose_file\" --env-file \"$ENV_FILE\" down -v --remove-orphans"
 }
 
 docker_compose_status() {
@@ -922,6 +1036,62 @@ docker_compose_status() {
     return 1
   fi
   run "$cmd -f '$compose_file' --env-file '$ENV_FILE' ps"
+}
+
+docker_compose_start() {
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "DRY-RUN: would start compose services"
+    return 0
+  fi
+  local cmd
+  cmd="$(compose_cmd)"
+  if [[ -z "$cmd" ]]; then
+    echo "Docker Compose not found."
+    exit 1
+  fi
+  run "cd '$WORK_DIR' && $cmd -f \"$compose_file\" --env-file \"$ENV_FILE\" up -d"
+}
+
+docker_compose_stop() {
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "DRY-RUN: would stop compose services"
+    return 0
+  fi
+  local cmd
+  cmd="$(compose_cmd)"
+  if [[ -z "$cmd" ]]; then
+    echo "Docker Compose not found."
+    exit 1
+  fi
+  run "cd '$WORK_DIR' && $cmd -f \"$compose_file\" --env-file \"$ENV_FILE\" stop"
+}
+
+docker_compose_restart() {
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "DRY-RUN: would restart compose services"
+    return 0
+  fi
+  local cmd
+  cmd="$(compose_cmd)"
+  if [[ -z "$cmd" ]]; then
+    echo "Docker Compose not found."
+    exit 1
+  fi
+  run "cd '$WORK_DIR' && $cmd -f \"$compose_file\" --env-file \"$ENV_FILE\" restart"
+}
+
+docker_compose_logs() {
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "DRY-RUN: would show compose service logs"
+    return 0
+  fi
+  local cmd
+  cmd="$(compose_cmd)"
+  if [[ -z "$cmd" ]]; then
+    echo "Docker Compose not found."
+    exit 1
+  fi
+  run "cd '$WORK_DIR' && $cmd -f \"$compose_file\" --env-file \"$ENV_FILE\" logs --tail=200"
 }
 
 seed_admin_check() {
@@ -979,6 +1149,10 @@ verify_install() {
     echo "web service health check failed"
     return 1
   fi
+  if ! curl -fsS "http://127.0.0.1:${WEB_PORT}/readyz" >/dev/null; then
+    echo "web service readiness check failed"
+    return 1
+  fi
   wait_for_port 127.0.0.1 "$SSH_PORT" "SSH BBS"
   wait_for_port 127.0.0.1 "$IRC_PORT" "IRC"
   wait_for_port 127.0.0.1 "$MAILIN_PORT" "Mail Ingest"
@@ -1010,6 +1184,137 @@ status_view() {
     echo "Compose status:"
     eval "$cmd -f '$compose_file' --env-file '$ENV_FILE' ps" || true
   fi
+}
+
+doctor_ok() {
+  printf 'PASS doctor: %s\n' "$1"
+}
+
+doctor_warn() {
+  printf 'WARN doctor: %s\n' "$1"
+}
+
+doctor_fail() {
+  printf 'FAIL doctor: %s\n' "$1"
+}
+
+doctor_report() {
+  local failures=0
+  local compose_cmd_value=""
+  local local_compose=""
+  local install_compose=""
+  local install_env=""
+
+  echo "WolfBBS doctor report"
+  echo "  os=${OS} distro=${DISTRO} arch=${ARCH} pkg=${PKG_MGR:-none}"
+
+  if [[ "$OS" == "unknown" ]]; then
+    doctor_fail "unsupported operating system"
+    failures=$((failures + 1))
+  else
+    doctor_ok "supported OS detected"
+  fi
+
+  local required=(curl git openssl sed awk grep)
+  local missing=()
+  local cmd
+  for cmd in "${required[@]}"; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+      missing+=("$cmd")
+    fi
+  done
+  if (( ${#missing[@]} > 0 )); then
+    doctor_fail "missing required commands: ${missing[*]}"
+    failures=$((failures + 1))
+  else
+    doctor_ok "required base commands are present"
+  fi
+
+  if command -v docker >/dev/null 2>&1; then
+    doctor_ok "docker CLI found"
+  else
+    doctor_fail "docker CLI missing"
+    failures=$((failures + 1))
+  fi
+
+  compose_cmd_value="$(compose_cmd)"
+  if [[ -n "$compose_cmd_value" ]]; then
+    doctor_ok "docker compose command detected: ${compose_cmd_value}"
+  else
+    doctor_fail "docker compose command not found"
+    failures=$((failures + 1))
+  fi
+
+  if command -v docker >/dev/null 2>&1; then
+    if docker info >/dev/null 2>&1; then
+      doctor_ok "docker daemon reachable"
+    else
+      doctor_warn "docker daemon not reachable for current user"
+    fi
+  fi
+
+  local_compose="$(find_compose_file || true)"
+  if [[ -n "$local_compose" ]]; then
+    doctor_ok "compose file in working dir: ${local_compose}"
+  else
+    doctor_warn "no compose file in working dir (installer can clone via --repo)"
+  fi
+
+  install_compose=""
+  if [[ -f "${PREFIX}/docker-compose.yml" ]]; then
+    install_compose="${PREFIX}/docker-compose.yml"
+  elif [[ -f "${PREFIX}/compose.yml" ]]; then
+    install_compose="${PREFIX}/compose.yml"
+  fi
+  if [[ -n "$install_compose" ]]; then
+    doctor_ok "compose file in install prefix: ${install_compose}"
+  else
+    doctor_warn "no compose file in install prefix ${PREFIX}"
+  fi
+
+  install_env="${PREFIX}/.env"
+  if [[ -f "$install_env" ]]; then
+    doctor_ok "env file found: ${install_env}"
+    local mode
+    mode="$(stat -f '%Lp' "$install_env" 2>/dev/null || stat -c '%a' "$install_env" 2>/dev/null || true)"
+    if [[ "$mode" == "600" ]]; then
+      doctor_ok ".env permissions are 600"
+    elif [[ -n "$mode" ]]; then
+      doctor_warn ".env permissions are ${mode} (recommended 600)"
+    fi
+  else
+    doctor_warn "no env file in install prefix (expected before first install)"
+  fi
+
+  if command -v nc >/dev/null 2>&1; then
+    if nc -z 127.0.0.1 "$SSH_PORT" >/dev/null 2>&1; then
+      doctor_ok "ssh port ${SSH_PORT} is reachable"
+    else
+      doctor_warn "ssh port ${SSH_PORT} is not reachable"
+    fi
+    if nc -z 127.0.0.1 "$IRC_PORT" >/dev/null 2>&1; then
+      doctor_ok "irc port ${IRC_PORT} is reachable"
+    else
+      doctor_warn "irc port ${IRC_PORT} is not reachable"
+    fi
+  else
+    doctor_warn "netcat (nc) not found; skipping port checks"
+  fi
+
+  if command -v curl >/dev/null 2>&1; then
+    if curl -fsS "http://127.0.0.1:${WEB_PORT}/healthz" >/dev/null 2>&1; then
+      doctor_ok "web health endpoint is reachable on port ${WEB_PORT}"
+    else
+      doctor_warn "web health endpoint not reachable on port ${WEB_PORT}"
+    fi
+  fi
+
+  if (( failures > 0 )); then
+    echo "Doctor found ${failures} blocking issue(s)."
+    return 1
+  fi
+  echo "Doctor completed with no blocking issues."
+  return 0
 }
 
 parse_args() {
@@ -1081,6 +1386,34 @@ parse_args() {
         STATUS=true
         shift
         ;;
+      --doctor)
+        DOCTOR=true
+        shift
+        ;;
+      --start)
+        START=true
+        shift
+        ;;
+      --stop)
+        STOP=true
+        shift
+        ;;
+      --restart)
+        RESTART=true
+        shift
+        ;;
+      --logs)
+        LOGS=true
+        shift
+        ;;
+      --repair)
+        REPAIR=true
+        shift
+        ;;
+      --deps-only)
+        DEPS_ONLY=true
+        shift
+        ;;
       --repo|--repo-url)
         require_value "$1" "${2:-}"
         REPO_URL="$2"
@@ -1099,35 +1432,73 @@ parse_args() {
   done
 }
 
+validate_action_flags() {
+  local action_count=0
+  local all_actions=(
+    "$UNINSTALL"
+    "$UPGRADE"
+    "$STATUS"
+    "$DOCTOR"
+    "$START"
+    "$STOP"
+    "$RESTART"
+    "$LOGS"
+    "$REPAIR"
+    "$DEPS_ONLY"
+  )
+  local flag=""
+  for flag in "${all_actions[@]}"; do
+    if [[ "$flag" == "true" ]]; then
+      action_count=$((action_count + 1))
+    fi
+  done
+  if (( action_count > 1 )); then
+    echo "Only one action mode can be used at a time:"
+    echo "  --doctor | --status | --start | --stop | --restart | --logs | --repair | --upgrade | --uninstall | --deps-only"
+    exit 1
+  fi
+}
+
 main() {
   parse_args "$@"
+  validate_action_flags
   resolve_repo_url
   detect_platform
   detect_arch
   set_default_prefix
   detect_package_manager
   check_macos_prereqs
+  init_log_file
+
+  if [[ "$DOCTOR" == "true" ]]; then
+    doctor_report
+    exit $?
+  fi
   if [[ "$OS" == "unknown" || ( "$OS" == "linux" && "$PKG_MGR" == "" ) || ( "$OS" == "linux" && "$DISTRO" == "unknown" ) ]]; then
     echo "Unsupported operating system. Supported: Linux (Debian/Ubuntu, Fedora/RHEL/CentOS, Arch) and macOS."
     echo "Required commands for manual install: curl, git, openssl, sed, awk, grep, docker, docker compose."
     exit 1
   fi
 
-  if [[ -f "${PREFIX}/.env" ]]; then
-    LOG_FILE="${PREFIX}/install.log"
-  else
-    LOG_FILE="${SCRIPT_PATH}/install.log"
-  fi
-  touch "$LOG_FILE"
   log "Detected platform: os=${OS} distro=${DISTRO} like=${ID_LIKE:-n/a} arch=${ARCH} pkg=${PKG_MGR:-none}"
 
   ensure_rootless_permissions
 
   ensure_base_prereqs
 
+  if [[ "$DEPS_ONLY" == "true" ]]; then
+    ensure_docker
+    echo "Dependencies are installed and docker runtime is ready."
+    exit 0
+  fi
+
   if [[ "$DRY_RUN" == "false" ]]; then
     ensure_rootless_permissions
-    check_space "$PREFIX"
+    if [[ "$STATUS" != "true" && "$START" != "true" && "$STOP" != "true" && "$RESTART" != "true" && "$LOGS" != "true" && "$UNINSTALL" != "true" ]]; then
+      check_space "$PREFIX"
+    else
+      log "Skipping disk-space check for non-install action mode."
+    fi
   else
     log "DRY-RUN: skip disk-space check"
   fi
@@ -1159,6 +1530,60 @@ main() {
     compose_file="$(find_compose_file || true)"
     status_view
     exit 0
+  fi
+
+  if [[ "$START" == "true" || "$STOP" == "true" || "$RESTART" == "true" || "$LOGS" == "true" || "$REPAIR" == "true" ]]; then
+    ensure_docker
+    ENV_FILE="$(resolve_env_file || true)"
+    if [[ "$START" == "true" || "$RESTART" == "true" || "$REPAIR" == "true" ]]; then
+      if [[ -z "$ENV_FILE" ]]; then
+        write_env_file
+        ENV_FILE="${PREFIX}/.env"
+      fi
+    elif [[ -z "$ENV_FILE" ]]; then
+      if [[ "$DRY_RUN" == "true" ]]; then
+        ENV_FILE="${PREFIX}/.env"
+        log "DRY-RUN: no env file found; would use ${ENV_FILE} (run --repair first)"
+      else
+        echo "No env file found in ${PREFIX} or ${WORK_DIR}."
+        echo "Run: bash install.sh --repair"
+        exit 1
+      fi
+    fi
+    if [[ "$REPAIR" == "true" ]]; then
+      write_env_file
+      ENV_FILE="${PREFIX}/.env"
+    fi
+    if [[ "$START" == "true" ]]; then
+      docker_compose_start
+      verify_install
+      status_view
+      exit 0
+    fi
+    if [[ "$STOP" == "true" ]]; then
+      docker_compose_stop
+      status_view
+      exit 0
+    fi
+    if [[ "$RESTART" == "true" ]]; then
+      docker_compose_restart
+      verify_install
+      status_view
+      exit 0
+    fi
+    if [[ "$LOGS" == "true" ]]; then
+      docker_compose_logs
+      exit 0
+    fi
+    if [[ "$REPAIR" == "true" ]]; then
+      write_env_file
+      seed_admin_check
+      docker_compose_up
+      verify_install
+      echo "Repair complete."
+      status_view
+      exit 0
+    fi
   fi
 
   if [[ "$UNINSTALL" == "true" ]]; then

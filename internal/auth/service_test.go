@@ -27,6 +27,43 @@ func TestRegisterAndLogin(t *testing.T) {
 	}
 }
 
+func TestAuthenticateReturnsPreviousLastLoginForSessionDigest(t *testing.T) {
+	repo := repository.NewInMemoryUserRepository()
+	svc := auth.NewService(repo)
+
+	user, err := svc.Register("newscan", "password123")
+	if err != nil {
+		t.Fatalf("register failed: %v", err)
+	}
+	previous := time.Now().UTC().Add(-3 * time.Hour).Truncate(time.Second)
+	user.LastLoginAt = &previous
+	if err := repo.Update(user); err != nil {
+		t.Fatalf("seed previous login: %v", err)
+	}
+
+	sessionUser, err := svc.Authenticate("newscan", "password123", "")
+	if err != nil {
+		t.Fatalf("authenticate failed: %v", err)
+	}
+	if sessionUser.LastLoginAt == nil {
+		t.Fatal("expected session user to have previous last login")
+	}
+	if !sessionUser.LastLoginAt.UTC().Equal(previous) {
+		t.Fatalf("expected previous login %s, got %s", previous, sessionUser.LastLoginAt.UTC())
+	}
+
+	stored, err := repo.GetByHandle("newscan")
+	if err != nil {
+		t.Fatalf("load stored user: %v", err)
+	}
+	if stored.LastLoginAt == nil {
+		t.Fatal("stored user missing last login timestamp")
+	}
+	if !stored.LastLoginAt.UTC().After(previous) {
+		t.Fatalf("expected stored last login to advance past %s, got %s", previous, stored.LastLoginAt.UTC())
+	}
+}
+
 func TestAuthenticateWithSecondFactorRecovery(t *testing.T) {
 	repo := repository.NewInMemoryUserRepository()
 	svc := auth.NewService(repo)
