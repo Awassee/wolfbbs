@@ -101,4 +101,10 @@ This version ships a read/write web-first control panel with role-aware routes a
   - `oputil boards list`
   - `oputil boards create --name <title> [--description <text>]`
   - `oputil boards delete --id <id>`
+  - `oputil network status`
+  - `oputil network export --format <ftn|bso|qwk> --board <id> [--out <path>]`
+  - `oputil network import --in <packet.json> [--board <id>] [--author <id>]`
+  - `oputil network queue-netmail --from <uid> --to <handle> --subject <s> --body <b>`
+  - `oputil network import-queue [--board <id>] [--author <id>]`
+  - `oputil mods list`
 - Uses the same DB and auth/repository model as SSH/Web services.

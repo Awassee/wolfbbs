@@ -45,14 +45,34 @@ docker compose up -d --build
 go test ./...
 go build ./...
 scripts/verify.sh --fast
+scripts/run-e2e.sh
 ```
+
+If local Node is 25+, install/use Node 24 on macOS:
+
+```bash
+brew install node@24
+export PATH="$(brew --prefix node@24)/bin:$PATH"
+scripts/run-e2e.sh
+```
+
+## Manual acceptance checklist
+
+```bash
+scripts/manual-acceptance.sh --guided
+```
+
+This writes `docs/manual-acceptance-latest.md` with PASS/FAIL/SKIPPED per MANUAL spec ID.
 
 ## Documentation
 
 - `/docs/INSTALL.md`
 - `/docs/ACCEPTANCE_SPEC.md`
+- `/docs/manual-acceptance.md`
 - `/docs/screens.md`
 - `/docs/admin.md`
 - `/docs/chat.md`
 - `/docs/irc-compat.md`
 - `/docs/doors.md`
+- `/docs/message-network.md`
+- `/docs/mods.md`

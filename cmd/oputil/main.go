@@ -5,11 +5,15 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"wolfbbs/internal/auth"
 	"wolfbbs/internal/domain"
+	"wolfbbs/internal/mods"
+	"wolfbbs/internal/network"
 	"wolfbbs/internal/repository"
 )
 
@@ -45,6 +49,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdUsers(dbURL, rest[1:], stdout, stderr)
 	case "boards":
 		return cmdBoards(dbURL, rest[1:], stdout, stderr)
+	case "network":
+		return cmdNetwork(dbURL, rest[1:], stdout, stderr)
+	case "mods":
+		return cmdMods(rest[1:], stdout, stderr)
 	default:
 		_, _ = fmt.Fprintf(stderr, "unknown command: %s\n", rest[0])
 		printUsage(stderr)
@@ -198,6 +206,147 @@ func cmdBoards(dbURL string, args []string, stdout, stderr io.Writer) int {
 	}
 }
 
+func cmdNetwork(dbURL string, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		_, _ = fmt.Fprintln(stderr, "network command requires a subcommand: status | export | import | queue-netmail | import-queue")
+		return 2
+	}
+	storage, err := repository.OpenStorageFromEnv(dbURL)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "open storage: %v\n", err)
+		return 1
+	}
+	defer storage.Close()
+
+	spoolDir := strings.TrimSpace(os.Getenv("WOLFBBS_NET_SPOOL_DIR"))
+	if spoolDir == "" {
+		spoolDir = ".wolfbbs/network"
+	}
+	svc := network.NewService(spoolDir, storage.Boards, storage.Messages, storage.Users, storage.Mail)
+	switch strings.ToLower(strings.TrimSpace(args[0])) {
+	case "status":
+		status, err := svc.Status()
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "network status: %v\n", err)
+			return 1
+		}
+		_, _ = fmt.Fprintf(stdout, "spool=%s inbound=%d outbound=%d\n", status.SpoolDir, status.InboundPackets, status.OutboundPackets)
+		return 0
+	case "export":
+		fs := flag.NewFlagSet("oputil network export", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		format := fs.String("format", network.FormatQWK, "format (ftn|bso|qwk)")
+		boardID := fs.Int64("board", 0, "source board id")
+		out := fs.String("out", "", "output packet path (optional)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if *boardID <= 0 {
+			_, _ = fmt.Fprintln(stderr, "export requires --board")
+			return 2
+		}
+		path, err := svc.ExportBoard(*format, *boardID)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "export packet: %v\n", err)
+			return 1
+		}
+		if strings.TrimSpace(*out) != "" {
+			if err := os.MkdirAll(filepath.Dir(*out), 0o755); err != nil {
+				_, _ = fmt.Fprintf(stderr, "create output dir: %v\n", err)
+				return 1
+			}
+			if err := os.Rename(path, *out); err != nil {
+				_, _ = fmt.Fprintf(stderr, "move packet to --out path: %v\n", err)
+				return 1
+			}
+			path = *out
+		}
+		_, _ = fmt.Fprintf(stdout, "exported %s\n", path)
+		return 0
+	case "import":
+		fs := flag.NewFlagSet("oputil network import", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		in := fs.String("in", "", "input packet path")
+		boardID := fs.Int64("board", 0, "default board id")
+		authorID := fs.Int64("author", 0, "default author id")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if strings.TrimSpace(*in) == "" {
+			_, _ = fmt.Fprintln(stderr, "import requires --in")
+			return 2
+		}
+		count, err := svc.ImportPacket(*in, *boardID, *authorID)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "import packet: %v\n", err)
+			return 1
+		}
+		_, _ = fmt.Fprintf(stdout, "imported=%d\n", count)
+		return 0
+	case "queue-netmail":
+		fs := flag.NewFlagSet("oputil network queue-netmail", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		from := fs.Int64("from", 0, "from user id")
+		to := fs.String("to", "", "recipient handle")
+		subject := fs.String("subject", "", "subject")
+		body := fs.String("body", "", "body")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		path, err := svc.QueueNetmail(*from, *to, *subject, *body)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "queue netmail: %v\n", err)
+			return 1
+		}
+		_, _ = fmt.Fprintf(stdout, "queued %s\n", path)
+		return 0
+	case "import-queue":
+		fs := flag.NewFlagSet("oputil network import-queue", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		boardID := fs.Int64("board", 0, "default board id for non-netmail packets")
+		authorID := fs.Int64("author", 0, "default author id for non-netmail packets")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		count, err := svc.ImportInboundQueue(*boardID, *authorID)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "import queue: %v\n", err)
+			return 1
+		}
+		_, _ = fmt.Fprintf(stdout, "imported=%d\n", count)
+		return 0
+	default:
+		_, _ = fmt.Fprintf(stderr, "unknown network subcommand: %s\n", args[0])
+		return 2
+	}
+}
+
+func cmdMods(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		_, _ = fmt.Fprintln(stderr, "mods command requires a subcommand: list")
+		return 2
+	}
+	switch strings.ToLower(strings.TrimSpace(args[0])) {
+	case "list":
+		manager := mods.NewManager(time.Hour)
+		one := mods.NewOneLinerzMod(40)
+		rumorz := mods.NewRumorzMod(nil)
+		bbsList := mods.NewBBSListMod(100)
+		who := mods.NewWhoOnlineMod(func() int { return 0 })
+		_ = manager.Register(one, true)
+		_ = manager.Register(rumorz, true)
+		_ = manager.Register(bbsList, true)
+		_ = manager.Register(who, true)
+		for _, row := range manager.Snapshot() {
+			_, _ = fmt.Fprintf(stdout, "%s\tenabled=%t\tdescription=%s\n", row.ID, row.Enabled, row.Description)
+		}
+		return 0
+	default:
+		_, _ = fmt.Fprintf(stderr, "unknown mods subcommand: %s\n", args[0])
+		return 2
+	}
+}
+
 func printUsage(out io.Writer) {
 	_, _ = fmt.Fprintln(out, `WolfBBS oputil
 
@@ -207,5 +356,11 @@ Usage:
   oputil [--db <dsn>] users set-role --handle <name> --role <user|moderator|sysop>
   oputil [--db <dsn>] boards list
   oputil [--db <dsn>] boards create --name <title> [--description <text>] [--created-by <uid>]
-  oputil [--db <dsn>] boards delete --id <id>`)
+  oputil [--db <dsn>] boards delete --id <id>
+  oputil [--db <dsn>] network status
+  oputil [--db <dsn>] network export --format <ftn|bso|qwk> --board <id> [--out <path>]
+  oputil [--db <dsn>] network import --in <packet.json> [--board <id>] [--author <id>]
+  oputil [--db <dsn>] network queue-netmail --from <uid> --to <handle> --subject <s> --body <b>
+  oputil [--db <dsn>] network import-queue [--board <id>] [--author <id>]
+  oputil mods list`)
 }

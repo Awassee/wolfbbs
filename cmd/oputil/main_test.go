@@ -29,3 +29,31 @@ func TestRunUnknownCommand(t *testing.T) {
 		t.Fatalf("expected unknown command error, got: %s", errOut.String())
 	}
 }
+
+func TestRunHelpIncludesNetworkAndMods(t *testing.T) {
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	code := run([]string{"help"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	body := out.String()
+	if !strings.Contains(body, "network status") {
+		t.Fatalf("expected network usage in help output, got: %s", body)
+	}
+	if !strings.Contains(body, "mods list") {
+		t.Fatalf("expected mods usage in help output, got: %s", body)
+	}
+}
+
+func TestRunNetworkStatus(t *testing.T) {
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	code := run([]string{"network", "status"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d (stderr=%s)", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "spool=") {
+		t.Fatalf("expected spool status output, got: %s", out.String())
+	}
+}

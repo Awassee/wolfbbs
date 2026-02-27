@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -28,6 +29,8 @@ import (
 	"wolfbbs/internal/events"
 	"wolfbbs/internal/gateway"
 	"wolfbbs/internal/menu"
+	"wolfbbs/internal/mods"
+	"wolfbbs/internal/network"
 	"wolfbbs/internal/rbac"
 	"wolfbbs/internal/repository"
 )
@@ -150,6 +153,12 @@ type webApp struct {
 	announcement  string
 	errorLog      []appErrorEntry
 	lockedChat    map[string]bool
+	networkSvc    *network.Service
+	modsManager   *mods.Manager
+	oneLinerzMod  *mods.OneLinerzMod
+	rumorzMod     *mods.RumorzMod
+	bbsListMod    *mods.BBSListMod
+	whoOnlineMod  *mods.WhoOnlineMod
 }
 
 func seedWebUsers(authSvc *auth.Service) {
@@ -304,8 +313,55 @@ func main() {
 		menuRoot:      strings.TrimSpace(os.Getenv("WOLFBBS_MENU_ROOT")),
 		savedSearches: map[string][]string{},
 		lockedChat:    map[string]bool{},
+		networkSvc: func() *network.Service {
+			spoolDir := strings.TrimSpace(os.Getenv("WOLFBBS_NET_SPOOL_DIR"))
+			if spoolDir == "" {
+				spoolDir = ".wolfbbs/network"
+			}
+			return network.NewService(spoolDir, storage.Boards, storage.Messages, storage.Users, storage.Mail)
+		}(),
 	}
 	app.loadPersistedAdminSettings()
+	app.oneLinerzMod = mods.NewOneLinerzMod(80)
+	app.rumorzMod = mods.NewRumorzMod(nil)
+	app.bbsListMod = mods.NewBBSListMod(200)
+	app.whoOnlineMod = mods.NewWhoOnlineMod(func() int {
+		if app.chatSvc == nil {
+			return 0
+		}
+		return len(app.chatSvc.Online())
+	})
+	app.modsManager = mods.NewManager(time.Minute)
+	_ = app.modsManager.Register(app.oneLinerzMod, true)
+	_ = app.modsManager.Register(app.rumorzMod, true)
+	_ = app.modsManager.Register(app.bbsListMod, true)
+	_ = app.modsManager.Register(app.whoOnlineMod, true)
+	if err := app.modsManager.Start(context.Background()); err != nil {
+		log.Printf("mods manager start failed: %v", err)
+	}
+	defer func() {
+		if app.modsManager != nil {
+			_ = app.modsManager.Stop(context.Background())
+		}
+	}()
+	if app.eventBus != nil {
+		app.eventBus.Subscribe("chat.post", func(ev events.Event) {
+			handle := strings.TrimSpace(ev.Fields["nick"])
+			body := strings.TrimSpace(ev.Fields["message"])
+			if handle == "" || body == "" || app.oneLinerzMod == nil {
+				return
+			}
+			app.oneLinerzMod.Add(handle, cleanOneLiner(body, 120))
+		})
+		app.eventBus.Subscribe("message.posted", func(ev events.Event) {
+			handle := strings.TrimSpace(ev.Fields["author"])
+			subject := strings.TrimSpace(ev.Fields["subject"])
+			if handle == "" || subject == "" || app.oneLinerzMod == nil {
+				return
+			}
+			app.oneLinerzMod.Add(handle, "posted: "+cleanOneLiner(subject, 96))
+		})
+	}
 
 	http.HandleFunc("/", app.handleRoot)
 	http.HandleFunc("/connect", app.handleConnect)
@@ -1584,6 +1640,34 @@ func (a *webApp) handleDiscover(w http.ResponseWriter, r *http.Request) {
 			aiLine = `<p><strong>` + htmlEscape(summary) + `</strong></p>`
 		}
 	}
+	rumorLine := ""
+	if a.rumorzMod != nil {
+		if rumor := strings.TrimSpace(a.rumorzMod.Current()); rumor != "" {
+			rumorLine = `<p><strong>Rumorz:</strong> ` + htmlEscape(rumor) + `</p>`
+		}
+	}
+	oneLiners := []mods.OneLiner{}
+	if a.oneLinerzMod != nil {
+		oneLiners = a.oneLinerzMod.List(8)
+	}
+	oneLinerHTML := strings.Builder{}
+	for _, row := range oneLiners {
+		oneLinerHTML.WriteString(`<li>[` + row.At.Local().Format("15:04") + `] <strong>` + htmlEscape(row.Handle) + `</strong>: ` + htmlEscape(row.Text) + `</li>`)
+	}
+	if oneLinerHTML.Len() == 0 {
+		oneLinerHTML.WriteString(`<li>No one-liners yet.</li>`)
+	}
+	bbsRows := []mods.BBSListing{}
+	if a.bbsListMod != nil {
+		bbsRows = a.bbsListMod.List(6)
+	}
+	bbsHTML := strings.Builder{}
+	for _, row := range bbsRows {
+		bbsHTML.WriteString(`<li>` + htmlEscape(row.Name) + ` (` + htmlEscape(row.Host) + `:` + strconv.Itoa(row.Port) + `)</li>`)
+	}
+	if bbsHTML.Len() == 0 {
+		bbsHTML.WriteString(`<li>No BBS links curated yet.</li>`)
+	}
 
 	page := `<html><body>
 <h1>Since Your Last Call</h1>
@@ -1591,6 +1675,7 @@ func (a *webApp) handleDiscover(w http.ResponseWriter, r *http.Request) {
 <p>Transparent rules: replies-to-you, handle mentions, per-board new activity, and inbox mail. Max ` + strconv.Itoa(maxItems) + ` items.</p>
 <p>Last seen: ` + digest.Since.Local().Format("2006-01-02 15:04") + `</p>
 ` + aiLine + `
+` + rumorLine + `
 <ul>` + itemsRows.String() + `</ul>
 <h2>Deep Search</h2>
 <form method="GET" action="/discover">
@@ -1601,6 +1686,10 @@ func (a *webApp) handleDiscover(w http.ResponseWriter, r *http.Request) {
 <ul>` + searchHTML.String() + `</ul>
 <h3>Saved Searches</h3>
 <ul>` + savedHTML.String() + `</ul>
+<h3>OneLinerz</h3>
+<ul>` + oneLinerHTML.String() + `</ul>
+<h3>BBS List</h3>
+<ul>` + bbsHTML.String() + `</ul>
 </body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -1648,6 +1737,27 @@ func (a *webApp) handleStatusCenter(w http.ResponseWriter, r *http.Request) {
 	connectorDoorParty := a.runtimeCfg.Connectors.DoorParty.Enabled
 	connectorBBSLink := a.runtimeCfg.Connectors.BBSLink.Enabled
 	connectorTelnetBridge := a.runtimeCfg.Connectors.Telnet.Enabled
+	netState := "n/a"
+	netEnabled := false
+	if a.networkSvc != nil {
+		if status, err := a.networkSvc.Status(); err == nil {
+			netEnabled = true
+			netState = fmt.Sprintf("spool=%s inbound=%d outbound=%d", status.SpoolDir, status.InboundPackets, status.OutboundPackets)
+		} else {
+			netState = err.Error()
+		}
+	}
+	modCount := 0
+	modRunning := 0
+	if a.modsManager != nil {
+		snap := a.modsManager.Snapshot()
+		modCount = len(snap)
+		for _, row := range snap {
+			if row.Running {
+				modRunning++
+			}
+		}
+	}
 	role := rbac.NormalizeRole(user.Role)
 	adminLink := ""
 	if a.hasRole(user, roleAdmin) {
@@ -1667,9 +1777,11 @@ func (a *webApp) handleStatusCenter(w http.ResponseWriter, r *http.Request) {
 		statusRow("Gopher content server", contentGopher, a.runtimeCfg.Content.GopherListen) +
 		statusRow("NNTP content server", contentNNTP, a.runtimeCfg.Content.NNTPListen) +
 		statusRow("NNTPS content server", contentNNTPS, a.runtimeCfg.Content.NNTPSListen) +
+		statusRow("Message network spool", netEnabled, netState) +
 		statusRow("DoorParty connector", connectorDoorParty, boolToText(connectorDoorParty)) +
 		statusRow("BBSLink connector", connectorBBSLink, boolToText(connectorBBSLink)) +
 		statusRow("Telnet bridge connector", connectorTelnetBridge, boolToText(connectorTelnetBridge)) +
+		statusRow("Built-in mods", modCount > 0, fmt.Sprintf("%d total / %d running", modCount, modRunning)) +
 		statusRow("Discover feed", a.discover, "flag: discover") +
 		statusRow("Guest tour", a.guestTour, "flag: guest tour") +
 		statusRow("Web on-ramp", a.modernOnRamp, "flag: connect/tour pages") +
@@ -1717,6 +1829,17 @@ func (a *webApp) handleConfigCenter(w http.ResponseWriter, r *http.Request) {
 		`<li>WebSocket TLS login: ` + boolToText(a.runtimeCfg.Login.WebSocketTLS.Enabled) + ` (` + htmlEscape(a.runtimeCfg.Login.WebSocketTLS.Listen+a.runtimeCfg.Login.WebSocketTLS.Path) + `)</li>` +
 		`<li>Gopher/NNTP/NNTPS: ` + htmlEscape(a.runtimeCfg.Content.GopherListen) + ` / ` + htmlEscape(a.runtimeCfg.Content.NNTPListen) + ` / ` + htmlEscape(a.runtimeCfg.Content.NNTPSListen) + `</li>` +
 		`<li>DoorParty/BBSLink/Telnet bridge: ` + boolToText(a.runtimeCfg.Connectors.DoorParty.Enabled) + ` / ` + boolToText(a.runtimeCfg.Connectors.BBSLink.Enabled) + ` / ` + boolToText(a.runtimeCfg.Connectors.Telnet.Enabled) + `</li>` +
+		`<li>Network spool dir: ` + htmlEscape(func() string {
+		if a.networkSvc == nil {
+			return "disabled"
+		}
+		status, err := a.networkSvc.Status()
+		if err != nil {
+			return "error: " + err.Error()
+		}
+		return status.SpoolDir
+	}()) + `</li>` +
+		`<li>Built-in mods: onelinerz / rumorz / bbslist / whos_online</li>` +
 		`</ul>` +
 		adminLinks +
 		`</body></html>`
@@ -1741,6 +1864,8 @@ func (a *webApp) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		`<li>Mail: audit, limit controls</li>` +
 		`<li>Chat: channel state, kicks, mutes</li>` +
 		`<li>Doors: per-door enable/disable, turn rules, logs, and score reset</li>` +
+		`<li>Message networks: spool import/export via oputil + status in WFC</li>` +
+		`<li>Built-in mods: onelinerz, rumorz, bbs list, who's online lifecycle</li>` +
 		`<li>Gateway controls, setup checks, runtime config, and server health</li></ul>` +
 		`<p><a href="/scores">Door Scores & Trophies</a></p>` +
 		`<p>Read-only mode: ` + boolToText(a.readOnly) + ` | Runtime errors logged: ` + strconv.Itoa(errorCount) + `</p></body></html>`
@@ -2924,6 +3049,33 @@ func (a *webApp) handleAdminSystem(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	errorCount := len(a.latestErrors(1000))
+	networkInbound := 0
+	networkOutbound := 0
+	if a.networkSvc != nil {
+		if status, err := a.networkSvc.Status(); err == nil {
+			networkInbound = status.InboundPackets
+			networkOutbound = status.OutboundPackets
+		}
+	}
+	modCount := 0
+	modRunning := 0
+	oneLinerCount := 0
+	activeRumor := ""
+	if a.modsManager != nil {
+		snap := a.modsManager.Snapshot()
+		modCount = len(snap)
+		for _, row := range snap {
+			if row.Running {
+				modRunning++
+			}
+		}
+	}
+	if a.oneLinerzMod != nil {
+		oneLinerCount = len(a.oneLinerzMod.List(1000))
+	}
+	if a.rumorzMod != nil {
+		activeRumor = cleanOneLiner(a.rumorzMod.Current(), 80)
+	}
 
 	uptime := "unknown"
 	if !a.startedAt.IsZero() {
@@ -2971,6 +3123,11 @@ func (a *webApp) handleAdminSystem(w http.ResponseWriter, r *http.Request) {
 		`<tr><td>Node sessions (persisted)</td><td>` + strconv.Itoa(len(nodeSessions)) + `</td></tr>` +
 		`<tr><td>Caller history rows</td><td>` + strconv.Itoa(len(callerHistory)) + `</td></tr>` +
 		`<tr><td>Runtime errors</td><td>` + strconv.Itoa(errorCount) + `</td></tr>` +
+		`<tr><td>Mods (running/total)</td><td>` + strconv.Itoa(modRunning) + ` / ` + strconv.Itoa(modCount) + `</td></tr>` +
+		`<tr><td>OneLinerz entries</td><td>` + strconv.Itoa(oneLinerCount) + `</td></tr>` +
+		`<tr><td>Rumorz active line</td><td>` + htmlEscape(activeRumor) + `</td></tr>` +
+		`<tr><td>Network inbound packets</td><td>` + strconv.Itoa(networkInbound) + `</td></tr>` +
+		`<tr><td>Network outbound packets</td><td>` + strconv.Itoa(networkOutbound) + `</td></tr>` +
 		`<tr><td>MOTD</td><td>` + htmlEscape(cleanOneLiner(a.motd, 80)) + `</td></tr>` +
 		`<tr><td>Announcement</td><td>` + htmlEscape(cleanOneLiner(a.announcement, 80)) + `</td></tr>` +
 		`</table>` +

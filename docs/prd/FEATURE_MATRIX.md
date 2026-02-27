@@ -18,9 +18,9 @@ Status legend:
 | Content servers: HTTPS + gopher + NNTP/NNTPS | PRD-03 | done | HTTPS exists; optional read-only gopher + nntp + nntps listeners shipped behind explicit env flags |
 | User security: PBKDF2/reset email/optional 2FA | PRD-03 | done | 2FA + recovery codes, PBKDF2 policy + bcrypt upgrade path, reset-token flow, and reset email delivery for email-form handles are shipped |
 | Message base: conferences/areas + pointers/newscan | PRD-04 | in_progress | baseline boards/newscan exists, area depth pending |
-| Message network support: FTN/BSO, netmail, QWK | PRD-04 | planned | |
+| Message network support: FTN/BSO, netmail, QWK | PRD-04 | in_progress | packet spool service + CLI import/export + queue processing shipped; external tosser bridge parity pending |
 | File base: tags/search/ratings/upload processor/dedupe/temp links | PRD-04 | in_progress | DB-backed tagged search/ratings/filters, SHA-256 dedupe indexing, queue, and temporary gateway ticket downloads shipped; batch zip streaming and SSH parity remain |
 | Download managers: legacy queue + web queue + batch zip | PRD-04 | in_progress | web/admin queue + ticket lifecycle + gateway batch zip streaming shipped; legacy queue parity pending |
 | Doors: local dropfiles + BBSLink + DoorParty + telnet bridge | PRD-04 | done | local runtime + optional dropfiles + DoorParty/BBSLink/Telnet Bridge command adapters shipped with policy checks and audit |
-| Built-in mods (onelinerz/rumorz/bbs list/who's online/etc.) | PRD-04 | planned | |
+| Built-in mods (onelinerz/rumorz/bbs list/who's online/etc.) | PRD-04 | done | lifecycle manager + built-ins + status surfacing shipped |
 | Sysop ops: WFC dashboard, oputil CLI, Bunyan logs + monitoring | PRD-04 | in_progress | `/admin/system` WFC dashboard + `cmd/oputil` shipped; bunyan-compatible log pipeline still pending |

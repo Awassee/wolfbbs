@@ -70,6 +70,11 @@ Validator scope:
 
 ## Gaps Closed In This Pass
 
+- Added PRD-04 message-network baseline (`internal/network`) with sysop CLI import/export/queue operations.
+- Added built-in mods lifecycle manager (`internal/mods`) with onelinerz/rumorz/bbslist/who's-online modules.
+- Surfaced mods/network state in user status center, discover view, config center, and sysop WFC dashboard.
+- Added manual acceptance harness `scripts/manual-acceptance.sh` + report output workflow.
+- Hardened web e2e runner to auto-select macOS Node 24/22 toolchains when local Node is 25+.
 - Added function registry and coverage matrix with automated completeness checks.
 - Added sysop setup/config/error centers and linked them from admin navigation.
 - Added persistent system settings backend (`system_settings`) for runtime config.

@@ -66,10 +66,13 @@ This slice finishes core BBS depth:
   - Indexed file repository APIs: tagged search, per-file ratings, saved filters, download queue, and temporary download ticket lifecycle (in-memory/sqlite/postgres).
   - Web admin files panel now includes area indexing, indexed-file search, ratings, saved filters, queue management, and download ticket issuance.
   - Web gateway file browser (`/gateway?view=files`) now supports tagged search, ratings, queue actions, and one-time ticketed downloads.
+  - Message networking baseline in `internal/network`: FTN/BSO/QWK packet export/import plus netmail queue/import processing with spool directories.
+  - Sysop CLI networking controls in `cmd/oputil` (`network status/export/import/queue-netmail/import-queue`).
+  - Built-in mods lifecycle manager in `internal/mods` with onelinerz, rumorz, bbslist, and whos_online modules.
+  - Mods and network status surfaced in `/status`, `/discover`, `/config`, and `/admin/system`.
   - Web admin doors panel with config overrides, usage stats, score reset, and event logs.
   - WFC-style system dashboard at `/admin/system` including session/channel/online metrics.
   - `cmd/oputil` CLI baseline for status, user role updates, and board management.
 - Pending:
-  - Message network depth (FTN/BSO/netmail/QWK).
+  - Message network depth finalization (external tosser bridge parity + advanced netmail routing).
   - File/download depth finalization (legacy queue parity in SSH and modem-era batch parity).
-  - Built-in classic mods pack and lifecycle manager.

@@ -182,6 +182,22 @@ scripts/run-e2e.sh --no-web
 scripts/run-e2e.sh
 ```
 
+macOS Node 25 fallback (preferred for Playwright stability):
+
+```bash
+brew install node@24
+export PATH="$(brew --prefix node@24)/bin:$PATH"
+scripts/run-e2e.sh
+```
+
+Explicit toolchain path override:
+
+```bash
+WOLFBBS_NODE_BIN="$(brew --prefix node@24)/bin/node" \
+WOLFBBS_NPM_BIN="$(brew --prefix node@24)/bin/npm" \
+scripts/run-e2e.sh
+```
+
 Optional reliability knobs:
 
 ```bash
@@ -190,6 +206,12 @@ COMPOSE_CMD_TIMEOUT_SECONDS=10 COMPOSE_UP_TIMEOUT_SECONDS=180 scripts/verify.sh 
 
 # allow Playwright run on non-LTS Node when explicitly needed
 WOLFBBS_ALLOW_UNSUPPORTED_NODE=true scripts/run-e2e.sh --no-go --no-tui
+```
+
+Manual acceptance checklist and report:
+
+```bash
+scripts/manual-acceptance.sh --guided
 ```
 
 First sysop pass (recommended):

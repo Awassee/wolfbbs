@@ -17,7 +17,7 @@ This document maps product features to concrete runtime surfaces (binaries, rout
 - `cmd/wolfbbs-mailin`
   - inbound mail adapter forwarder
 - `cmd/oputil`
-  - sysop CLI (`status`, `users`, `boards`)
+  - sysop CLI (`status`, `users`, `boards`, `network`, `mods`)
 
 ## Default Endpoints and Ports
 
@@ -157,6 +157,19 @@ Documented in `docs/irc-compat.md`:
 - Mail inbox/outbox, read by ID, compose local/external (policy-gated)
 - Newscan/digest integration for message/mail activity
 
+## Message Network Baseline
+
+- Packet spool service in `internal/network`:
+  - FTN/BSO/QWK board packet export/import
+  - netmail queue + import processing
+  - inbound/outbound/processed spool tracking
+- Sysop CLI:
+  - `oputil network status`
+  - `oputil network export --format <ftn|bso|qwk> --board <id>`
+  - `oputil network import --in <packet.json>`
+  - `oputil network queue-netmail --from <uid> --to <handle> --subject <s> --body <b>`
+  - `oputil network import-queue`
+
 ## Gateways
 
 ### Text web gateway
@@ -186,6 +199,19 @@ Reference: `docs/email-gateway.md`.
 - sysop controls at `/admin/doors`
 
 Reference: `docs/doors.md`.
+
+## Built-in Mods
+
+- Lifecycle manager: `internal/mods/manager.go`
+- Built-ins:
+  - `onelinerz`
+  - `rumorz`
+  - `bbslist`
+  - `whos_online`
+- Surfaced in web:
+  - discover feed (`/discover`)
+  - status center (`/status`)
+  - sysop system dashboard (`/admin/system`)
 
 ## Content Servers and Federation
 

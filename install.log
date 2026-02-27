@@ -3275,3 +3275,159 @@
 [2026-02-27T10:27:00Z] DRY-RUN: skipping sysop user seeding check
 [2026-02-27T10:27:00Z] DRY-RUN: would start compose services
 [2026-02-27T10:27:00Z] DRY-RUN: skip runtime checks.
+[2026-02-27T11:46:26Z] Detected platform: os=macos distro=macos like=n/a arch=arm64 pkg=brew
+[2026-02-27T11:46:27Z] DRY-RUN: skip disk-space check
+[2026-02-27T11:46:27Z] DRY-RUN: skip Docker install checks
+[2026-02-27T11:46:27Z] DRY-RUN: would verify tcp port 2222 is free
+[2026-02-27T11:46:27Z] DRY-RUN: would verify tcp port 8080 is free
+[2026-02-27T11:46:27Z] DRY-RUN: would verify tcp port 6667 is free
+[2026-02-27T11:46:27Z] DRY-RUN: would verify tcp port 8091 is free
+[2026-02-27T11:46:27Z] DRY-RUN: create directory /Users/seanheiney/.local/share/wolfbbs
+[2026-02-27T11:46:27Z] DRY-RUN: would write /Users/seanheiney/.local/share/wolfbbs/.env
+[2026-02-27T11:46:27Z] DRY-RUN: skipping sysop user seeding check
+[2026-02-27T11:46:27Z] DRY-RUN: would start compose services
+[2026-02-27T11:46:27Z] DRY-RUN: skip runtime checks.
+[2026-02-27T11:46:27Z] Detected platform: os=macos distro=macos like=n/a arch=arm64 pkg=brew
+[2026-02-27T11:46:27Z] DRY-RUN: skip disk-space check
+[2026-02-27T11:46:27Z] DRY-RUN: skip Docker install checks
+[2026-02-27T11:46:27Z] Detected platform: os=macos distro=macos like=n/a arch=arm64 pkg=brew
+[2026-02-27T11:46:27Z] DRY-RUN: skip disk-space check
+[2026-02-27T11:46:27Z] DRY-RUN: skip Docker install checks
+[2026-02-27T11:46:27Z] DRY-RUN: would verify tcp port 2222 is free
+[2026-02-27T11:46:27Z] DRY-RUN: would verify tcp port 8080 is free
+[2026-02-27T11:46:27Z] DRY-RUN: would verify tcp port 6667 is free
+[2026-02-27T11:46:27Z] DRY-RUN: would verify tcp port 8091 is free
+[2026-02-27T11:46:27Z] DRY-RUN: create directory /Users/seanheiney/.local/share/wolfbbs
+[2026-02-27T11:46:27Z] DRY-RUN: would write /Users/seanheiney/.local/share/wolfbbs/.env
+[2026-02-27T11:46:27Z] DRY-RUN: skipping sysop user seeding check
+[2026-02-27T11:46:27Z] DRY-RUN: would start compose services
+[2026-02-27T11:46:27Z] DRY-RUN: skip runtime checks.
+[2026-02-27T11:46:27Z] Detected platform: os=macos distro=macos like=n/a arch=arm64 pkg=brew
+[2026-02-27T11:46:27Z] DRY-RUN: skip disk-space check
+[2026-02-27T11:46:27Z] DRY-RUN: skip Docker install checks
+[2026-02-27T11:46:27Z] DRY-RUN: would verify tcp port 2222 is free
+[2026-02-27T11:46:27Z] DRY-RUN: would verify tcp port 8080 is free
+[2026-02-27T11:46:27Z] DRY-RUN: would verify tcp port 6667 is free
+[2026-02-27T11:46:27Z] DRY-RUN: would verify tcp port 8091 is free
+[2026-02-27T11:46:27Z] DRY-RUN: create directory /Users/seanheiney/.local/share/wolfbbs
+[2026-02-27T11:46:27Z] DRY-RUN: would write /Users/seanheiney/.local/share/wolfbbs/.env
+[2026-02-27T11:46:27Z] DRY-RUN: skipping sysop user seeding check
+[2026-02-27T11:46:27Z] DRY-RUN: would start compose services
+[2026-02-27T11:46:27Z] DRY-RUN: skip runtime checks.
+[2026-02-27T11:46:34Z] Detected platform: os=macos distro=macos like=n/a arch=arm64 pkg=brew
+[2026-02-27T11:46:34Z] DRY-RUN: skip disk-space check
+[2026-02-27T11:46:34Z] DRY-RUN: skip Docker install checks
+[2026-02-27T11:46:34Z] DRY-RUN: would verify tcp port 2222 is free
+[2026-02-27T11:46:34Z] DRY-RUN: would verify tcp port 8080 is free
+[2026-02-27T11:46:34Z] DRY-RUN: would verify tcp port 6667 is free
+[2026-02-27T11:46:34Z] DRY-RUN: would verify tcp port 8091 is free
+[2026-02-27T11:46:34Z] DRY-RUN: create directory /Users/seanheiney/.local/share/wolfbbs
+[2026-02-27T11:46:34Z] DRY-RUN: would write /Users/seanheiney/.local/share/wolfbbs/.env
+[2026-02-27T11:46:34Z] DRY-RUN: skipping sysop user seeding check
+[2026-02-27T11:46:34Z] DRY-RUN: would start compose services
+[2026-02-27T11:46:34Z] DRY-RUN: skip runtime checks.
+[2026-02-27T11:46:34Z] Detected platform: os=macos distro=macos like=n/a arch=arm64 pkg=brew
+[2026-02-27T11:46:34Z] DRY-RUN: skip disk-space check
+[2026-02-27T11:46:34Z] DRY-RUN: skip Docker install checks
+[2026-02-27T11:46:35Z] Detected platform: os=macos distro=macos like=n/a arch=arm64 pkg=brew
+[2026-02-27T11:46:35Z] DRY-RUN: skip disk-space check
+[2026-02-27T11:46:35Z] DRY-RUN: skip Docker install checks
+[2026-02-27T11:46:35Z] DRY-RUN: would verify tcp port 2222 is free
+[2026-02-27T11:46:35Z] DRY-RUN: would verify tcp port 8080 is free
+[2026-02-27T11:46:35Z] DRY-RUN: would verify tcp port 6667 is free
+[2026-02-27T11:46:35Z] DRY-RUN: would verify tcp port 8091 is free
+[2026-02-27T11:46:35Z] DRY-RUN: create directory /Users/seanheiney/.local/share/wolfbbs
+[2026-02-27T11:46:35Z] DRY-RUN: would write /Users/seanheiney/.local/share/wolfbbs/.env
+[2026-02-27T11:46:35Z] DRY-RUN: skipping sysop user seeding check
+[2026-02-27T11:46:35Z] DRY-RUN: would start compose services
+[2026-02-27T11:46:35Z] DRY-RUN: skip runtime checks.
+[2026-02-27T11:46:35Z] Detected platform: os=macos distro=macos like=n/a arch=arm64 pkg=brew
+[2026-02-27T11:46:35Z] DRY-RUN: skip disk-space check
+[2026-02-27T11:46:35Z] DRY-RUN: skip Docker install checks
+[2026-02-27T11:46:35Z] DRY-RUN: would verify tcp port 2222 is free
+[2026-02-27T11:46:35Z] DRY-RUN: would verify tcp port 8080 is free
+[2026-02-27T11:46:35Z] DRY-RUN: would verify tcp port 6667 is free
+[2026-02-27T11:46:35Z] DRY-RUN: would verify tcp port 8091 is free
+[2026-02-27T11:46:35Z] DRY-RUN: create directory /Users/seanheiney/.local/share/wolfbbs
+[2026-02-27T11:46:35Z] DRY-RUN: would write /Users/seanheiney/.local/share/wolfbbs/.env
+[2026-02-27T11:46:35Z] DRY-RUN: skipping sysop user seeding check
+[2026-02-27T11:46:35Z] DRY-RUN: would start compose services
+[2026-02-27T11:46:35Z] DRY-RUN: skip runtime checks.
+[2026-02-27T11:51:53Z] Detected platform: os=macos distro=macos like=n/a arch=arm64 pkg=brew
+[2026-02-27T11:51:53Z] DRY-RUN: skip disk-space check
+[2026-02-27T11:51:53Z] DRY-RUN: skip Docker install checks
+[2026-02-27T11:51:53Z] DRY-RUN: would verify tcp port 2222 is free
+[2026-02-27T11:51:53Z] DRY-RUN: would verify tcp port 8080 is free
+[2026-02-27T11:51:53Z] DRY-RUN: would verify tcp port 6667 is free
+[2026-02-27T11:51:53Z] DRY-RUN: would verify tcp port 8091 is free
+[2026-02-27T11:51:53Z] DRY-RUN: create directory /Users/seanheiney/.local/share/wolfbbs
+[2026-02-27T11:51:53Z] DRY-RUN: would write /Users/seanheiney/.local/share/wolfbbs/.env
+[2026-02-27T11:51:53Z] DRY-RUN: skipping sysop user seeding check
+[2026-02-27T11:51:53Z] DRY-RUN: would start compose services
+[2026-02-27T11:51:53Z] DRY-RUN: skip runtime checks.
+[2026-02-27T11:51:53Z] Detected platform: os=macos distro=macos like=n/a arch=arm64 pkg=brew
+[2026-02-27T11:51:53Z] DRY-RUN: skip disk-space check
+[2026-02-27T11:51:53Z] DRY-RUN: skip Docker install checks
+[2026-02-27T11:51:53Z] Detected platform: os=macos distro=macos like=n/a arch=arm64 pkg=brew
+[2026-02-27T11:51:53Z] DRY-RUN: skip disk-space check
+[2026-02-27T11:51:53Z] DRY-RUN: skip Docker install checks
+[2026-02-27T11:51:53Z] DRY-RUN: would verify tcp port 2222 is free
+[2026-02-27T11:51:53Z] DRY-RUN: would verify tcp port 8080 is free
+[2026-02-27T11:51:53Z] DRY-RUN: would verify tcp port 6667 is free
+[2026-02-27T11:51:53Z] DRY-RUN: would verify tcp port 8091 is free
+[2026-02-27T11:51:53Z] DRY-RUN: create directory /Users/seanheiney/.local/share/wolfbbs
+[2026-02-27T11:51:54Z] DRY-RUN: would write /Users/seanheiney/.local/share/wolfbbs/.env
+[2026-02-27T11:51:54Z] DRY-RUN: skipping sysop user seeding check
+[2026-02-27T11:51:54Z] DRY-RUN: would start compose services
+[2026-02-27T11:51:54Z] DRY-RUN: skip runtime checks.
+[2026-02-27T11:51:54Z] Detected platform: os=macos distro=macos like=n/a arch=arm64 pkg=brew
+[2026-02-27T11:51:54Z] DRY-RUN: skip disk-space check
+[2026-02-27T11:51:54Z] DRY-RUN: skip Docker install checks
+[2026-02-27T11:51:54Z] DRY-RUN: would verify tcp port 2222 is free
+[2026-02-27T11:51:54Z] DRY-RUN: would verify tcp port 8080 is free
+[2026-02-27T11:51:54Z] DRY-RUN: would verify tcp port 6667 is free
+[2026-02-27T11:51:54Z] DRY-RUN: would verify tcp port 8091 is free
+[2026-02-27T11:51:54Z] DRY-RUN: create directory /Users/seanheiney/.local/share/wolfbbs
+[2026-02-27T11:51:54Z] DRY-RUN: would write /Users/seanheiney/.local/share/wolfbbs/.env
+[2026-02-27T11:51:54Z] DRY-RUN: skipping sysop user seeding check
+[2026-02-27T11:51:54Z] DRY-RUN: would start compose services
+[2026-02-27T11:51:54Z] DRY-RUN: skip runtime checks.
+[2026-02-27T11:52:01Z] Detected platform: os=macos distro=macos like=n/a arch=arm64 pkg=brew
+[2026-02-27T11:52:01Z] DRY-RUN: skip disk-space check
+[2026-02-27T11:52:01Z] DRY-RUN: skip Docker install checks
+[2026-02-27T11:52:01Z] DRY-RUN: would verify tcp port 2222 is free
+[2026-02-27T11:52:01Z] DRY-RUN: would verify tcp port 8080 is free
+[2026-02-27T11:52:01Z] DRY-RUN: would verify tcp port 6667 is free
+[2026-02-27T11:52:01Z] DRY-RUN: would verify tcp port 8091 is free
+[2026-02-27T11:52:01Z] DRY-RUN: create directory /Users/seanheiney/.local/share/wolfbbs
+[2026-02-27T11:52:01Z] DRY-RUN: would write /Users/seanheiney/.local/share/wolfbbs/.env
+[2026-02-27T11:52:01Z] DRY-RUN: skipping sysop user seeding check
+[2026-02-27T11:52:01Z] DRY-RUN: would start compose services
+[2026-02-27T11:52:01Z] DRY-RUN: skip runtime checks.
+[2026-02-27T11:52:01Z] Detected platform: os=macos distro=macos like=n/a arch=arm64 pkg=brew
+[2026-02-27T11:52:01Z] DRY-RUN: skip disk-space check
+[2026-02-27T11:52:01Z] DRY-RUN: skip Docker install checks
+[2026-02-27T11:52:01Z] Detected platform: os=macos distro=macos like=n/a arch=arm64 pkg=brew
+[2026-02-27T11:52:01Z] DRY-RUN: skip disk-space check
+[2026-02-27T11:52:01Z] DRY-RUN: skip Docker install checks
+[2026-02-27T11:52:01Z] DRY-RUN: would verify tcp port 2222 is free
+[2026-02-27T11:52:01Z] DRY-RUN: would verify tcp port 8080 is free
+[2026-02-27T11:52:01Z] DRY-RUN: would verify tcp port 6667 is free
+[2026-02-27T11:52:01Z] DRY-RUN: would verify tcp port 8091 is free
+[2026-02-27T11:52:01Z] DRY-RUN: create directory /Users/seanheiney/.local/share/wolfbbs
+[2026-02-27T11:52:01Z] DRY-RUN: would write /Users/seanheiney/.local/share/wolfbbs/.env
+[2026-02-27T11:52:01Z] DRY-RUN: skipping sysop user seeding check
+[2026-02-27T11:52:01Z] DRY-RUN: would start compose services
+[2026-02-27T11:52:01Z] DRY-RUN: skip runtime checks.
+[2026-02-27T11:52:01Z] Detected platform: os=macos distro=macos like=n/a arch=arm64 pkg=brew
+[2026-02-27T11:52:01Z] DRY-RUN: skip disk-space check
+[2026-02-27T11:52:01Z] DRY-RUN: skip Docker install checks
+[2026-02-27T11:52:01Z] DRY-RUN: would verify tcp port 2222 is free
+[2026-02-27T11:52:01Z] DRY-RUN: would verify tcp port 8080 is free
+[2026-02-27T11:52:01Z] DRY-RUN: would verify tcp port 6667 is free
+[2026-02-27T11:52:01Z] DRY-RUN: would verify tcp port 8091 is free
+[2026-02-27T11:52:01Z] DRY-RUN: create directory /Users/seanheiney/.local/share/wolfbbs
+[2026-02-27T11:52:01Z] DRY-RUN: would write /Users/seanheiney/.local/share/wolfbbs/.env
+[2026-02-27T11:52:01Z] DRY-RUN: skipping sysop user seeding check
+[2026-02-27T11:52:01Z] DRY-RUN: would start compose services
+[2026-02-27T11:52:01Z] DRY-RUN: skip runtime checks.
