@@ -18,6 +18,7 @@ import (
 	"wolfbbs/internal/auth"
 	"wolfbbs/internal/chat"
 	"wolfbbs/internal/events"
+	"wolfbbs/internal/logging"
 	"wolfbbs/internal/rbac"
 	"wolfbbs/internal/repository"
 )
@@ -67,6 +68,7 @@ var (
 )
 
 func main() {
+	logging.ConfigureStdLogger("wolfbbs-irc")
 	listen := flag.String("listen", ":6667", "IRC listen address")
 	tlsListen := flag.String("tls-listen", strings.TrimSpace(os.Getenv("WOLFBBS_IRC_TLS_LISTEN")), "IRC TLS listen address")
 	tlsCert := flag.String("tls-cert", strings.TrimSpace(os.Getenv("WOLFBBS_IRC_TLS_CERT")), "TLS cert file")

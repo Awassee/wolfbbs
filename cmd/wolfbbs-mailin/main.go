@@ -12,6 +12,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"wolfbbs/internal/logging"
 )
 
 type ingestPayload struct {
@@ -23,6 +25,7 @@ type ingestPayload struct {
 }
 
 func main() {
+	logging.ConfigureStdLogger("wolfbbs-mailin")
 	listen := flag.String("listen", ":8091", "mail ingest listen address")
 	forwardURL := flag.String("forward-url", strings.TrimSpace(os.Getenv("WOLFBBS_MAILIN_FORWARD_URL")), "WolfBBS inbound endpoint URL")
 	token := flag.String("token", strings.TrimSpace(os.Getenv("WOLFBBS_INBOUND_TOKEN")), "shared inbound token")

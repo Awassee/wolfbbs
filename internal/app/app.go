@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"wolfbbs/internal/chat"
 	"wolfbbs/internal/config"
 	"wolfbbs/internal/events"
+	"wolfbbs/internal/logging"
 	"wolfbbs/internal/loginserver"
 	"wolfbbs/internal/repository"
 	"wolfbbs/internal/session"
@@ -26,7 +26,7 @@ type Config struct {
 }
 
 func Run(cfg Config) error {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	logger := logging.NewLogger("wolfbbs-ssh")
 
 	storage, err := repository.OpenStorageFromEnv(cfg.DBURL)
 	if err != nil {

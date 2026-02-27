@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"wolfbbs/internal/domain"
 	"wolfbbs/internal/rbac"
 	"wolfbbs/internal/repository"
+	"wolfbbs/internal/term"
 	"wolfbbs/internal/ui"
 )
 
@@ -148,6 +150,8 @@ func (r *Registry) runAdvancedNativeDoor(ctx context.Context, door Door, cfg dom
 		return true, r.runFileBasePro(ctx, door, dctx, reader, stdout)
 	case "oracle-door":
 		return true, r.runOracleDoor(ctx, door, dctx, reader, stdout)
+	case "ansi-art-gallery":
+		return true, r.runANSIArtGallery(ctx, door, dctx, reader, stdout)
 	case "doorparty-connector":
 		return true, r.runConnectorDoor(ctx, door, cfg, dctx, reader, stdout, "doorparty")
 	case "bbslink-connector":
@@ -1009,6 +1013,116 @@ func (r *Registry) runOracleDoor(ctx context.Context, door Door, dctx DoorContex
 			pauseDoor(reader, stdout)
 		default:
 			io.WriteString(stdout, "\r\nUnknown key.")
+			pauseDoor(reader, stdout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+	}
+}
+
+func (r *Registry) runANSIArtGallery(ctx context.Context, door Door, dctx DoorContext, reader *bufio.Reader, stdout io.Writer) error {
+	artRoot := strings.TrimSpace(os.Getenv("WOLFBBS_ANSI_ART_DIR"))
+	if artRoot == "" {
+		artRoot = filepath.Join("doors", "ansi-art-gallery", "art")
+	}
+	_ = os.MkdirAll(artRoot, 0o755)
+	for {
+		entries, err := os.ReadDir(artRoot)
+		if err != nil {
+			return err
+		}
+		type artItem struct {
+			Name string
+			Path string
+		}
+		items := make([]artItem, 0, len(entries))
+		for _, row := range entries {
+			if row.IsDir() {
+				continue
+			}
+			name := strings.TrimSpace(row.Name())
+			if name == "" {
+				continue
+			}
+			lower := strings.ToLower(name)
+			if !strings.HasSuffix(lower, ".ans") && !strings.HasSuffix(lower, ".asc") && !strings.HasSuffix(lower, ".txt") {
+				continue
+			}
+			items = append(items, artItem{Name: name, Path: filepath.Join(artRoot, name)})
+		}
+		sort.Slice(items, func(i, j int) bool { return strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name) })
+
+		lines := []string{
+			"ANSI/ASCII art packs with SAUCE metadata support.",
+			"Art path: " + artRoot,
+			"",
+		}
+		if len(items) == 0 {
+			lines = append(lines, "No .ans/.asc/.txt files found.")
+		} else {
+			for idx, item := range items {
+				lines = append(lines, fmt.Sprintf("%2d) %s", idx+1, item.Name))
+			}
+		}
+		lines = append(lines, "", "(R)efresh  [#] view file  (Q)uit  (?)Help", "", "Enter selection:")
+		renderDoorPanel(stdout, door.Name, lines, ui.FgYellow)
+		key, err := readDoorKey(reader)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return err
+		}
+		switch key {
+		case "Q", "ESC":
+			return nil
+		case "R":
+			continue
+		case "H", "?":
+			io.WriteString(stdout, "\r\nSelect a file number to render it. SAUCE metadata appears in the header.")
+			pauseDoor(reader, stdout)
+			continue
+		default:
+			idx, err := strconv.Atoi(strings.TrimSpace(key))
+			if err != nil || idx <= 0 || idx > len(items) {
+				io.WriteString(stdout, "\r\nUnknown selection.")
+				pauseDoor(reader, stdout)
+				continue
+			}
+			data, err := os.ReadFile(items[idx-1].Path)
+			if err != nil {
+				io.WriteString(stdout, "\r\nCould not read file: "+err.Error())
+				pauseDoor(reader, stdout)
+				continue
+			}
+			meta, hasSAUCE := term.ParseSAUCE(data)
+			body := term.StripSAUCE(data)
+			header := items[idx-1].Name
+			if hasSAUCE {
+				metaBits := []string{}
+				if strings.TrimSpace(meta.Title) != "" {
+					metaBits = append(metaBits, "Title:"+meta.Title)
+				}
+				if strings.TrimSpace(meta.Author) != "" {
+					metaBits = append(metaBits, "Author:"+meta.Author)
+				}
+				if strings.TrimSpace(meta.Group) != "" {
+					metaBits = append(metaBits, "Group:"+meta.Group)
+				}
+				if len(metaBits) > 0 {
+					header += " (" + strings.Join(metaBits, " | ") + ")"
+				}
+			}
+			io.WriteString(stdout, "\x1b[2J\x1b[H")
+			io.WriteString(stdout, ui.Color(ui.FgYellow, "", header)+"\r\n")
+			art := string(body)
+			art = strings.ReplaceAll(art, "\r\n", "\n")
+			art = strings.ReplaceAll(art, "\n", "\r\n")
+			io.WriteString(stdout, ui.ApplyOutputProfile(art, dctx.ANSI, dctx.Encoding))
+			io.WriteString(stdout, "\r\n\r\nPress any key to return to gallery.")
 			pauseDoor(reader, stdout)
 		}
 		select {

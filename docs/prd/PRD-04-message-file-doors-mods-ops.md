@@ -67,12 +67,14 @@ This slice finishes core BBS depth:
   - Web admin files panel now includes area indexing, indexed-file search, ratings, saved filters, queue management, and download ticket issuance.
   - Web gateway file browser (`/gateway?view=files`) now supports tagged search, ratings, queue actions, and one-time ticketed downloads.
   - Message networking baseline in `internal/network`: FTN/BSO/QWK packet export/import plus netmail queue/import processing with spool directories.
-  - Sysop CLI networking controls in `cmd/oputil` (`network status/export/import/queue-netmail/import-queue`).
+  - Sysop CLI networking controls in `cmd/oputil` (`network status/export/import/sync-in/sync-out/queue-netmail/import-queue`).
   - Built-in mods lifecycle manager in `internal/mods` with onelinerz, rumorz, bbslist, and whos_online modules.
   - Mods and network status surfaced in `/status`, `/discover`, `/config`, and `/admin/system`.
   - Web admin doors panel with config overrides, usage stats, score reset, and event logs.
   - WFC-style system dashboard at `/admin/system` including session/channel/online metrics.
   - `cmd/oputil` CLI baseline for status, user role updates, and board management.
+  - SSH files queue parity (`D`) with queue remove, one-time ticket issue, and batch handoff hints.
+  - ANSI Art Gallery native door reads `.ans/.asc/.txt`, parses SAUCE metadata, and renders through terminal output profiles.
+  - Bunyan-compatible structured logging pipeline for app/web/irc/mailin/oputil via `internal/logging`.
 - Pending:
-  - Message network depth finalization (external tosser bridge parity + advanced netmail routing).
-  - File/download depth finalization (legacy queue parity in SSH and modem-era batch parity).
+  - Message network depth finalization (advanced external tosser routing/policy parity).

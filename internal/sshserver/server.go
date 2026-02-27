@@ -3,6 +3,8 @@ package sshserver
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -1704,6 +1706,7 @@ func (s *Server) runBoards(sess gssh.Session, reader *bufio.Reader, termWidth, r
 		touch()
 		return
 	}
+	conferenceFilter := ""
 	for {
 		boards, err := s.boards.List()
 		if err != nil {
@@ -1716,6 +1719,7 @@ func (s *Server) runBoards(sess gssh.Session, reader *bufio.Reader, termWidth, r
 			boards, _ = s.boards.List()
 		}
 		visibleBoards := make([]domain.Board, 0, len(boards))
+		conferences := map[string]struct{}{}
 		for _, board := range boards {
 			if evaluateAccess(boardReadRule(board), currentUser, handle, map[string]string{
 				"area":       "boards",
@@ -1724,10 +1728,17 @@ func (s *Server) runBoards(sess gssh.Session, reader *bufio.Reader, termWidth, r
 				"board":      board.Name,
 				"conference": board.Conference,
 			}, acsStrict, s.logger) {
+				conferences[boardConference(board)] = struct{}{}
 				visibleBoards = append(visibleBoards, board)
 			}
 		}
-		boards = visibleBoards
+		boards = make([]domain.Board, 0, len(visibleBoards))
+		for _, board := range visibleBoards {
+			if conferenceFilter != "" && !strings.EqualFold(boardConference(board), conferenceFilter) {
+				continue
+			}
+			boards = append(boards, board)
+		}
 
 		names := make([]string, 0, len(boards))
 		for _, board := range boards {
@@ -1737,11 +1748,17 @@ func (s *Server) runBoards(sess gssh.Session, reader *bufio.Reader, termWidth, r
 		writeClear(sess, ansiEnabled)
 		renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "WolfBBS Boards", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
 		renderFrame(sess, termWidth, renderWidth, ui.RenderMessageBoardList(renderWidth, names)+"\r\n", ansiEnabled, encoding)
+		confLabel := conferenceFilter
+		if confLabel == "" {
+			confLabel = "All"
+		}
+		io.WriteString(sess, "\r\nConference: "+confLabel+"  (C=change filter)")
 		if len(boards) == 0 {
 			io.WriteString(sess, "\r\nNo boards are currently readable for your account. Press any key.")
 			_, _ = readKey(reader)
 			touch()
-			return
+			conferenceFilter = ""
+			continue
 		}
 		io.WriteString(sess, "Select board ID (or ? help, Q return): ")
 		raw, err := readLine(reader, 16)
@@ -1752,6 +1769,25 @@ func (s *Server) runBoards(sess gssh.Session, reader *bufio.Reader, termWidth, r
 		raw = strings.TrimSpace(raw)
 		if strings.EqualFold(raw, "q") {
 			return
+		}
+		if strings.EqualFold(raw, "c") {
+			confList := make([]string, 0, len(conferences))
+			for row := range conferences {
+				confList = append(confList, row)
+			}
+			sort.Slice(confList, func(i, j int) bool { return strings.ToLower(confList[i]) < strings.ToLower(confList[j]) })
+			io.WriteString(sess, "\r\nConferences:\r\n  * All\r\n")
+			for _, row := range confList {
+				io.WriteString(sess, "  - "+row+"\r\n")
+			}
+			io.WriteString(sess, "Filter conference (blank = all): ")
+			next, err := readLine(reader, 48)
+			if err != nil {
+				return
+			}
+			touch()
+			conferenceFilter = strings.TrimSpace(next)
+			continue
 		}
 		if raw == "?" {
 			showHelpPanel(sess, reader, termWidth, renderWidth, "WolfBBS Help", handle, nodeLabel, th, time24h, ansiEnabled, encoding, ui.RenderBoardsHelp(renderWidth), touch)
@@ -2325,6 +2361,10 @@ func (s *Server) runFiles(sess gssh.Session, reader *bufio.Reader, termWidth, re
 			renderFrame(sess, termWidth, renderWidth, ui.RenderSearchResults(renderWidth, "File Search: "+query, rows), ansiEnabled, encoding)
 			_, _ = readKey(reader)
 			touch()
+		case "I":
+			s.runIndexedFiles(sess, reader, termWidth, renderWidth, handle, account, th, ansiEnabled, encoding, time24h, nodeLabel, touch)
+		case "D":
+			s.runDownloadQueue(sess, reader, termWidth, renderWidth, handle, account, th, ansiEnabled, encoding, time24h, nodeLabel, touch)
 		default:
 			areaID, err := strconv.ParseInt(strings.TrimSpace(choice), 10, 64)
 			if err != nil {
@@ -2498,6 +2538,275 @@ func (s *Server) readAreaFiles(area domain.FileArea, query string, since *time.T
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+func (s *Server) runIndexedFiles(sess gssh.Session, reader *bufio.Reader, termWidth, renderWidth int, handle string, account *domain.User, th ui.Theme, ansiEnabled bool, encoding string, time24h bool, nodeLabel string, touch func()) {
+	if s.admin == nil {
+		io.WriteString(sess, "\r\nIndexed filebase is unavailable. Press any key.")
+		_, _ = readKey(reader)
+		return
+	}
+	if account == nil || account.ID <= 0 {
+		io.WriteString(sess, "\r\nSign in required for indexed filebase access. Press any key.")
+		_, _ = readKey(reader)
+		return
+	}
+	acsStrict := envBool(strings.TrimSpace(os.Getenv("WOLFBBS_ACS_STRICT")))
+	if !evaluateAccess(strings.TrimSpace(os.Getenv("WOLFBBS_ACS_FILES_READ")), account, handle, map[string]string{"area": "files", "mode": "indexed"}, acsStrict, s.logger) {
+		io.WriteString(sess, "\r\nIndexed filebase denied by ACS rule. Press any key.")
+		_, _ = readKey(reader)
+		if touch != nil {
+			touch()
+		}
+		return
+	}
+	if touch == nil {
+		touch = func() {}
+	}
+	query := ""
+	tagsRaw := ""
+	for {
+		tags := splitCSV(tagsRaw)
+		rows, err := s.admin.ListFileEntries(0, query, tags, 120)
+		areaNames := map[int64]string{}
+		areas, _ := s.admin.ListFileAreas()
+		for _, area := range areas {
+			areaNames[area.ID] = area.Name
+		}
+		lines := []string{
+			"Query: " + clampForTTY(query, 30) + "  Tags: " + clampForTTY(tagsRaw, 22),
+			"",
+			" ID   Area       Name                          Rating   Tags",
+			strings.Repeat("-", 70),
+		}
+		if err != nil {
+			lines = append(lines, "Search failed: "+clampForTTY(err.Error(), 54))
+		} else if len(rows) == 0 {
+			lines = append(lines, "No indexed files matched.")
+		} else {
+			for _, row := range rows {
+				tagText := clampForTTY(strings.Join(row.Tags, ","), 18)
+				lines = append(lines, fmt.Sprintf("%4d %-10s %-28s %6.2f  %s",
+					row.ID,
+					clampForTTY(strings.ToUpper(areaNames[row.AreaID]), 10),
+					clampForTTY(row.Name, 28),
+					row.RatingAvg,
+					tagText,
+				))
+			}
+		}
+		lines = append(lines, "", "Commands: (S)earch  [ID] queue add  (Q)uit")
+		writeClear(sess, ansiEnabled)
+		renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "Indexed FileBase", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
+		renderFrame(sess, termWidth, renderWidth, ui.DrawBox(renderWidth, len(lines)+2, "FileBase", lines, ui.CP437Box, ui.FgCyan, ui.BgBlack), ansiEnabled, encoding)
+		io.WriteString(sess, "Selection: ")
+		choice, err := readLine(reader, 48)
+		if err != nil {
+			return
+		}
+		touch()
+		choice = strings.TrimSpace(choice)
+		switch strings.ToUpper(choice) {
+		case "Q":
+			return
+		case "S":
+			io.WriteString(sess, "\r\nQuery (blank=all): ")
+			nextQuery, err := readLine(reader, 72)
+			if err != nil {
+				return
+			}
+			touch()
+			io.WriteString(sess, "Tags csv (blank=none): ")
+			nextTags, err := readLine(reader, 72)
+			if err != nil {
+				return
+			}
+			touch()
+			query = strings.TrimSpace(nextQuery)
+			tagsRaw = strings.TrimSpace(nextTags)
+		default:
+			fileID, parseErr := strconv.ParseInt(choice, 10, 64)
+			if parseErr != nil || fileID <= 0 {
+				io.WriteString(sess, "\r\nUse file ID, S, or Q. Press any key.")
+				_, _ = readKey(reader)
+				touch()
+				continue
+			}
+			if err := s.admin.EnqueueDownload(account.ID, fileID); err != nil {
+				io.WriteString(sess, "\r\nQueue add failed: "+err.Error()+"\r\nPress any key.")
+				_, _ = readKey(reader)
+				touch()
+				continue
+			}
+			io.WriteString(sess, "\r\nQueued file ID "+strconv.FormatInt(fileID, 10)+". Press any key.")
+			_, _ = readKey(reader)
+			touch()
+		}
+	}
+}
+
+func (s *Server) runDownloadQueue(sess gssh.Session, reader *bufio.Reader, termWidth, renderWidth int, handle string, account *domain.User, th ui.Theme, ansiEnabled bool, encoding string, time24h bool, nodeLabel string, touch func()) {
+	if s.admin == nil {
+		io.WriteString(sess, "\r\nDownload queue is unavailable. Press any key.")
+		_, _ = readKey(reader)
+		return
+	}
+	if account == nil || account.ID <= 0 {
+		io.WriteString(sess, "\r\nSign in required for download queue. Press any key.")
+		_, _ = readKey(reader)
+		return
+	}
+	acsStrict := envBool(strings.TrimSpace(os.Getenv("WOLFBBS_ACS_STRICT")))
+	if !evaluateAccess(strings.TrimSpace(os.Getenv("WOLFBBS_ACS_FILES_READ")), account, handle, map[string]string{"area": "files", "mode": "queue"}, acsStrict, s.logger) {
+		io.WriteString(sess, "\r\nDownload queue denied by ACS rule. Press any key.")
+		_, _ = readKey(reader)
+		if touch != nil {
+			touch()
+		}
+		return
+	}
+	if touch == nil {
+		touch = func() {}
+	}
+	for {
+		queue, err := s.admin.ListDownloadQueue(account.ID, 200)
+		lines := []string{
+			"Queue items are shared with web FileBase queue.",
+			"",
+			" ID   File Name                        Queued",
+			strings.Repeat("-", 68),
+		}
+		if err != nil {
+			lines = append(lines, "Queue read failed: "+clampForTTY(err.Error(), 48))
+		} else if len(queue) == 0 {
+			lines = append(lines, "Queue is empty.")
+		} else {
+			for _, row := range queue {
+				name := "file #" + strconv.FormatInt(row.FileID, 10)
+				if entry, eErr := s.admin.GetFileEntry(row.FileID); eErr == nil && entry != nil {
+					name = entry.Name
+				}
+				lines = append(lines, fmt.Sprintf("%4d %-32s %s",
+					row.FileID,
+					clampForTTY(name, 32),
+					formatClock(row.CreatedAt.Local(), time24h),
+				))
+			}
+		}
+		lines = append(lines, "", "Commands: R<ID> remove  T<ID> ticket  B batch tip  Q quit")
+
+		writeClear(sess, ansiEnabled)
+		renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "Download Queue", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
+		renderFrame(sess, termWidth, renderWidth, ui.DrawBox(renderWidth, len(lines)+2, "Queue", lines, ui.CP437Box, ui.FgCyan, ui.BgBlack), ansiEnabled, encoding)
+		io.WriteString(sess, "Selection: ")
+		choice, err := readLine(reader, 40)
+		if err != nil {
+			return
+		}
+		touch()
+		choice = strings.TrimSpace(choice)
+		if strings.EqualFold(choice, "q") {
+			return
+		}
+		if strings.EqualFold(choice, "b") {
+			io.WriteString(sess, "\r\nBatch ZIP: sign in to web and open /gateway?view=files&batch=1\r\nPress any key.")
+			_, _ = readKey(reader)
+			touch()
+			continue
+		}
+		if len(choice) < 2 {
+			io.WriteString(sess, "\r\nUse R<ID>, T<ID>, B, or Q. Press any key.")
+			_, _ = readKey(reader)
+			touch()
+			continue
+		}
+		mode := strings.ToUpper(choice[:1])
+		fileID, parseErr := strconv.ParseInt(strings.TrimSpace(choice[1:]), 10, 64)
+		if parseErr != nil || fileID <= 0 {
+			io.WriteString(sess, "\r\nInvalid file ID. Press any key.")
+			_, _ = readKey(reader)
+			touch()
+			continue
+		}
+		switch mode {
+		case "R":
+			if err := s.admin.DequeueDownload(account.ID, fileID); err != nil {
+				io.WriteString(sess, "\r\nQueue remove failed: "+err.Error()+"\r\nPress any key.")
+				_, _ = readKey(reader)
+				touch()
+				continue
+			}
+			io.WriteString(sess, "\r\nRemoved file ID "+strconv.FormatInt(fileID, 10)+" from queue. Press any key.")
+			_, _ = readKey(reader)
+			touch()
+		case "T":
+			ticket, err := s.issueDownloadTicket(account.ID, fileID, 15*time.Minute)
+			if err != nil {
+				io.WriteString(sess, "\r\nTicket creation failed: "+err.Error()+"\r\nPress any key.")
+				_, _ = readKey(reader)
+				touch()
+				continue
+			}
+			io.WriteString(sess, "\r\nTicket: "+ticket.Token+"\r\nURL: /gateway?download="+ticket.Token+"\r\nPress any key.")
+			_, _ = readKey(reader)
+			touch()
+		default:
+			io.WriteString(sess, "\r\nUse R<ID>, T<ID>, B, or Q. Press any key.")
+			_, _ = readKey(reader)
+			touch()
+		}
+	}
+}
+
+func (s *Server) issueDownloadTicket(userID, fileID int64, ttl time.Duration) (*domain.DownloadTicket, error) {
+	if s.admin == nil {
+		return nil, errors.New("admin repository unavailable")
+	}
+	if userID <= 0 || fileID <= 0 {
+		return nil, errors.New("user id and file id are required")
+	}
+	if ttl <= 0 {
+		ttl = 15 * time.Minute
+	}
+	token, err := randomTokenHex(24)
+	if err != nil {
+		return nil, err
+	}
+	ticket := &domain.DownloadTicket{
+		Token:     "dl_" + token,
+		UserID:    userID,
+		FileID:    fileID,
+		CreatedAt: time.Now().UTC(),
+		ExpiresAt: time.Now().UTC().Add(ttl),
+	}
+	if err := s.admin.CreateDownloadTicket(ticket); err != nil {
+		return nil, err
+	}
+	return ticket, nil
+}
+
+func randomTokenHex(bytesLen int) (string, error) {
+	if bytesLen <= 0 {
+		bytesLen = 16
+	}
+	buf := make([]byte, bytesLen)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
+}
+
+func splitCSV(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		out = append(out, part)
+	}
+	return out
 }
 
 func formatFileRows(rows []fileListing, includeArea bool, time24h bool) []string {

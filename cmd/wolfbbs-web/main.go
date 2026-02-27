@@ -28,6 +28,7 @@ import (
 	"wolfbbs/internal/doors"
 	"wolfbbs/internal/events"
 	"wolfbbs/internal/gateway"
+	"wolfbbs/internal/logging"
 	"wolfbbs/internal/menu"
 	"wolfbbs/internal/mods"
 	"wolfbbs/internal/network"
@@ -224,6 +225,7 @@ func seedServiceUsers(authSvc *auth.Service) {
 }
 
 func main() {
+	logging.ConfigureStdLogger("wolfbbs-web")
 	listen := flag.String("listen", ":8080", "HTTP listen address")
 	dbURL := flag.String("db", "", "PostgreSQL DSN (defaults to WOLFBBS_DATABASE_URL / DATABASE_URL / PG* env)")
 	flag.Parse()
@@ -1099,6 +1101,10 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 	}
 
 	boardID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("board")), 10, 64)
+	conferenceFilter := strings.TrimSpace(r.URL.Query().Get("conference"))
+	if strings.EqualFold(conferenceFilter, "all") {
+		conferenceFilter = ""
+	}
 	if boardID <= 0 {
 		boards, err := a.boardRepo.List()
 		if err != nil {
@@ -1106,12 +1112,25 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		visibleBoards := make([]domain.Board, 0, len(boards))
+		conferenceSet := map[string]struct{}{}
 		for _, board := range boards {
 			if a.canReadBoard(user, &board) {
+				conferenceSet[defaultConferenceValue(board.Conference)] = struct{}{}
 				visibleBoards = append(visibleBoards, board)
 			}
 		}
-		boards = visibleBoards
+		boards = make([]domain.Board, 0, len(visibleBoards))
+		for _, board := range visibleBoards {
+			if conferenceFilter != "" && !strings.EqualFold(defaultConferenceValue(board.Conference), conferenceFilter) {
+				continue
+			}
+			boards = append(boards, board)
+		}
+		conferences := make([]string, 0, len(conferenceSet))
+		for row := range conferenceSet {
+			conferences = append(conferences, row)
+		}
+		sort.Slice(conferences, func(i, j int) bool { return strings.ToLower(conferences[i]) < strings.ToLower(conferences[j]) })
 		rows := strings.Builder{}
 		motdBlock := ""
 		if strings.TrimSpace(a.motd) != "" {
@@ -1151,16 +1170,31 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 		if a.quickJump {
 			quickJumpBlock = `<form method="GET" action="/boards"><label>Quick Jump <input name="jump" size="24" placeholder="mail/chat/gateway/status/config"></label><button type="submit">Go</button></form>`
 		}
+		confOptions := strings.Builder{}
+		selectedAll := ` selected`
+		if conferenceFilter != "" {
+			selectedAll = ``
+		}
+		confOptions.WriteString(`<option value=""` + selectedAll + `>All conferences</option>`)
+		for _, conf := range conferences {
+			selected := ""
+			if strings.EqualFold(conf, conferenceFilter) {
+				selected = ` selected`
+			}
+			confOptions.WriteString(`<option value="` + htmlEscape(conf) + `"` + selected + `>` + htmlEscape(conf) + `</option>`)
+		}
+		confFilterBlock := `<form method="GET" action="/boards"><label>Conference <select name="conference">` + confOptions.String() + `</select></label><button type="submit">Filter</button></form>`
 		page := fmt.Sprintf(`<html><body>
 <p>Signed in as %s</p>
 <p><a href="/mail">mail</a> | <a href="/settings">settings</a> | <a href="/chat">chat</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/gateway">gateway</a>%s | <a href="/help">help</a> | <a href="/logout">logout</a></p>
 %s
 %s
 %s
+%s
 <h1>Message Boards</h1>
 <table border="1">
 <tr><th>ID</th><th>Board</th><th>Conf</th><th>Topics</th><th>New</th><th>Last</th><th>Last subject</th></tr>%s</table>
-</body></html>`, user.Handle, discoverLink, motdBlock, announcementBlock, quickJumpBlock, rows.String())
+</body></html>`, user.Handle, discoverLink, motdBlock, announcementBlock, quickJumpBlock, confFilterBlock, rows.String())
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(page))
 		return

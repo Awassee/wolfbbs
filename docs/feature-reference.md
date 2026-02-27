@@ -154,6 +154,7 @@ Documented in `docs/irc-compat.md`:
 ## Message Boards and Mail
 
 - Boards list, board message index, reader, new post, reply/quote
+- SSH boards include conference filter toggle (`C`) for area-focused browsing
 - Mail inbox/outbox, read by ID, compose local/external (policy-gated)
 - Newscan/digest integration for message/mail activity
 
@@ -167,8 +168,15 @@ Documented in `docs/irc-compat.md`:
   - `oputil network status`
   - `oputil network export --format <ftn|bso|qwk> --board <id>`
   - `oputil network import --in <packet.json>`
+  - `oputil network sync-in` / `oputil network sync-out` for external tosser hooks
   - `oputil network queue-netmail --from <uid> --to <handle> --subject <s> --body <b>`
   - `oputil network import-queue`
+
+## File Base and Download Queue
+
+- File tags, ratings, saved filters, SHA-256 dedupe index
+- SSH files menu includes indexed search (`I`) and legacy queue manager (`D`)
+- Queue manager supports remove, one-time ticket issue, and batch zip handoff via gateway
 
 ## Gateways
 

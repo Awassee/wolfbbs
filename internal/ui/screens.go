@@ -360,7 +360,8 @@ func RenderGatewayHelp(width int) string {
 func RenderFilesMenu(width int, areas []string) string {
 	lines := []string{
 		"[ID] Open area      [R]ecent files     [N]ew since last call",
-		"[S]earch by name    [Q] Return         [?] Help",
+		"[S]earch by name    [I]ndexed search   [D]ownload queue",
+		"[Q] Return          [?] Help",
 		"",
 		" ID  Area Name           Path                         Description",
 		strings.Repeat("-", 68),
@@ -384,6 +385,8 @@ func RenderFilesHelp(width int) string {
 		"- R lists recent files across all areas",
 		"- N lists files newer than your last login",
 		"- S searches filenames across all areas",
+		"- I uses indexed FileBase search + queue add by file ID",
+		"- D manages your download queue and one-time tickets",
 		"- Q or Esc returns to Main Menu",
 		"",
 		"Inside an area:",

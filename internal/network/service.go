@@ -1,10 +1,12 @@
 package network
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -47,12 +49,14 @@ type Status struct {
 }
 
 type Service struct {
-	spoolDir string
-	boards   repository.BoardRepository
-	messages repository.MessageRepository
-	users    repository.UserRepository
-	mail     repository.PrivateMailRepository
-	source   string
+	spoolDir  string
+	boards    repository.BoardRepository
+	messages  repository.MessageRepository
+	users     repository.UserRepository
+	mail      repository.PrivateMailRepository
+	source    string
+	importCmd string
+	exportCmd string
 }
 
 func NewService(spoolDir string, boards repository.BoardRepository, messages repository.MessageRepository, users repository.UserRepository, mail repository.PrivateMailRepository) *Service {
@@ -61,13 +65,20 @@ func NewService(spoolDir string, boards repository.BoardRepository, messages rep
 		spoolDir = ".wolfbbs/network"
 	}
 	return &Service{
-		spoolDir: spoolDir,
-		boards:   boards,
-		messages: messages,
-		users:    users,
-		mail:     mail,
-		source:   "WolfBBS",
+		spoolDir:  spoolDir,
+		boards:    boards,
+		messages:  messages,
+		users:     users,
+		mail:      mail,
+		source:    "WolfBBS",
+		importCmd: strings.TrimSpace(os.Getenv("WOLFBBS_NET_IMPORT_CMD")),
+		exportCmd: strings.TrimSpace(os.Getenv("WOLFBBS_NET_EXPORT_CMD")),
 	}
+}
+
+func (s *Service) SetExternalCommands(importCmd, exportCmd string) {
+	s.importCmd = strings.TrimSpace(importCmd)
+	s.exportCmd = strings.TrimSpace(exportCmd)
 }
 
 func normalizeFormat(format string) (string, error) {
@@ -343,6 +354,38 @@ func (s *Service) Status() (Status, error) {
 	status.InboundPackets = inbound
 	status.OutboundPackets = outbound
 	return status, nil
+}
+
+func (s *Service) RunExternalImport(ctx context.Context) error {
+	if strings.TrimSpace(s.importCmd) == "" {
+		return errors.New("import command is not configured")
+	}
+	return s.runExternal(ctx, s.importCmd, "import")
+}
+
+func (s *Service) RunExternalExport(ctx context.Context) error {
+	if strings.TrimSpace(s.exportCmd) == "" {
+		return errors.New("export command is not configured")
+	}
+	return s.runExternal(ctx, s.exportCmd, "export")
+}
+
+func (s *Service) runExternal(ctx context.Context, command, mode string) error {
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
+	cmd.Dir = s.spoolDir
+	cmd.Env = append(os.Environ(),
+		"WOLFBBS_NET_SPOOL_DIR="+s.spoolDir,
+		"WOLFBBS_NET_MODE="+mode,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			return err
+		}
+		return fmt.Errorf("%w: %s", err, msg)
+	}
+	return nil
 }
 
 func (s *Service) countJSON(root string) (int, error) {

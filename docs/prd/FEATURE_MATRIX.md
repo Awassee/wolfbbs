@@ -8,7 +8,7 @@ Status legend:
 | Requested feature | PRD | Status | Notes |
 |---|---|---|---|
 | Multi-node session manager + node list/state | PRD-01 | done | SSH session manager + DB-backed node/caller state + web diagnostics shipped |
-| Terminal rendering stack (CP437/UTF-8/ANSI/SyncTERM/SAUCE) | PRD-01, PRD-02 | in_progress | profile + output mapping + SAUCE parser baseline shipped; art integration pending |
+| Terminal rendering stack (CP437/UTF-8/ANSI/SyncTERM/SAUCE) | PRD-01, PRD-02 | done | output profiles + CP437/UTF-8 handling + SAUCE parser/stripper + ANSI Art Gallery rendering shipped |
 | Theme system + user-selectable themes | PRD-02 | in_progress | named themes + SSH apply done; menu/theme config expansion pending |
 | Menu system (HJSON) + menu-module plugin model | PRD-02 | done | parser/validator + module registry + runtime routing are wired in SSH with ACS-aware visibility |
 | MCI + view framework | PRD-02 | in_progress | core control/view package shipped; SSH settings view integrated |
@@ -18,9 +18,9 @@ Status legend:
 | Content servers: HTTPS + gopher + NNTP/NNTPS | PRD-03 | done | HTTPS exists; optional read-only gopher + nntp + nntps listeners shipped behind explicit env flags |
 | User security: PBKDF2/reset email/optional 2FA | PRD-03 | done | 2FA + recovery codes, PBKDF2 policy + bcrypt upgrade path, reset-token flow, and reset email delivery for email-form handles are shipped |
 | Message base: conferences/areas + pointers/newscan | PRD-04 | in_progress | baseline boards/newscan exists, area depth pending |
-| Message network support: FTN/BSO, netmail, QWK | PRD-04 | in_progress | packet spool service + CLI import/export + queue processing shipped; external tosser bridge parity pending |
-| File base: tags/search/ratings/upload processor/dedupe/temp links | PRD-04 | in_progress | DB-backed tagged search/ratings/filters, SHA-256 dedupe indexing, queue, and temporary gateway ticket downloads shipped; batch zip streaming and SSH parity remain |
-| Download managers: legacy queue + web queue + batch zip | PRD-04 | in_progress | web/admin queue + ticket lifecycle + gateway batch zip streaming shipped; legacy queue parity pending |
+| Message network support: FTN/BSO, netmail, QWK | PRD-04 | in_progress | packet spool service + CLI import/export + queue processing + external tosser sync hooks shipped; advanced routing parity remains |
+| File base: tags/search/ratings/upload processor/dedupe/temp links | PRD-04 | done | tagged search/ratings/filters, SHA-256 dedupe index, upload metadata extraction, queue, and temporary ticketed downloads shipped in SSH+web |
+| Download managers: legacy queue + web queue + batch zip | PRD-04 | done | SSH legacy queue manager + web/admin queue + ticket lifecycle + gateway batch zip streaming shipped |
 | Doors: local dropfiles + BBSLink + DoorParty + telnet bridge | PRD-04 | done | local runtime + optional dropfiles + DoorParty/BBSLink/Telnet Bridge command adapters shipped with policy checks and audit |
 | Built-in mods (onelinerz/rumorz/bbs list/who's online/etc.) | PRD-04 | done | lifecycle manager + built-ins + status surfacing shipped |
-| Sysop ops: WFC dashboard, oputil CLI, Bunyan logs + monitoring | PRD-04 | in_progress | `/admin/system` WFC dashboard + `cmd/oputil` shipped; bunyan-compatible log pipeline still pending |
+| Sysop ops: WFC dashboard, oputil CLI, Bunyan logs + monitoring | PRD-04 | done | `/admin/system`, `cmd/oputil`, health/metrics, and Bunyan-compatible structured logging are shipped |

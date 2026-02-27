@@ -1,6 +1,7 @@
 package network
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -128,5 +129,37 @@ func TestNetmailQueueAndImport(t *testing.T) {
 	}
 	if status.InboundPackets != 0 {
 		t.Fatalf("expected 0 inbound after import, got %d", status.InboundPackets)
+	}
+}
+
+func TestRunExternalHooks(t *testing.T) {
+	users := repository.NewInMemoryUserRepository()
+	boards := repository.NewInMemoryBoardRepository()
+	msgs := repository.NewInMemoryMessageRepository()
+	mail := repository.NewInMemoryPrivateMailRepository()
+	spool := t.TempDir()
+	svc := NewService(spool, boards, msgs, users, mail)
+	marker := filepath.Join(spool, "hook.txt")
+	svc.SetExternalCommands("echo import > hook.txt", "echo export > hook.txt")
+
+	if err := svc.RunExternalExport(context.Background()); err != nil {
+		t.Fatalf("run export hook: %v", err)
+	}
+	raw, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("read marker after export: %v", err)
+	}
+	if string(raw) != "export\n" {
+		t.Fatalf("unexpected export marker content: %q", string(raw))
+	}
+	if err := svc.RunExternalImport(context.Background()); err != nil {
+		t.Fatalf("run import hook: %v", err)
+	}
+	raw, err = os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("read marker after import: %v", err)
+	}
+	if string(raw) != "import\n" {
+		t.Fatalf("unexpected import marker content: %q", string(raw))
 	}
 }

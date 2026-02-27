@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -12,12 +13,14 @@ import (
 
 	"wolfbbs/internal/auth"
 	"wolfbbs/internal/domain"
+	"wolfbbs/internal/logging"
 	"wolfbbs/internal/mods"
 	"wolfbbs/internal/network"
 	"wolfbbs/internal/repository"
 )
 
 func main() {
+	logging.ConfigureStdLogger("wolfbbs-oputil")
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
@@ -208,7 +211,7 @@ func cmdBoards(dbURL string, args []string, stdout, stderr io.Writer) int {
 
 func cmdNetwork(dbURL string, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		_, _ = fmt.Fprintln(stderr, "network command requires a subcommand: status | export | import | queue-netmail | import-queue")
+		_, _ = fmt.Fprintln(stderr, "network command requires a subcommand: status | export | import | queue-netmail | import-queue | sync-in | sync-out")
 		return 2
 	}
 	storage, err := repository.OpenStorageFromEnv(dbURL)
@@ -315,6 +318,20 @@ func cmdNetwork(dbURL string, args []string, stdout, stderr io.Writer) int {
 		}
 		_, _ = fmt.Fprintf(stdout, "imported=%d\n", count)
 		return 0
+	case "sync-in":
+		if err := svc.RunExternalImport(context.Background()); err != nil {
+			_, _ = fmt.Fprintf(stderr, "external import sync failed: %v\n", err)
+			return 1
+		}
+		_, _ = fmt.Fprintln(stdout, "external import sync complete")
+		return 0
+	case "sync-out":
+		if err := svc.RunExternalExport(context.Background()); err != nil {
+			_, _ = fmt.Fprintf(stderr, "external export sync failed: %v\n", err)
+			return 1
+		}
+		_, _ = fmt.Fprintln(stdout, "external export sync complete")
+		return 0
 	default:
 		_, _ = fmt.Fprintf(stderr, "unknown network subcommand: %s\n", args[0])
 		return 2
@@ -362,5 +379,7 @@ Usage:
   oputil [--db <dsn>] network import --in <packet.json> [--board <id>] [--author <id>]
   oputil [--db <dsn>] network queue-netmail --from <uid> --to <handle> --subject <s> --body <b>
   oputil [--db <dsn>] network import-queue [--board <id>] [--author <id>]
+  oputil [--db <dsn>] network sync-in
+  oputil [--db <dsn>] network sync-out
   oputil mods list`)
 }

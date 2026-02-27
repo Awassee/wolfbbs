@@ -174,6 +174,53 @@ func TestNativeDoorLaunchesForCatalog(t *testing.T) {
 	}
 }
 
+func TestANSIArtGalleryRendersSAUCEHeader(t *testing.T) {
+	tmp := t.TempDir()
+	artDir := filepath.Join(tmp, "art")
+	if err := os.MkdirAll(artDir, 0o755); err != nil {
+		t.Fatalf("mkdir art dir: %v", err)
+	}
+	body := []byte("ANSI SAMPLE ART\r\n")
+	record := make([]byte, 128)
+	copy(record[0:7], []byte("SAUCE00"))
+	copy(record[7:42], []byte("Wolf Art"))
+	copy(record[42:62], []byte("SysOp"))
+	copy(record[62:82], []byte("WolfPack"))
+	copy(record[82:90], []byte("20260227"))
+	data := append(body, record...)
+	if err := os.WriteFile(filepath.Join(artDir, "sample.ans"), data, 0o644); err != nil {
+		t.Fatalf("write art file: %v", err)
+	}
+
+	t.Setenv("WOLFBBS_ANSI_ART_DIR", artDir)
+	reg := NewRegistry()
+	reg.SetRepository(repository.NewInMemoryDoorRepository())
+	if err := reg.LoadManifestDir(filepath.Join("..", "..", "doors")); err != nil {
+		t.Fatalf("load manifests: %v", err)
+	}
+
+	env := map[string]string{
+		"WOLFBBS_USER_ID":   "11",
+		"WOLFBBS_HANDLE":    "artist",
+		"WOLFBBS_ROLE":      "user",
+		"WOLFBBS_TERM_COLS": "80",
+		"WOLFBBS_TERM_ROWS": "25",
+		"WOLFBBS_ANSI":      "true",
+	}
+	in := bytes.NewBufferString("1\nQ")
+	out := bytes.Buffer{}
+	if err := reg.StartDoorByID(context.Background(), "ansi-art-gallery", in, &out, &out, env); err != nil {
+		t.Fatalf("launch ansi art gallery: %v", err)
+	}
+	rendered := out.String()
+	if !strings.Contains(rendered, "Title:Wolf Art") {
+		t.Fatalf("expected SAUCE title in output, got: %s", rendered)
+	}
+	if !strings.Contains(rendered, "ANSI SAMPLE ART") {
+		t.Fatalf("expected art body in output, got: %s", rendered)
+	}
+}
+
 func TestExternalDoorLaunchSmoke(t *testing.T) {
 	tmp := t.TempDir()
 	doorCmd := filepath.Join(tmp, "external-door.sh")
