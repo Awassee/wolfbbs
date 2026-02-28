@@ -25,6 +25,7 @@ MAILIN_PORT="$DEFAULT_MAILIN_PORT"
 INSTALL_BREW=false
 UNINSTALL=false
 UPGRADE=false
+RAPID_UPGRADE=false
 STATUS=false
 DOCTOR=false
 START=false
@@ -356,6 +357,7 @@ Supports Linux (apt/dnf/yum/pacman) and macOS (Docker Desktop or Colima).
 
 Usage:
   bash install.sh [options]
+  bash install.sh           (interactive action menu)
 
 Options:
   --prefix <dir>            install directory (default: Linux=/opt/wolfbbs, macOS=$HOME/.local/share/wolfbbs)
@@ -374,6 +376,7 @@ Options:
   --mailin-port <port>      inbound mail webhook port (default: 8091)
   --uninstall               stop/remove services
   --upgrade                 pull/restart services in existing install
+  --rapid-upgrade           local rebuild/restart for fast dev iteration
   --status                  show service status and endpoints
   --doctor                  run non-mutating preflight + install health diagnostics
   --start                   start existing WolfBBS services
@@ -395,6 +398,123 @@ Environment shortcuts:
   WOLFBBS_SETUP_PROFILE=<profile> basic|critical|expert baseline (prefer /admin/setup)
   WOLFBBS_REPO_URL defaults to:   https://github.com/seanheiney/wolfbbs.git
 USAGE
+}
+
+action_selected() {
+  [[ "$UNINSTALL" == "true" ||
+    "$UPGRADE" == "true" ||
+    "$RAPID_UPGRADE" == "true" ||
+    "$STATUS" == "true" ||
+    "$DOCTOR" == "true" ||
+    "$START" == "true" ||
+    "$STOP" == "true" ||
+    "$RESTART" == "true" ||
+    "$LOGS" == "true" ||
+    "$REPAIR" == "true" ||
+    "$DEPS_ONLY" == "true" ]]
+}
+
+show_interactive_action_menu() {
+  local args_count="${1:-0}"
+  local choice=""
+
+  if [[ "$args_count" -gt 0 ]]; then
+    return
+  fi
+  if [[ "$NON_INTERACTIVE" == "true" || ! -t 0 || ! -t 1 ]]; then
+    return
+  fi
+  if action_selected; then
+    return
+  fi
+
+  while true; do
+    echo "No flags detected. Choose an action:"
+    echo "  1) Install / first setup (default)"
+    echo "  2) Rapid upgrade (local rebuild/restart)"
+    echo "  3) Upgrade (pull latest images + restart)"
+    echo "  4) Repair install"
+    echo "  5) Start services"
+    echo "  6) Stop services"
+    echo "  7) Restart services"
+    echo "  8) Status"
+    echo "  9) Logs"
+    echo " 10) Uninstall"
+    echo " 11) Uninstall + purge data"
+    echo " 12) Doctor diagnostics"
+    echo " 13) Dependencies only"
+    echo "  q) Quit"
+    printf "Selection [1]: "
+    read -r choice
+    choice="$(trim "$choice")"
+    if [[ -z "$choice" ]]; then
+      choice="1"
+    fi
+    choice="$(printf '%s' "$choice" | tr '[:upper:]' '[:lower:]')"
+
+    case "$choice" in
+      1|install)
+        return
+        ;;
+      2|rapid|rapid-upgrade)
+        RAPID_UPGRADE=true
+        return
+        ;;
+      3|upgrade)
+        UPGRADE=true
+        return
+        ;;
+      4|repair)
+        REPAIR=true
+        return
+        ;;
+      5|start)
+        START=true
+        return
+        ;;
+      6|stop)
+        STOP=true
+        return
+        ;;
+      7|restart)
+        RESTART=true
+        return
+        ;;
+      8|status)
+        STATUS=true
+        return
+        ;;
+      9|logs|log)
+        LOGS=true
+        return
+        ;;
+      10|uninstall)
+        UNINSTALL=true
+        return
+        ;;
+      11|purge|uninstall-purge|uninstall+purge)
+        UNINSTALL=true
+        PURGE=true
+        return
+        ;;
+      12|doctor)
+        DOCTOR=true
+        return
+        ;;
+      13|deps|deps-only)
+        DEPS_ONLY=true
+        return
+        ;;
+      q|quit|exit)
+        echo "Aborted."
+        exit 0
+        ;;
+      *)
+        echo "Unknown selection: ${choice}"
+        echo
+        ;;
+    esac
+  done
 }
 
 require_value() {
@@ -1353,7 +1473,11 @@ docker_compose_up() {
     echo "Docker Compose not found."
     exit 1
   fi
-  run_retry 3 5 "cd '$WORK_DIR' && $cmd -f \"$compose_file\" --env-file \"$ENV_FILE\" up -d --build"
+  local env_flag=""
+  if [[ -n "${ENV_FILE:-}" && -f "$ENV_FILE" ]]; then
+    env_flag=" --env-file \"$ENV_FILE\""
+  fi
+  run_retry 3 5 "cd '$WORK_DIR' && $cmd -f \"$compose_file\"${env_flag} up -d --build"
 }
 
 docker_compose_pull_restart() {
@@ -1367,8 +1491,30 @@ docker_compose_pull_restart() {
     echo "Docker Compose not found."
     exit 1
   fi
-  run_retry 3 5 "cd '$WORK_DIR' && $cmd -f \"$compose_file\" --env-file \"$ENV_FILE\" pull"
-  run_retry 3 5 "cd '$WORK_DIR' && $cmd -f \"$compose_file\" --env-file \"$ENV_FILE\" up -d --build"
+  local env_flag=""
+  if [[ -n "${ENV_FILE:-}" && -f "$ENV_FILE" ]]; then
+    env_flag=" --env-file \"$ENV_FILE\""
+  fi
+  run_retry 3 5 "cd '$WORK_DIR' && $cmd -f \"$compose_file\"${env_flag} pull"
+  run_retry 3 5 "cd '$WORK_DIR' && $cmd -f \"$compose_file\"${env_flag} up -d --build --remove-orphans"
+}
+
+docker_compose_rapid_upgrade() {
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "DRY-RUN: would rebuild and restart compose services from local source"
+    return 0
+  fi
+  local cmd
+  cmd="$(compose_cmd)"
+  if [[ -z "$cmd" ]]; then
+    echo "Docker Compose not found."
+    exit 1
+  fi
+  local env_flag=""
+  if [[ -n "${ENV_FILE:-}" && -f "$ENV_FILE" ]]; then
+    env_flag=" --env-file \"$ENV_FILE\""
+  fi
+  run_retry 3 5 "cd '$WORK_DIR' && $cmd -f \"$compose_file\"${env_flag} up -d --build --remove-orphans"
 }
 
 docker_compose_down() {
@@ -1382,7 +1528,11 @@ docker_compose_down() {
     echo "Docker Compose not found."
     exit 1
   fi
-  run "cd '$WORK_DIR' && $cmd -f \"$compose_file\" --env-file \"$ENV_FILE\" down"
+  local env_flag=""
+  if [[ -n "${ENV_FILE:-}" && -f "$ENV_FILE" ]]; then
+    env_flag=" --env-file \"$ENV_FILE\""
+  fi
+  run "cd '$WORK_DIR' && $cmd -f \"$compose_file\"${env_flag} down --remove-orphans"
 }
 
 docker_compose_down_purge() {
@@ -1396,7 +1546,11 @@ docker_compose_down_purge() {
     echo "Docker Compose not found."
     exit 1
   fi
-  run "cd '$WORK_DIR' && $cmd -f \"$compose_file\" --env-file \"$ENV_FILE\" down -v --remove-orphans"
+  local env_flag=""
+  if [[ -n "${ENV_FILE:-}" && -f "$ENV_FILE" ]]; then
+    env_flag=" --env-file \"$ENV_FILE\""
+  fi
+  run "cd '$WORK_DIR' && $cmd -f \"$compose_file\"${env_flag} down -v --remove-orphans"
 }
 
 docker_compose_status() {
@@ -1406,7 +1560,11 @@ docker_compose_status() {
     echo "Docker Compose not found."
     return 1
   fi
-  run "$cmd -f '$compose_file' --env-file '$ENV_FILE' ps"
+  if [[ -n "${ENV_FILE:-}" && -f "$ENV_FILE" ]]; then
+    run "$cmd -f '$compose_file' --env-file '$ENV_FILE' ps"
+    return
+  fi
+  run "$cmd -f '$compose_file' ps"
 }
 
 docker_compose_start() {
@@ -1420,7 +1578,11 @@ docker_compose_start() {
     echo "Docker Compose not found."
     exit 1
   fi
-  run "cd '$WORK_DIR' && $cmd -f \"$compose_file\" --env-file \"$ENV_FILE\" up -d"
+  local env_flag=""
+  if [[ -n "${ENV_FILE:-}" && -f "$ENV_FILE" ]]; then
+    env_flag=" --env-file \"$ENV_FILE\""
+  fi
+  run "cd '$WORK_DIR' && $cmd -f \"$compose_file\"${env_flag} up -d"
 }
 
 docker_compose_stop() {
@@ -1434,7 +1596,11 @@ docker_compose_stop() {
     echo "Docker Compose not found."
     exit 1
   fi
-  run "cd '$WORK_DIR' && $cmd -f \"$compose_file\" --env-file \"$ENV_FILE\" stop"
+  local env_flag=""
+  if [[ -n "${ENV_FILE:-}" && -f "$ENV_FILE" ]]; then
+    env_flag=" --env-file \"$ENV_FILE\""
+  fi
+  run "cd '$WORK_DIR' && $cmd -f \"$compose_file\"${env_flag} stop"
 }
 
 docker_compose_restart() {
@@ -1448,7 +1614,11 @@ docker_compose_restart() {
     echo "Docker Compose not found."
     exit 1
   fi
-  run "cd '$WORK_DIR' && $cmd -f \"$compose_file\" --env-file \"$ENV_FILE\" restart"
+  local env_flag=""
+  if [[ -n "${ENV_FILE:-}" && -f "$ENV_FILE" ]]; then
+    env_flag=" --env-file \"$ENV_FILE\""
+  fi
+  run "cd '$WORK_DIR' && $cmd -f \"$compose_file\"${env_flag} restart"
 }
 
 docker_compose_logs() {
@@ -1462,7 +1632,11 @@ docker_compose_logs() {
     echo "Docker Compose not found."
     exit 1
   fi
-  run "cd '$WORK_DIR' && $cmd -f \"$compose_file\" --env-file \"$ENV_FILE\" logs --tail=200"
+  local env_flag=""
+  if [[ -n "${ENV_FILE:-}" && -f "$ENV_FILE" ]]; then
+    env_flag=" --env-file \"$ENV_FILE\""
+  fi
+  run "cd '$WORK_DIR' && $cmd -f \"$compose_file\"${env_flag} logs --tail=200"
 }
 
 seed_admin_check() {
@@ -1818,6 +1992,10 @@ parse_args() {
         UPGRADE=true
         shift
         ;;
+      --rapid-upgrade)
+        RAPID_UPGRADE=true
+        shift
+        ;;
       --status)
         STATUS=true
         shift
@@ -1873,6 +2051,7 @@ validate_action_flags() {
   local all_actions=(
     "$UNINSTALL"
     "$UPGRADE"
+    "$RAPID_UPGRADE"
     "$STATUS"
     "$DOCTOR"
     "$START"
@@ -1890,14 +2069,14 @@ validate_action_flags() {
   done
   if (( action_count > 1 )); then
     echo "Only one action mode can be used at a time:"
-    echo "  --doctor | --status | --start | --stop | --restart | --logs | --repair | --upgrade | --uninstall | --deps-only"
+    echo "  --doctor | --status | --start | --stop | --restart | --logs | --repair | --upgrade | --rapid-upgrade | --uninstall | --deps-only"
     exit 1
   fi
 }
 
 main() {
+  local args_count=$#
   parse_args "$@"
-  validate_action_flags
   resolve_repo_url
   detect_platform
   detect_arch
@@ -1906,6 +2085,8 @@ main() {
   check_macos_prereqs
   init_log_file
   print_splash
+  show_interactive_action_menu "$args_count"
+  validate_action_flags
 
   if [[ "$USED_INSTALLER_CONFIG_FLAGS" == "true" ]]; then
     echo "Note: install-time identity/profile flags are supported for automation."
@@ -2030,6 +2211,7 @@ main() {
   fi
 
   if [[ "$UNINSTALL" == "true" ]]; then
+    ENV_FILE="$(resolve_env_file || true)"
     if [[ "$DRY_RUN" == "false" ]]; then
       if ! confirm "Stop WolfBBS services from ${PREFIX}?"; then
         echo "Aborted."
@@ -2039,7 +2221,9 @@ main() {
       if [[ "$PURGE" == "true" ]] || confirm "Remove volumes and all installed data? (run with --purge to auto-confirm)"; then
         docker_compose_down_purge
       fi
-      if confirm "Remove install directory ${PREFIX}?"; then
+      if [[ -d "${PREFIX}/.git" ]]; then
+        echo "Install directory appears to be a git checkout; skipping directory deletion to protect source."
+      elif confirm "Remove install directory ${PREFIX}?"; then
         rm -rf "$PREFIX"
         echo "Removed ${PREFIX}."
       fi
@@ -2055,12 +2239,31 @@ main() {
       exit 1
     fi
     ensure_docker
-    require_ports_free "$SSH_PORT" "$WEB_PORT" "$IRC_PORT" "$MAILIN_PORT"
-    write_env_file
-    ENV_FILE="${PREFIX}/.env"
+    ENV_FILE="$(resolve_env_file || true)"
+    if [[ -z "$ENV_FILE" ]]; then
+      write_env_file
+      ENV_FILE="${PREFIX}/.env"
+    fi
     docker_compose_pull_restart
     verify_install
     echo "Upgrade complete."
+    exit 0
+  fi
+
+  if [[ "$RAPID_UPGRADE" == "true" ]]; then
+    if [[ ! -d "$PREFIX" ]]; then
+      echo "No existing install in ${PREFIX}"
+      exit 1
+    fi
+    ensure_docker
+    ENV_FILE="$(resolve_env_file || true)"
+    if [[ -z "$ENV_FILE" ]]; then
+      write_env_file
+      ENV_FILE="${PREFIX}/.env"
+    fi
+    docker_compose_rapid_upgrade
+    verify_install
+    echo "Rapid upgrade complete."
     exit 0
   fi
 

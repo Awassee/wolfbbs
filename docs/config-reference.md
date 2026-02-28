@@ -76,6 +76,9 @@ When handle+password pairs are set, startup seeds or updates those users and rol
 - `WOLFBBS_ACS_MAIL_SEND`: ACS expression for mail compose/send.
 - `WOLFBBS_ACS_FILES_READ`: ACS expression for files menu access.
 - `WOLFBBS_ACS_ADMIN`: optional ACS expression for `/admin/*` access in addition to role checks.
+- `WOLFBBS_APP_UPGRADE_COMMAND`: optional sysop-triggered command for SSH quick jump `/app upgrade`.
+- `WOLFBBS_APP_UPGRADE_WORKDIR`: optional working directory for the upgrade command.
+- `WOLFBBS_APP_UPGRADE_TIMEOUT_SECONDS` (default `900`, min `15`, max `3600`): timeout for `/app upgrade`.
 
 Sysop menu editing:
 - Use `/admin/config` to edit HJSON menus with parse validation and safe-path checks.

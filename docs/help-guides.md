@@ -39,6 +39,7 @@ This file is the written reference for in-product help surfaces.
 - `X` Config Center
 - `Y` Status Center
 - `/` Quick Jump (opt-in)
+  - Sysop quick command: `/app upgrade` (runs configured upgrade hook)
 - `Q` Sign-off
 
 ## Message Boards Help

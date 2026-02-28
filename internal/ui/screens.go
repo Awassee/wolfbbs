@@ -98,6 +98,7 @@ func RenderMainMenuHelp(width int, menuHint string) string {
 		"L  Last Callers          W  Who's Online",
 		"X  Config Center         Y  Status Center",
 		"/  Quick Jump prompt",
+		"   - Includes app-upgrade (/app upgrade) for sysop",
 		"Q  Quit to sign-off      Esc = Back",
 		"?  Show this help panel",
 		"",

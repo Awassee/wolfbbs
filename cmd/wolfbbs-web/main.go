@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -505,7 +506,7 @@ func main() {
 	startOptionalContentServers(runtimeCfg, storage.Boards, storage.Messages)
 
 	fmt.Printf("WolfBBS web companion on %s\n", *listen)
-	log.Fatal(http.ListenAndServe(*listen, nil))
+	log.Fatal(http.ListenAndServe(*listen, app.withModernUI(http.DefaultServeMux)))
 }
 
 func startOptionalContentServers(runtimeCfg config.Runtime, boardRepo repository.BoardRepository, msgRepo repository.MessageRepository) {
@@ -766,6 +767,334 @@ func (a *webApp) listMessagesByAuthor(userID int64) []domain.Message {
 		}
 	}
 	return out
+}
+
+const modernUIBootstrap = `<style id="wolfbbs-modern-ui">
+:root{
+  --bg:#f3f7fb;
+  --bg-alt:#e8eef7;
+  --surface:#ffffff;
+  --surface-2:#f8fbff;
+  --text:#0f1b2a;
+  --muted:#516173;
+  --line:#d9e3ef;
+  --accent:#0f4fa8;
+  --accent-strong:#09397a;
+  --ok:#157347;
+  --warn:#9a6700;
+  --danger:#a81f2f;
+  --shadow:0 12px 26px rgba(15,27,42,.10);
+  --radius:14px;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;
+  padding:28px 24px 40px;
+  color:var(--text);
+  font:15px/1.45 "Avenir Next","Segoe UI","Helvetica Neue",sans-serif;
+  background:
+    radial-gradient(1200px 340px at 10% -18%, #d7e6fb 0%, transparent 62%),
+    radial-gradient(1100px 260px at 88% -15%, #dbe8f8 0%, transparent 62%),
+    linear-gradient(180deg,var(--bg),var(--bg-alt));
+}
+h1,h2,h3{margin:0 0 10px;font-weight:700;line-height:1.2}
+h1{font-size:1.7rem;letter-spacing:.01em}
+h2{font-size:1.2rem}
+h3{font-size:1.02rem}
+p,ul,ol,table,form,section,article,pre{margin:0 0 14px}
+a{
+  color:var(--accent);
+  text-decoration:none;
+  text-underline-offset:2px;
+}
+a:hover{color:var(--accent-strong);text-decoration:underline}
+body > h1:first-of-type{
+  margin-bottom:14px;
+}
+body > p:first-of-type{
+  color:var(--muted);
+}
+body > p:has(> a){
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  align-items:center;
+  padding:10px 12px;
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:12px;
+  box-shadow:var(--shadow);
+}
+body > p:has(> a) a{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-height:32px;
+  padding:6px 12px;
+  border-radius:999px;
+  border:1px solid #c3d4ea;
+  background:#f5faff;
+  color:#0f3f83;
+  font-weight:600;
+  font-size:.92rem;
+  text-transform:lowercase;
+}
+body > p:has(> a) a:hover{
+  background:#eaf3ff;
+  border-color:#9cbce4;
+  text-decoration:none;
+}
+table{
+  width:100%;
+  border-collapse:separate;
+  border-spacing:0;
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:12px;
+  overflow:hidden;
+  box-shadow:var(--shadow);
+}
+th,td{
+  padding:10px 12px;
+  text-align:left;
+  border-bottom:1px solid #e7eef7;
+  vertical-align:top;
+}
+th{
+  background:#eef4fb;
+  color:#1e3551;
+  font-weight:700;
+  font-size:.87rem;
+  text-transform:uppercase;
+  letter-spacing:.04em;
+}
+tr:nth-child(even) td{background:#fbfdff}
+tr:last-child td{border-bottom:0}
+form{
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:12px;
+  padding:14px;
+  box-shadow:var(--shadow);
+}
+label{
+  display:inline-flex;
+  flex-direction:column;
+  gap:6px;
+  margin:0 10px 10px 0;
+  font-weight:600;
+  color:#2b4058;
+}
+input[type=text],input[type=password],input[type=email],input[type=number],input[type=url],input[type=search],select,textarea{
+  width:min(100%,520px);
+  min-height:38px;
+  border-radius:10px;
+  border:1px solid #bccde3;
+  background:#fff;
+  color:var(--text);
+  padding:8px 10px;
+  font:inherit;
+  transition:border-color .16s ease, box-shadow .16s ease;
+}
+textarea{min-height:110px;resize:vertical}
+input:focus,select:focus,textarea:focus{
+  outline:0;
+  border-color:#3c7fd5;
+  box-shadow:0 0 0 3px rgba(60,127,213,.17);
+}
+button,input[type=submit],input[type=button]{
+  border:0;
+  border-radius:10px;
+  min-height:36px;
+  padding:8px 14px;
+  cursor:pointer;
+  font:600 .95rem/1 "Avenir Next","Segoe UI","Helvetica Neue",sans-serif;
+  color:#fff;
+  background:linear-gradient(180deg,#2565c0,#0f4fa8);
+}
+button:hover,input[type=submit]:hover,input[type=button]:hover{
+  background:linear-gradient(180deg,#1a56aa,#093f88);
+}
+code,pre{
+  font-family:"SFMono-Regular","Menlo","Consolas",monospace;
+}
+pre{
+  padding:10px 12px;
+  border:1px solid var(--line);
+  border-radius:10px;
+  background:#f7fbff;
+  overflow:auto;
+}
+#chat{
+  border:1px solid #173456 !important;
+  border-radius:12px;
+  background:#0d1726;
+  color:#d9e6fb;
+  box-shadow:0 8px 20px rgba(5,10,18,.32);
+}
+#chat > div{
+  line-height:1.35;
+  padding:2px 4px;
+}
+#chatStatus{
+  color:#254f87 !important;
+  font-weight:600;
+}
+#mod{
+  margin-top:12px;
+}
+#mod form{
+  background:#f7fbff;
+  border-color:#bfd4ec;
+}
+hr{
+  border:0;
+  border-top:1px solid var(--line);
+  margin:16px 0;
+}
+@media (max-width: 820px){
+  body{padding:18px 14px 26px}
+  body > p:has(> a){padding:9px 10px}
+  input[type=text],input[type=password],input[type=email],input[type=number],input[type=url],input[type=search],select,textarea{
+    width:100%;
+  }
+}
+</style>
+<script id="wolfbbs-modern-ui-js">
+(() => {
+  if (document.documentElement.dataset.wolfbbsModernUi === "1") return;
+  document.documentElement.dataset.wolfbbsModernUi = "1";
+  const navRows = [...document.querySelectorAll("p")].filter((p) => p.querySelectorAll("a").length >= 3 && p.textContent.includes("|"));
+  navRows.forEach((row) => row.classList.add("wolfbbs-nav-row"));
+})();
+</script>`
+
+type htmlStyleWriter struct {
+	writer      http.ResponseWriter
+	header      http.Header
+	status      int
+	sent        bool
+	passthrough bool
+	body        bytes.Buffer
+}
+
+func newHTMLStyleWriter(w http.ResponseWriter) *htmlStyleWriter {
+	return &htmlStyleWriter{
+		writer: w,
+		header: make(http.Header),
+	}
+}
+
+func (w *htmlStyleWriter) Header() http.Header {
+	return w.header
+}
+
+func (w *htmlStyleWriter) WriteHeader(statusCode int) {
+	if w.status == 0 {
+		w.status = statusCode
+	}
+	if w.passthrough {
+		w.sendHeaders()
+	}
+}
+
+func (w *htmlStyleWriter) Write(data []byte) (int, error) {
+	if w.passthrough {
+		w.sendHeaders()
+		return w.writer.Write(data)
+	}
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.body.Write(data)
+}
+
+func (w *htmlStyleWriter) Flush() {
+	if !w.passthrough {
+		w.passthrough = true
+		w.sendHeaders()
+		if w.body.Len() > 0 {
+			_, _ = w.writer.Write(w.body.Bytes())
+			w.body.Reset()
+		}
+	}
+	if flusher, ok := w.writer.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *htmlStyleWriter) sendHeaders() {
+	if w.sent {
+		return
+	}
+	for key, values := range w.header {
+		target := w.writer.Header()
+		for _, value := range values {
+			target.Add(key, value)
+		}
+	}
+	status := w.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	w.writer.WriteHeader(status)
+	w.sent = true
+}
+
+func (a *webApp) withModernUI(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/chat/stream") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		writer := newHTMLStyleWriter(w)
+		next.ServeHTTP(writer, r)
+		if writer.passthrough {
+			return
+		}
+
+		body := writer.body.Bytes()
+		contentType := strings.ToLower(strings.TrimSpace(writer.header.Get("Content-Type")))
+		if shouldInjectModernUI(contentType, body) {
+			body = []byte(injectModernUI(string(body)))
+			writer.header.Del("Content-Length")
+		}
+
+		writer.sendHeaders()
+		if len(body) > 0 {
+			_, _ = w.Write(body)
+		}
+	})
+}
+
+func shouldInjectModernUI(contentType string, body []byte) bool {
+	if strings.Contains(contentType, "application/json") || strings.Contains(contentType, "text/event-stream") {
+		return false
+	}
+	if strings.Contains(contentType, "text/html") {
+		return true
+	}
+	trimmed := strings.ToLower(strings.TrimSpace(string(body)))
+	return strings.HasPrefix(trimmed, "<!doctype html") || strings.HasPrefix(trimmed, "<html")
+}
+
+func injectModernUI(page string) string {
+	if strings.Contains(page, `id="wolfbbs-modern-ui"`) {
+		return page
+	}
+	lower := strings.ToLower(page)
+	if idx := strings.Index(lower, "</head>"); idx >= 0 {
+		return page[:idx] + modernUIBootstrap + page[idx:]
+	}
+	if bodyIdx := strings.Index(lower, "<body"); bodyIdx >= 0 {
+		rest := lower[bodyIdx:]
+		if end := strings.Index(rest, ">"); end >= 0 {
+			insertAt := bodyIdx + end + 1
+			return page[:insertAt] + modernUIBootstrap + page[insertAt:]
+		}
+	}
+	return modernUIBootstrap + page
 }
 
 func (a *webApp) activityPubBase(r *http.Request) string {
@@ -4608,8 +4937,17 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 				if (el) el.textContent = msg;
 			}
 
+			function msgValue(m, primary, legacy, fallback) {
+				if (m && m[primary] !== undefined && m[primary] !== null && m[primary] !== '') return m[primary];
+				if (m && legacy && m[legacy] !== undefined && m[legacy] !== null && m[legacy] !== '') return m[legacy];
+				return fallback;
+			}
+
 			function formatLine(m) {
-				return '[' + m.created_at + '] ' + m.from + ': ' + m.body;
+				const stamp = msgValue(m, 'created_at', 'CreatedAt', '--:--:--');
+				const from = msgValue(m, 'from', 'From', 'system');
+				const body = msgValue(m, 'body', 'Body', '');
+				return '[' + stamp + '] ' + from + ': ' + body;
 			}
 
 			async function loadChannels() {

@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -68,6 +69,22 @@ const (
 	stateStatusCenter
 	stateExit
 )
+
+const (
+	appUpgradeCommandEnv = "WOLFBBS_APP_UPGRADE_COMMAND"
+	appUpgradeWorkDirEnv = "WOLFBBS_APP_UPGRADE_WORKDIR"
+	appUpgradeTimeoutEnv = "WOLFBBS_APP_UPGRADE_TIMEOUT_SECONDS"
+)
+
+var appUpgradeExec = func(ctx context.Context, command, workDir string, env []string) (string, error) {
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
+	if strings.TrimSpace(workDir) != "" {
+		cmd.Dir = workDir
+	}
+	cmd.Env = append([]string{}, env...)
+	out, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(out)), err
+}
 
 func New(address string, logger *slog.Logger, authSvc *auth.Service) *Server {
 	s := &Server{
@@ -583,7 +600,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 					touch()
 					break
 				}
-				io.WriteString(sess, "\r\nJump target (boards/mail/chat/gateway/doors/settings/last/who/status/config/newscan): ")
+				io.WriteString(sess, "\r\nJump target (boards/mail/chat/gateway/doors/settings/last/who/status/config/newscan/app-upgrade): ")
 				targetRaw, readErr := readLine(reader, 32)
 				if readErr != nil {
 					return
@@ -642,6 +659,8 @@ func (s *Server) handleSession(sess gssh.Session) {
 					state = stateConfigCenter
 				case "system.status_center":
 					state = stateStatusCenter
+				case "system.app_upgrade":
+					s.runAppUpgrade(sess, reader, currentUser, currentAccount, touch)
 				}
 			case "files.open":
 				if !evaluateAccess(strings.TrimSpace(os.Getenv("WOLFBBS_ACS_FILES_READ")), currentAccount, currentUser, map[string]string{"area": "files"}, acsStrict, s.logger) {
@@ -682,6 +701,8 @@ func (s *Server) handleSession(sess gssh.Session) {
 				io.WriteString(sess, "\r\nUse web admin at /admin for full sysop controls. Press any key.")
 				_, _ = readKey(reader)
 				touch()
+			case "system.app_upgrade":
+				s.runAppUpgrade(sess, reader, currentUser, currentAccount, touch)
 			case "":
 				if len(key) == 1 {
 					io.WriteString(sess, "\r\nUse a single-letter hotkey listed in the menu.\r\n")
@@ -1425,11 +1446,112 @@ func quickJumpToAction(raw string) string {
 		return "admin.open"
 	case "f", "files":
 		return "files.open"
+	case "u", "upgrade", "update", "app", "app-upgrade", "app upgrade", "/app", "/app upgrade":
+		return "system.app_upgrade"
 	case "q", "quit", "exit":
 		return "session.quit"
 	default:
 		return ""
 	}
+}
+
+func appUpgradeTimeout() time.Duration {
+	timeout := 15 * time.Minute
+	raw := strings.TrimSpace(os.Getenv(appUpgradeTimeoutEnv))
+	if raw == "" {
+		return timeout
+	}
+	seconds, err := strconv.Atoi(raw)
+	if err != nil || seconds < 15 || seconds > 3600 {
+		return timeout
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func executeAppUpgradeCommand(handle string) (string, error) {
+	command := strings.TrimSpace(os.Getenv(appUpgradeCommandEnv))
+	if command == "" {
+		return "", errors.New(appUpgradeCommandEnv + " is not configured")
+	}
+	timeout := appUpgradeTimeout()
+	workDir := strings.TrimSpace(os.Getenv(appUpgradeWorkDirEnv))
+	env := append(os.Environ(),
+		"WOLFBBS_UPGRADE_TRIGGER=ssh",
+		"WOLFBBS_UPGRADE_USER="+strings.TrimSpace(handle),
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	output, err := appUpgradeExec(ctx, command, workDir, env)
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return output, fmt.Errorf("upgrade timed out after %s", timeout)
+	}
+	if err != nil {
+		return output, fmt.Errorf("upgrade command failed: %w", err)
+	}
+	return output, nil
+}
+
+func limitCommandOutput(raw string, maxRunes int) string {
+	trimmed := strings.TrimSpace(strings.ReplaceAll(raw, "\r\n", "\n"))
+	if maxRunes <= 0 {
+		return trimmed
+	}
+	runes := []rune(trimmed)
+	if len(runes) <= maxRunes {
+		return trimmed
+	}
+	return string(runes[:maxRunes]) + "\n...[truncated]"
+}
+
+func (s *Server) runAppUpgrade(sess gssh.Session, reader *bufio.Reader, handle string, account *domain.User, touch func()) {
+	if touch == nil {
+		touch = func() {}
+	}
+	if !evaluateAccess("role=sysop", account, handle, map[string]string{"area": "system", "mode": "app_upgrade"}, true, s.logger) {
+		io.WriteString(sess, "\r\n/app upgrade is sysop-only. Press any key.")
+		_, _ = readKey(reader)
+		touch()
+		return
+	}
+	if strings.TrimSpace(os.Getenv(appUpgradeCommandEnv)) == "" {
+		io.WriteString(sess, "\r\nApp upgrade is not configured.")
+		io.WriteString(sess, "\r\nSet "+appUpgradeCommandEnv+" (example: bash install.sh --rapid-upgrade --yes).")
+		io.WriteString(sess, "\r\nPress any key.")
+		_, _ = readKey(reader)
+		touch()
+		return
+	}
+
+	io.WriteString(sess, "\r\nRun /app upgrade now? [y/N]: ")
+	answer, err := readLine(reader, 8)
+	if err != nil {
+		return
+	}
+	touch()
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	if answer != "y" && answer != "yes" {
+		io.WriteString(sess, "\r\nUpgrade canceled. Press any key.")
+		_, _ = readKey(reader)
+		touch()
+		return
+	}
+
+	io.WriteString(sess, "\r\nRunning upgrade command. Session may disconnect if services restart.\r\n")
+	output, runErr := executeAppUpgradeCommand(handle)
+	if output != "" {
+		io.WriteString(sess, "\r\nCommand output:\r\n")
+		io.WriteString(sess, strings.ReplaceAll(limitCommandOutput(output, 1600), "\n", "\r\n"))
+		io.WriteString(sess, "\r\n")
+	}
+	if runErr != nil {
+		io.WriteString(sess, "\r\nUpgrade failed: "+runErr.Error()+"\r\nPress any key.")
+		_, _ = readKey(reader)
+		touch()
+		return
+	}
+	io.WriteString(sess, "\r\nUpgrade command completed. Press any key.")
+	_, _ = readKey(reader)
+	touch()
 }
 
 func (s *Server) guestTourLines(time24h bool) []string {

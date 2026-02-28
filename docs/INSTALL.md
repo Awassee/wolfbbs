@@ -30,6 +30,12 @@ macOS:
 git clone https://github.com/seanheiney/wolfbbs.git wolfbbs && cd wolfbbs && bash install.sh --yes --install-brew
 ```
 
+Interactive menu mode (no flags):
+
+```bash
+git clone https://github.com/seanheiney/wolfbbs.git wolfbbs && cd wolfbbs && bash install.sh
+```
+
 If the repository is private and HTTPS clone fails, use SSH clone instead:
 
 ```bash
@@ -94,6 +100,8 @@ http://localhost:8080/admin/config
 
 ## Installer Flags
 
+When run without flags in an interactive terminal, `install.sh` opens an action menu (install, upgrade, repair, status, uninstall, etc.).
+
 - `--prefix <dir>`: install directory
   - Linux default: `/opt/wolfbbs`
   - macOS default: `$HOME/.local/share/wolfbbs`
@@ -121,6 +129,7 @@ http://localhost:8080/admin/config
 - `--repair`: self-heal install (ensure deps/env, rebuild, verify)
 - `--deps-only`: install/check prerequisites and Docker runtime only
 - `--upgrade`: pull/rebuild/restart stack in existing install
+- `--rapid-upgrade`: rebuild/restart from local source (no image pull) for fast iteration
 - `--uninstall`: stop services and optionally remove data
 - `--purge`: with uninstall, remove volumes/data
 - `--help`: show flag summary
@@ -181,6 +190,21 @@ Upgrade:
 bash install.sh --upgrade
 ```
 
+Rapid local upgrade (while iterating on code):
+
+```bash
+bash install.sh --rapid-upgrade
+```
+
+Optional in-BBS quick upgrade hook (sysop):
+
+```bash
+export WOLFBBS_APP_UPGRADE_COMMAND="bash install.sh --rapid-upgrade --yes"
+export WOLFBBS_APP_UPGRADE_WORKDIR="/path/to/wolfbbs"
+```
+
+Then in SSH main menu press `/` and enter `/app upgrade`.
+
 Uninstall (interactive):
 
 ```bash
@@ -192,6 +216,8 @@ Uninstall + purge (non-interactive):
 ```bash
 bash install.sh --uninstall --purge --yes
 ```
+
+Note: if install prefix is a git checkout, the installer now keeps that directory and only removes running services/volumes.
 
 ## Verify Running Services
 

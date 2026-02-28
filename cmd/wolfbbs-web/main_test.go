@@ -1239,6 +1239,102 @@ func TestWriteMessageEventWireSchema(t *testing.T) {
 	}
 }
 
+func TestWithModernUIInjectsStylesIntoHTML(t *testing.T) {
+	app := &webApp{}
+	handler := app.withModernUI(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<!doctype html><html><body><h1>Hello</h1></body></html>`))
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/boards", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `id="wolfbbs-modern-ui"`) {
+		t.Fatalf("expected modern UI styles to be injected, got %q", body)
+	}
+	if !strings.Contains(body, `<h1>Hello</h1>`) {
+		t.Fatalf("expected original content to remain, got %q", body)
+	}
+}
+
+func TestWithModernUIDoesNotTouchJSON(t *testing.T) {
+	app := &webApp{}
+	handler := app.withModernUI(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/statusz", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rr.Code)
+	}
+	if body := strings.TrimSpace(rr.Body.String()); body != `{"ok":true}` {
+		t.Fatalf("expected JSON body to be unchanged, got %q", body)
+	}
+}
+
+func TestWithModernUISkipsChatStreamPath(t *testing.T) {
+	app := &webApp{}
+	handler := app.withModernUI(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		if _, ok := w.(http.Flusher); !ok {
+			t.Fatal("expected flusher for stream response")
+		}
+		_, _ = w.Write([]byte("data: {\"from\":\"alice\",\"body\":\"hello\"}\n\n"))
+		w.(http.Flusher).Flush()
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/chat/stream?channel=%23lobby", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if strings.Contains(body, "wolfbbs-modern-ui") {
+		t.Fatalf("expected no style injection for stream endpoint, got %q", body)
+	}
+	if !strings.Contains(body, `"from":"alice"`) {
+		t.Fatalf("expected stream payload to pass through, got %q", body)
+	}
+}
+
+func TestHandleChatPageSupportsLegacyAndCurrentMessageKeys(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	if _, err := authSvc.Register("sysop", "password123"); err != nil {
+		t.Fatalf("register user: %v", err)
+	}
+	app := &webApp{
+		authSvc:  authSvc,
+		chatSvc:  chat.NewServiceForTest(),
+		sessions: map[string]sessionState{},
+	}
+	sessionID, ok := app.createSession("sysop")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+	req := httptest.NewRequest(http.MethodGet, "/chat", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sessionID})
+	rr := httptest.NewRecorder()
+	app.handleChat(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("chat page status = %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "msgValue(m, 'created_at', 'CreatedAt'") {
+		t.Fatalf("expected created_at fallback logic in chat page script, got %q", body)
+	}
+	if !strings.Contains(body, "msgValue(m, 'from', 'From'") {
+		t.Fatalf("expected from fallback logic in chat page script")
+	}
+	if !strings.Contains(body, "msgValue(m, 'body', 'Body'") {
+		t.Fatalf("expected body fallback logic in chat page script")
+	}
+}
+
 func TestHealthReadyMetricsHandlers(t *testing.T) {
 	userRepo := repository.NewInMemoryUserRepository()
 	app := &webApp{

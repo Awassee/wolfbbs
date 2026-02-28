@@ -37,6 +37,9 @@ func TestQuickJumpToAction(t *testing.T) {
 	if got := quickJumpToAction("config"); got != "system.config_center" {
 		t.Fatalf("expected system.config_center, got %q", got)
 	}
+	if got := quickJumpToAction("/app upgrade"); got != "system.app_upgrade" {
+		t.Fatalf("expected system.app_upgrade, got %q", got)
+	}
 	if got := quickJumpToAction("unknown"); got != "" {
 		t.Fatalf("expected empty action for unknown jump target, got %q", got)
 	}

@@ -14,6 +14,12 @@ git clone https://github.com/seanheiney/wolfbbs.git wolfbbs && cd wolfbbs && bas
 git clone https://github.com/seanheiney/wolfbbs.git wolfbbs && cd wolfbbs && bash install.sh --yes --install-brew
 ```
 
+## Easiest local flow (interactive menu)
+
+```bash
+git clone https://github.com/seanheiney/wolfbbs.git wolfbbs && cd wolfbbs && bash install.sh
+```
+
 Optional `curl|bash` (requires public raw URL access):
 
 ```bash
@@ -30,6 +36,10 @@ bash install.sh --stop        # stop services
 bash install.sh --restart     # restart services
 bash install.sh --logs        # tail recent logs
 bash install.sh --deps-only   # only install/check prerequisites
+bash install.sh --upgrade     # pull latest images and restart
+bash install.sh --rapid-upgrade # rebuild/restart local code changes
+bash install.sh --uninstall --purge --yes # clean uninstall for test cycles
+# optional: in SSH main menu use / then "/app upgrade" after setting WOLFBBS_APP_UPGRADE_COMMAND
 ```
 
 ## Install from local clone
