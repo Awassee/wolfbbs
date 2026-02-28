@@ -441,6 +441,11 @@ test("chat syncs between two web sessions in realtime", async ({ browser }) => {
       return bPage.locator("#chat").innerText();
     })
     .toContain("hello from playwright chat");
+  await expect
+    .poll(async () => {
+      return bPage.locator("#chat").innerText();
+    })
+    .not.toContain("[undefined] undefined: undefined");
 
   await bPage.reload();
   await expect
@@ -448,6 +453,24 @@ test("chat syncs between two web sessions in realtime", async ({ browser }) => {
       return bPage.locator("#chat").innerText();
     })
     .toContain("hello from playwright chat");
+  await expect
+    .poll(async () => {
+      return bPage.locator("#chat").innerText();
+    })
+    .not.toContain("[undefined] undefined: undefined");
+
+  const historyRes = await bPage.request.get("/chat/history?channel=%23lobby&limit=20");
+  expect(historyRes.status()).toBe(200);
+  const historyPayload = await historyRes.json();
+  const historyMessages = historyPayload.messages || [];
+  expect(historyMessages.length).toBeGreaterThan(0);
+  const latest = historyMessages[historyMessages.length - 1];
+  expect(latest.from).toBeDefined();
+  expect(latest.body).toBeDefined();
+  expect(latest.created_at).toBeDefined();
+  expect(latest.From).toBeUndefined();
+  expect(latest.Body).toBeUndefined();
+  expect(latest.CreatedAt).toBeUndefined();
   await aCtx.close();
   await bCtx.close();
 });
@@ -469,5 +492,10 @@ test("irc message is visible in web chat", async ({ browser }) => {
       return page.locator("#chat").innerText();
     })
     .toContain(marker);
+  await expect
+    .poll(async () => {
+      return page.locator("#chat").innerText();
+    })
+    .not.toContain("[undefined] undefined: undefined");
   await ctx.close();
 });

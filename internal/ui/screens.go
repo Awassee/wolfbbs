@@ -50,15 +50,14 @@ func RenderTopBarWithClock(width int, boardName, user string, now time.Time, nod
 func RenderWelcome(width int) string {
 	width = normalizeScreenWidth(width)
 	lines := []string{
-		" __      __      ______  ______  ____   ____   _____ ",
-		" \\ \\ /\\ / /___  / / __ )/ __ ) \\/ / /  / __ ) / ___/ ",
-		"  \\ V  V / __ \\/ / __  / __  |\\  / /  / __  | \\__ \\  ",
-		"   \\_/\\_/ /_/ / / /_/ / /_/ / / / /__/ /_/ / ___/ /  ",
-		"       \\____/_/_____/_____/ /_/\\____/_____/ /____/   ",
+		"                           /\\_/\\",
+		"                          / o o \\",
+		"                         (   \"   )",
+		"                          \\~(*)~/",
+		"                           // \\\\",
 		"",
+		"wolfbbs (c) 2026",
 		"Node-ready ANSI board with classic flow and modern plumbing.",
-		"Original art + text. Wildcat-era feel, not copied assets.",
-		"",
 		"Press ESC to quit, any other key to continue.",
 	}
 	panel := renderPanel(width, "WolfBBS Welcome", lines, FgYellow)
@@ -69,7 +68,7 @@ func RenderWelcome(width int) string {
 		b.WriteString(Reset)
 		b.WriteString("\r\n")
 	}
-	b.WriteString(FgGreen + CenterText(width, "Welcome back to the terminal frontier.") + Reset + "\r\n")
+	b.WriteString(FgGreen + CenterText(width, "wolfbbs (c) 2026") + Reset + "\r\n")
 	return b.String()
 }
 

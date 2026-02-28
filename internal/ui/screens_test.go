@@ -126,3 +126,17 @@ func TestRenderLoginPromptWithGuestToggle(t *testing.T) {
 		t.Fatalf("expected no guest tour hint when disabled")
 	}
 }
+
+func TestRenderWelcomeShowsWolfAndCopyright(t *testing.T) {
+	rendered := RenderWelcome(80)
+	for _, want := range []string{
+		"WolfBBS Welcome",
+		"/\\_/\\",
+		"wolfbbs (c) 2026",
+		"Press ESC to quit, any other key to continue.",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("welcome screen missing %q", want)
+		}
+	}
+}

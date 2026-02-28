@@ -1245,17 +1245,27 @@ func readKey(reader *bufio.Reader) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	switch ch {
-	case 0x1b:
+	readBufferedByte := func() (byte, bool) {
+		if reader.Buffered() == 0 {
+			return 0, false
+		}
 		next, err := reader.ReadByte()
 		if err != nil {
+			return 0, false
+		}
+		return next, true
+	}
+	switch ch {
+	case 0x1b:
+		next, ok := readBufferedByte()
+		if !ok {
 			return "ESC", nil
 		}
 		if next != '[' {
 			return "ESC", nil
 		}
-		next2, err := reader.ReadByte()
-		if err != nil {
+		next2, ok := readBufferedByte()
+		if !ok {
 			return "ESC", nil
 		}
 		switch next2 {
@@ -1272,22 +1282,37 @@ func readKey(reader *bufio.Reader) (string, error) {
 		case 'F':
 			return "END", nil
 		case '5':
-			p, _ := reader.ReadByte()
+			p, ok := readBufferedByte()
+			if !ok {
+				return "ESC", nil
+			}
 			if p == '~' {
 				return "PGUP", nil
 			}
 		case '6':
-			p, _ := reader.ReadByte()
+			p, ok := readBufferedByte()
+			if !ok {
+				return "ESC", nil
+			}
 			if p == '~' {
 				return "PGDN", nil
 			}
 		case '1':
-			mid, _ := reader.ReadByte()
+			mid, ok := readBufferedByte()
+			if !ok {
+				return "ESC", nil
+			}
 			if mid != ';' {
 				return "UNKNOWN", nil
 			}
-			tail, _ := reader.ReadByte()
-			next, _ := reader.ReadByte()
+			tail, ok := readBufferedByte()
+			if !ok {
+				return "ESC", nil
+			}
+			next, ok := readBufferedByte()
+			if !ok {
+				return "ESC", nil
+			}
 			if tail == '5' && next == '~' {
 				return "HOME", nil
 			}
@@ -1295,17 +1320,26 @@ func readKey(reader *bufio.Reader) (string, error) {
 				return "END", nil
 			}
 		case '3':
-			t, _ := reader.ReadByte()
+			t, ok := readBufferedByte()
+			if !ok {
+				return "ESC", nil
+			}
 			if t == '~' {
 				return "DEL", nil
 			}
 		case '4':
-			t, _ := reader.ReadByte()
+			t, ok := readBufferedByte()
+			if !ok {
+				return "ESC", nil
+			}
 			if t == '~' {
 				return "END", nil
 			}
 		case '2':
-			t, _ := reader.ReadByte()
+			t, ok := readBufferedByte()
+			if !ok {
+				return "ESC", nil
+			}
 			if t == '~' {
 				return "INSERT", nil
 			}

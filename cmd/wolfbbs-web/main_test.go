@@ -1169,6 +1169,28 @@ func TestChatHistoryAcrossTwoSessions(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("history status = %d", rr.Code)
 	}
+	var rawPayload map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &rawPayload); err != nil {
+		t.Fatalf("history raw decode: %v", err)
+	}
+	rawMsgs, ok := rawPayload["messages"].([]interface{})
+	if !ok || len(rawMsgs) == 0 {
+		t.Fatalf("expected messages array in raw payload, got %#v", rawPayload["messages"])
+	}
+	lastRaw, ok := rawMsgs[len(rawMsgs)-1].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected message object, got %#v", rawMsgs[len(rawMsgs)-1])
+	}
+	for _, key := range []string{"from", "body", "created_at", "channel"} {
+		if _, ok := lastRaw[key]; !ok {
+			t.Fatalf("missing wire key %q in message payload: %#v", key, lastRaw)
+		}
+	}
+	for _, key := range []string{"From", "Body", "CreatedAt", "Channel"} {
+		if _, ok := lastRaw[key]; ok {
+			t.Fatalf("unexpected Go struct field key %q leaked into payload: %#v", key, lastRaw)
+		}
+	}
 	var payload chatHistoryResponse
 	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("history decode: %v", err)
@@ -1179,6 +1201,41 @@ func TestChatHistoryAcrossTwoSessions(t *testing.T) {
 	last := payload.Messages[len(payload.Messages)-1]
 	if last.From != "alice" || last.Body != "hello from alice" {
 		t.Fatalf("unexpected last message: %+v", last)
+	}
+}
+
+func TestWriteMessageEventWireSchema(t *testing.T) {
+	rr := httptest.NewRecorder()
+	msg := chat.Message{
+		ID:        11,
+		Channel:   "#lobby",
+		From:      "alice",
+		Body:      "wire schema check",
+		CreatedAt: time.Date(2026, 2, 28, 13, 21, 22, 0, time.UTC),
+	}
+	if err := writeMessageEvent(rr, msg); err != nil {
+		t.Fatalf("writeMessageEvent: %v", err)
+	}
+	body := rr.Body.String()
+	if !strings.HasPrefix(body, "data: ") {
+		t.Fatalf("expected SSE data prefix, got %q", body)
+	}
+	raw := strings.TrimSpace(strings.TrimPrefix(body, "data: "))
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		t.Fatalf("decode SSE payload: %v", err)
+	}
+	if payload["from"] != "alice" {
+		t.Fatalf("expected from=alice, got %#v", payload["from"])
+	}
+	if payload["body"] != "wire schema check" {
+		t.Fatalf("expected body value, got %#v", payload["body"])
+	}
+	if payload["created_at"] != "13:21:22" {
+		t.Fatalf("expected created_at=13:21:22, got %#v", payload["created_at"])
+	}
+	if _, ok := payload["From"]; ok {
+		t.Fatalf("unexpected Go struct field key leaked into SSE payload: %#v", payload)
 	}
 }
 

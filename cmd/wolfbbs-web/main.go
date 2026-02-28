@@ -55,10 +55,19 @@ type mailRow struct {
 }
 
 type chatHistoryResponse struct {
-	Channel  string          `json:"channel"`
-	Messages []chat.Message  `json:"messages"`
-	Online   []chat.Presence `json:"online,omitempty"`
-	LastID   int64           `json:"last_id"`
+	Channel  string                `json:"channel"`
+	Messages []chatMessageResponse `json:"messages"`
+	Online   []chat.Presence       `json:"online,omitempty"`
+	LastID   int64                 `json:"last_id"`
+}
+
+type chatMessageResponse struct {
+	ID        int64  `json:"id"`
+	From      string `json:"from"`
+	Body      string `json:"body"`
+	CreatedAt string `json:"created_at"`
+	Channel   string `json:"channel"`
+	To        string `json:"to,omitempty"`
 }
 
 type chatModerationPayload struct {
@@ -4860,14 +4869,7 @@ func (a *webApp) handleChatStream(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeMessageEvent(w http.ResponseWriter, msg chat.Message) error {
-	payload, err := json.Marshal(map[string]interface{}{
-		"id":         msg.ID,
-		"from":       msg.From,
-		"body":       msg.Body,
-		"created_at": msg.CreatedAt.Format("15:04:05"),
-		"channel":    msg.Channel,
-		"to":         msg.To,
-	})
+	payload, err := json.Marshal(encodeChatMessage(msg))
 	if err != nil {
 		return err
 	}
@@ -4879,6 +4881,17 @@ func writeMessageEvent(w http.ResponseWriter, msg chat.Message) error {
 	}
 	_, err = w.Write([]byte("\n\n"))
 	return err
+}
+
+func encodeChatMessage(msg chat.Message) chatMessageResponse {
+	return chatMessageResponse{
+		ID:        msg.ID,
+		From:      msg.From,
+		Body:      msg.Body,
+		CreatedAt: msg.CreatedAt.Format("15:04:05"),
+		Channel:   msg.Channel,
+		To:        msg.To,
+	}
 }
 
 func (a *webApp) handleChatChannels(w http.ResponseWriter, r *http.Request) {
@@ -4974,6 +4987,10 @@ func (a *webApp) handleChatHistory(w http.ResponseWriter, r *http.Request) {
 	} else {
 		msgs = a.chatSvc.History(channel, limit)
 	}
+	encoded := make([]chatMessageResponse, 0, len(msgs))
+	for _, msg := range msgs {
+		encoded = append(encoded, encodeChatMessage(msg))
+	}
 	var last int64
 	if len(msgs) > 0 {
 		last = msgs[len(msgs)-1].ID
@@ -4981,7 +4998,7 @@ func (a *webApp) handleChatHistory(w http.ResponseWriter, r *http.Request) {
 	presence := a.chatSvc.OnlineInChannel(channel)
 	_ = writeJSON(w, http.StatusOK, chatHistoryResponse{
 		Channel:  channel,
-		Messages: msgs,
+		Messages: encoded,
 		Online:   presence,
 		LastID:   last,
 	})
