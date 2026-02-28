@@ -49,7 +49,12 @@ WORK_DIR="${SCRIPT_PATH}"
 PURGE=false
 ENV_FILE=""
 DOCKER_BIN="docker"
-bootstrap_handle=""
+BOOTSTRAP_ADMIN_HANDLE=""
+BOOTSTRAP_ADMIN_PASSWORD=""
+ENV_CREATED_THIS_RUN=false
+SETUP_WIZARD_RAN=false
+WIZARD_BOOTSTRAP_ADMIN_HANDLE=""
+WIZARD_BOOTSTRAP_ADMIN_PASSWORD=""
 
 init_log_file() {
   local candidate=""
@@ -73,6 +78,178 @@ init_log_file() {
   done
   echo "Unable to create installer log file in any standard location."
   exit 1
+}
+
+supports_color() {
+  if [[ -n "${NO_COLOR:-}" ]]; then
+    return 1
+  fi
+  if [[ ! -t 1 ]]; then
+    return 1
+  fi
+  if ! command -v tput >/dev/null 2>&1; then
+    return 1
+  fi
+  local colors
+  colors="$(tput colors 2>/dev/null || echo 0)"
+  [[ "${colors:-0}" -ge 8 ]]
+}
+
+print_splash() {
+  local c1=""
+  local c2=""
+  local c3=""
+  local dim=""
+  local reset=""
+
+  if supports_color; then
+    c1=$'\033[1;36m'
+    c2=$'\033[1;34m'
+    c3=$'\033[1;33m'
+    dim=$'\033[2m'
+    reset=$'\033[0m'
+  fi
+
+  printf '\n'
+  printf '%b\n' "${c1} __          __   _  __ ____  ____   ____   ____${reset}"
+  printf '%b\n' "${c1} \\ \\        / /__| |/ // __ )| __ ) / ___| / ___|${reset}"
+  printf '%b\n' "${c2}  \\ \\  /\\  / / _ \\ ' /|  _ \\|  _ \\ \\___ \\ \\___ \\${reset}"
+  printf '%b\n' "${c2}   \\ \\/  \\/ /  __/ . \\| |_) | |_) | ___) | ___) |${reset}"
+  printf '%b\n' "${c3}    \\__/\\__/ \\___|_|\\_\\____/|____/ |____/ |____/${reset}"
+  printf '%b\n' "${dim}            WolfBBS Installer • ANSI soul, modern ops${reset}"
+  printf '\n'
+}
+
+read_env_value() {
+  local key="$1"
+  local file_path="$2"
+  if [[ ! -f "$file_path" ]]; then
+    return 0
+  fi
+  awk -F= -v lookup="$key" '$1 == lookup {sub(/^[^=]*=/, "", $0); print; exit}' "$file_path"
+}
+
+run_setup_wizard() {
+  if [[ "$SETUP_WIZARD_RAN" == "true" ]]; then
+    return
+  fi
+  if [[ "$NON_INTERACTIVE" == "true" || "$DRY_RUN" == "true" ]]; then
+    return
+  fi
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    return
+  fi
+
+  SETUP_WIZARD_RAN=true
+
+  local handle_input=""
+  local handle_candidate="sysop"
+  local password_mode="Y"
+  local password_one=""
+  local password_two=""
+
+  echo "┌──────────────────────────────────────────────────────────────┐"
+  echo "│ WolfBBS First-Run Setup Wizard                              │"
+  echo "│ Configure bootstrap SYSOP credentials for your first login. │"
+  echo "└──────────────────────────────────────────────────────────────┘"
+  echo
+  read -r -p "SYSOP handle [sysop]: " handle_input
+  if [[ -n "$handle_input" ]]; then
+    handle_candidate="$handle_input"
+  fi
+  if [[ "$handle_candidate" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{1,31}$ ]]; then
+    WIZARD_BOOTSTRAP_ADMIN_HANDLE="$handle_candidate"
+  else
+    echo "Invalid handle format. Using default: sysop"
+    WIZARD_BOOTSTRAP_ADMIN_HANDLE="sysop"
+  fi
+
+  read -r -p "Generate a random SYSOP password? [Y/n]: " password_mode
+  if [[ "$password_mode" =~ ^[Nn]$ ]]; then
+    while true; do
+      read -r -s -p "Enter SYSOP password: " password_one
+      echo
+      read -r -s -p "Confirm SYSOP password: " password_two
+      echo
+      if [[ -z "$password_one" ]]; then
+        echo "Password cannot be empty."
+        continue
+      fi
+      if [[ "$password_one" != "$password_two" ]]; then
+        echo "Passwords do not match. Try again."
+        continue
+      fi
+      WIZARD_BOOTSTRAP_ADMIN_PASSWORD="$password_one"
+      break
+    done
+  fi
+
+  echo
+  echo "Wizard summary:"
+  echo "  SYSOP handle: ${WIZARD_BOOTSTRAP_ADMIN_HANDLE}"
+  if [[ -n "$WIZARD_BOOTSTRAP_ADMIN_PASSWORD" ]]; then
+    echo "  SYSOP password: custom (hidden)"
+  else
+    echo "  SYSOP password: auto-generated"
+  fi
+  echo
+}
+
+print_first_login_wizard() {
+  local host="${1:-localhost}"
+  local admin_handle="$BOOTSTRAP_ADMIN_HANDLE"
+  local admin_password="$BOOTSTRAP_ADMIN_PASSWORD"
+  local admin_login_url="http://${host}:${WEB_PORT}/admin/login"
+  local admin_setup_url="http://${host}:${WEB_PORT}/admin/setup"
+  local admin_system_url="http://${host}:${WEB_PORT}/admin/system"
+
+  if [[ -z "$admin_handle" && -f "$ENV_FILE" ]]; then
+    admin_handle="$(read_env_value "WOLFBBS_BOOTSTRAP_ADMIN_HANDLE" "$ENV_FILE")"
+  fi
+  if [[ -z "$admin_password" && -f "$ENV_FILE" ]]; then
+    admin_password="$(read_env_value "WOLFBBS_BOOTSTRAP_ADMIN_PASSWORD" "$ENV_FILE")"
+  fi
+
+  echo
+  echo "=================== First Login Wizard ==================="
+  echo "1) Log in to SYSOP web panel:"
+  echo "   URL: ${admin_login_url}"
+  echo "   Handle: ${admin_handle:-sysop}"
+  if [[ "$DRY_RUN" == "true" ]]; then
+    echo "   Password: will be generated/stored in ${ENV_FILE} on real install"
+  elif [[ "$ENV_CREATED_THIS_RUN" == "true" && -n "$admin_password" ]]; then
+    echo "   Password: ${admin_password}"
+  else
+    echo "   Password: stored in ${ENV_FILE}"
+    if [[ -n "$ENV_FILE" ]]; then
+      echo "   View password: grep '^WOLFBBS_BOOTSTRAP_ADMIN_PASSWORD=' '${ENV_FILE}' | cut -d= -f2-"
+    fi
+  fi
+  echo
+  echo "2) Complete initial SYSOP setup:"
+  echo "   - Open ${admin_setup_url}"
+  echo "   - Confirm health checks and baseline config"
+  echo "   - Change bootstrap password after first login"
+  echo
+  echo "3) Verify caller access paths:"
+  echo "   - SSH BBS: ssh ${host} -p ${SSH_PORT}"
+  echo "   - Web Chat: http://${host}:${WEB_PORT}/chat"
+  echo "   - IRC: ${host}:${IRC_PORT}"
+  echo
+  echo "4) Check runtime status dashboard:"
+  echo "   - ${admin_system_url}"
+  echo "=========================================================="
+  echo
+}
+
+print_install_summary() {
+  echo "WolfBBS installation complete."
+  echo "SSH: ssh localhost -p ${SSH_PORT}"
+  echo "Web Admin: http://localhost:${WEB_PORT}/admin"
+  echo "Web Chat: http://localhost:${WEB_PORT}/chat"
+  echo "IRC: localhost:${IRC_PORT} (TLS: ${IRC_TLS_PORT})"
+  echo "Mail Ingest: http://localhost:${MAILIN_PORT}/ingest"
+  print_first_login_wizard "localhost"
 }
 
 usage() {
@@ -923,15 +1100,12 @@ ensure_compose_file() {
 write_env_file() {
   ENV_FILE="${PREFIX}/.env"
   local db_pass db_user db_name db_seed bootstrap_admin_handle bootstrap_admin_password
-  db_user="wolfbbs"
-  db_name="wolfbbs"
-  db_pass="$(random_secret)"
-  db_seed="$(random_secret)"
-  bootstrap_admin_handle="sysop"
-  bootstrap_admin_password="$(random_secret)"
 
   if [[ -f "$ENV_FILE" && "$FORCE" != "true" ]]; then
     log "Using existing env file: $ENV_FILE"
+    ENV_CREATED_THIS_RUN=false
+    BOOTSTRAP_ADMIN_HANDLE="$(read_env_value "WOLFBBS_BOOTSTRAP_ADMIN_HANDLE" "$ENV_FILE")"
+    BOOTSTRAP_ADMIN_PASSWORD="$(read_env_value "WOLFBBS_BOOTSTRAP_ADMIN_PASSWORD" "$ENV_FILE")"
     return
   fi
   if [[ "$DRY_RUN" == "true" ]]; then
@@ -941,9 +1115,28 @@ write_env_file() {
   if [[ -f "$ENV_FILE" && "$FORCE" == "true" ]]; then
     if ! confirm "Overwrite existing env file at ${ENV_FILE}?"; then
       log "Keeping existing env file."
+      ENV_CREATED_THIS_RUN=false
+      BOOTSTRAP_ADMIN_HANDLE="$(read_env_value "WOLFBBS_BOOTSTRAP_ADMIN_HANDLE" "$ENV_FILE")"
+      BOOTSTRAP_ADMIN_PASSWORD="$(read_env_value "WOLFBBS_BOOTSTRAP_ADMIN_PASSWORD" "$ENV_FILE")"
       return
     fi
   fi
+
+  db_user="wolfbbs"
+  db_name="wolfbbs"
+  db_pass="$(random_secret)"
+  db_seed="$(random_secret)"
+  bootstrap_admin_handle="${WOLFBBS_BOOTSTRAP_ADMIN_HANDLE:-sysop}"
+  bootstrap_admin_password="${WOLFBBS_BOOTSTRAP_ADMIN_PASSWORD:-$(random_secret)}"
+
+  run_setup_wizard
+  if [[ -n "$WIZARD_BOOTSTRAP_ADMIN_HANDLE" ]]; then
+    bootstrap_admin_handle="$WIZARD_BOOTSTRAP_ADMIN_HANDLE"
+  fi
+  if [[ -n "$WIZARD_BOOTSTRAP_ADMIN_PASSWORD" ]]; then
+    bootstrap_admin_password="$WIZARD_BOOTSTRAP_ADMIN_PASSWORD"
+  fi
+
   cat > "$ENV_FILE" <<EOF
 WOLFBBS_DATABASE_URL=postgres://$db_user:$db_pass@postgres:5432/$db_name?sslmode=disable
 POSTGRES_USER=$db_user
@@ -969,6 +1162,9 @@ WOLFBBS_BOOTSTRAP_USER_PASSWORD=
 EOF
   chmod 600 "$ENV_FILE"
   log "Wrote ${ENV_FILE}"
+  ENV_CREATED_THIS_RUN=true
+  BOOTSTRAP_ADMIN_HANDLE="$bootstrap_admin_handle"
+  BOOTSTRAP_ADMIN_PASSWORD="$bootstrap_admin_password"
 }
 
 docker_compose_up() {
@@ -1469,6 +1665,7 @@ main() {
   detect_package_manager
   check_macos_prereqs
   init_log_file
+  print_splash
 
   if [[ "$DOCTOR" == "true" ]]; then
     doctor_report
@@ -1661,19 +1858,7 @@ main() {
   docker_compose_up
   verify_install
 
-  echo "WolfBBS installation complete."
-  echo "SSH: ssh localhost -p ${SSH_PORT}"
-  echo "Web: http://localhost:${WEB_PORT}/admin"
-  echo "Web Chat: http://localhost:${WEB_PORT}/chat"
-  echo "IRC: localhost:${IRC_PORT} (TLS: ${IRC_TLS_PORT})"
-  echo "Mail Ingest: http://localhost:${MAILIN_PORT}/ingest"
-  if [[ -f "$ENV_FILE" ]]; then
-    bootstrap_handle="$(grep '^WOLFBBS_BOOTSTRAP_ADMIN_HANDLE=' "$ENV_FILE" | head -n1 | cut -d= -f2-)"
-    if [[ -n "$bootstrap_handle" ]]; then
-      echo "Bootstrap sysop handle: ${bootstrap_handle}"
-      echo "Bootstrap sysop password is stored in ${ENV_FILE}"
-    fi
-  fi
+  print_install_summary
 }
 
 main "$@"

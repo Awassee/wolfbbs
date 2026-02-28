@@ -255,6 +255,12 @@ Manual acceptance checklist and report:
 scripts/manual-acceptance.sh --guided
 ```
 
+Installer setup wizard:
+
+- Interactive installs now show a first-run setup wizard to set bootstrap `sysop` handle/password before writing `.env`.
+- After install, the script prints a "First Login Wizard" block with exact URLs and commands for `/admin/login`, `/admin/setup`, SSH, chat, and runtime status.
+- Non-interactive installs (`--yes`) skip prompts and auto-generate bootstrap credentials, then print where to retrieve them.
+
 First sysop pass (recommended):
 
 - Sign in to `/admin/login` with bootstrap sysop credentials from `.env`.

@@ -342,6 +342,86 @@ test("admin journey enforces RBAC and exposes sysop pages", async ({ browser }) 
   await adminCtx.close();
 });
 
+test("sysop setup/files/doors/system surfaces and actions stay healthy", async ({ browser }) => {
+  const adminCtx = await browser.newContext();
+  const adminPage = await adminCtx.newPage();
+  await login(adminPage, ADMIN_HANDLE, ADMIN_PASSWORD, "/admin/login");
+  await expect(adminPage).toHaveURL(/\/admin$/);
+
+  const runID = Date.now().toString(36);
+  const areaName = `qa-area-${runID.slice(-6)}`;
+  const areaPath = `.wolfbbs/files/${areaName}`;
+
+  await adminPage.goto("/admin/setup");
+  await expect(adminPage.locator("h1")).toContainText("Setup & Install");
+  let csrf = await csrfFrom(adminPage);
+  await postForm(adminPage, "/admin/setup", { csrf_token: csrf, action: "seed_default_boards" });
+  await postForm(adminPage, "/admin/setup", { csrf_token: csrf, action: "ensure_mailbot" });
+
+  await adminPage.goto("/admin/files");
+  await expect(adminPage.locator("h1")).toContainText("Files");
+  csrf = await csrfFrom(adminPage);
+  await postForm(adminPage, "/admin/files", {
+    csrf_token: csrf,
+    action: "create",
+    name: areaName,
+    path: areaPath,
+    description: "qa functional area",
+  });
+  await adminPage.goto("/admin/files");
+  const createdAreaRow = adminPage.locator("tr", { hasText: areaName }).first();
+  await expect(createdAreaRow).toBeVisible();
+  const createdAreaID = await createdAreaRow.locator('input[name="id"]').first().inputValue();
+  csrf = await csrfFrom(adminPage);
+  await postForm(adminPage, "/admin/files", {
+    csrf_token: csrf,
+    action: "delete",
+    id: createdAreaID,
+  });
+
+  await adminPage.goto("/admin/doors");
+  await expect(adminPage.locator("h1")).toContainText("Doors Admin");
+  const firstDoorID = await adminPage.locator('input[name="door_id"]').first().inputValue();
+  expect(firstDoorID).toBeTruthy();
+  csrf = await csrfFrom(adminPage);
+  await postForm(adminPage, "/admin/doors", {
+    csrf_token: csrf,
+    action: "save_config",
+    door_id: firstDoorID,
+    enabled: "on",
+    daily_turns: "40",
+    time_bank_max: "200",
+    reset_hour: "0",
+    messages_days: "30",
+    logs_days: "30",
+    max_run_seconds: "180",
+    max_output_rate: "8192",
+    allow_network: "on",
+  });
+  await postForm(adminPage, "/admin/doors", {
+    csrf_token: csrf,
+    action: "reset_scores",
+    door_id: firstDoorID,
+  });
+
+  await adminPage.goto("/admin/errors");
+  await expect(adminPage.locator("h1")).toContainText("Runtime Error Log");
+
+  const nodeState = await adminPage.request.get("/admin/node-state");
+  expect(nodeState.status()).toBe(200);
+  const nodeStateJSON = await nodeState.json();
+  expect(nodeStateJSON).toHaveProperty("node_sessions");
+  expect(nodeStateJSON).toHaveProperty("caller_history");
+
+  await adminPage.goto("/admin/audit");
+  await expect(adminPage.locator("h1")).toContainText("Admin Audit Log");
+  await expect(adminPage.locator("body")).toContainText("seed_default_boards");
+  await expect(adminPage.locator("body")).toContainText("create_file_area");
+  await expect(adminPage.locator("body")).toContainText("door_save_config");
+
+  await adminCtx.close();
+});
+
 test("chat syncs between two web sessions in realtime", async ({ browser }) => {
   const aCtx = await browser.newContext();
   const bCtx = await browser.newContext();

@@ -125,18 +125,34 @@ def spawn_ssh(port: int) -> pexpect.spawn:
         "-o StrictHostKeyChecking=no "
         "-o UserKnownHostsFile=/dev/null "
         "-o LogLevel=ERROR "
+        "-o PreferredAuthentications=password "
+        "-o PubkeyAuthentication=no "
+        "-o NumberOfPasswordPrompts=1 "
+        "-o ConnectTimeout=10 "
         f"-p {port} localhost"
     )
     child = pexpect.spawn(cmd, cwd=str(ROOT), encoding="utf-8", timeout=25)
     idx = child.expect(
         [
             "Press any key to continue",
+            "any other key to continue",
+            "Handle:",
             r"[Pp]assword:",
         ]
     )
-    if idx == 1:
+    if idx == 2:
+        return child
+    if idx == 3:
         child.sendline("wolfbbs")
-        child.expect("Press any key to continue")
+        idx = child.expect(
+            [
+                "Press any key to continue",
+                "any other key to continue",
+                "Handle:",
+            ]
+        )
+        if idx == 2:
+            return child
     child.send("x")
     child.expect("Handle:")
     return child
@@ -175,6 +191,66 @@ def run_regular_user_flow(port: int) -> None:
     child = spawn_ssh(port)
     try:
         complete_login(child, "e2eadmin", "password123", create_if_missing=True)
+        child.send("?")
+        child.expect("Main Menu Key Guide")
+        child.send("x")
+        child.expect("Enter selection:")
+
+        child.send("N")
+        child.expect("Newscan Digest")
+        child.send("x")
+        child.expect("Enter selection:")
+
+        child.send("M")
+        child.expect("Select board ID")
+        child.sendline("Q")
+        child.expect("Enter selection:")
+
+        child.send("P")
+        child.expect("Private Mail")
+        child.sendline("Q")
+        child.expect("Enter selection:")
+
+        child.send("F")
+        child.expect("Files")
+        child.sendline("Q")
+        child.expect("Enter selection:")
+
+        child.send("C")
+        child.expect("Live Chat")
+        child.send("Q")
+        child.expect("Enter selection:")
+
+        child.send("G")
+        child.expect("Gateway Menu")
+        child.send("Q")
+        child.expect("Enter selection:")
+
+        child.send("D")
+        child.expect("Door Hub")
+        child.send("R")
+        child.expect("Enter selection:")
+
+        child.send("L")
+        child.expect("Last Callers")
+        child.send("x")
+        child.expect("Enter selection:")
+
+        child.send("W")
+        child.expect("Who's Online")
+        child.send("x")
+        child.expect("Enter selection:")
+
+        child.send("S")
+        child.expect("MCI Preferences")
+        child.send("Q")
+        child.expect("Enter selection:")
+
+        child.send("A")
+        child.expect("Admin access denied. Press any key.")
+        child.send("x")
+        child.expect("Enter selection:")
+
         child.send("Y")
         child.expect("Status Center")
         child.expect("Quick jump state")
