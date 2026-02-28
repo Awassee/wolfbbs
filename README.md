@@ -5,19 +5,19 @@ WolfBBS is an SSH-first BBS with a Wildcat-inspired ANSI/TUI flow, web admin/cha
 ## Quick install (Linux)
 
 ```bash
-git clone https://github.com/seanheiney/New-project.git wolfbbs && cd wolfbbs && bash install.sh --yes
+git clone https://github.com/seanheiney/wolfbbs.git wolfbbs && cd wolfbbs && bash install.sh --yes
 ```
 
 ## Quick install (macOS)
 
 ```bash
-git clone https://github.com/seanheiney/New-project.git wolfbbs && cd wolfbbs && bash install.sh --yes --install-brew
+git clone https://github.com/seanheiney/wolfbbs.git wolfbbs && cd wolfbbs && bash install.sh --yes --install-brew
 ```
 
 Optional `curl|bash` (requires public raw URL access):
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/seanheiney/New-project/main/install.sh" | bash -s -- --yes
+curl -fsSL "https://raw.githubusercontent.com/seanheiney/wolfbbs/main/install.sh" | bash -s -- --yes
 ```
 
 Easy-button self-heal / manage commands:
@@ -38,6 +38,10 @@ bash install.sh --deps-only   # only install/check prerequisites
 bash install.sh --with-docker
 ```
 
+After install, do all board setup/config in the UI:
+- `/admin/setup` for basic/critical/expert setup profile
+- `/admin/config` for identity, text, safety, and runtime flags
+
 ## Preflight doctor (no changes)
 
 ```bash
@@ -45,6 +49,8 @@ bash install.sh --doctor
 ```
 
 ## Connect
+
+The installer prints connect commands using your configured `WOLFBBS_HOSTNAME`.
 
 - SSH: `ssh localhost -p 2222`
 - Web Admin: `http://localhost:8080/admin`
@@ -64,6 +70,16 @@ go test ./...
 go build ./...
 scripts/verify.sh --fast
 scripts/run-e2e.sh
+```
+
+If disk is tight or browsers are already installed:
+
+```bash
+# skip npm/browser setup when already warm
+WOLFBBS_SKIP_NPM_INSTALL=true WOLFBBS_SKIP_BROWSER_INSTALL=true scripts/run-e2e.sh --no-go --no-tui
+
+# or run web checks with a larger preflight threshold override (MB)
+WOLFBBS_WEB_E2E_MIN_FREE_MB=800 scripts/run-e2e.sh --no-go --no-tui
 ```
 
 One-command build/QA runner:

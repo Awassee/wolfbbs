@@ -8,6 +8,12 @@ This file is the single source of truth for runtime configuration knobs used by 
 - Shared internals: auth/chat/repository/runtime config loaders
 - Installer-generated settings: `install.sh` and `.env`
 
+## Installer Profile and Identity
+
+- `WOLFBBS_SETUP_PROFILE` (default `basic`): installer profile (`basic`, `critical`, `expert`).
+- `WOLFBBS_BBS_NAME` (default `WolfBBS`): BBS name shown in install/status summaries and intended runtime identity.
+- `WOLFBBS_HOSTNAME` (default detected host, fallback `localhost`): host used by installer connect instructions.
+
 ## Core Service and Port Settings
 
 - `WOLFBBS_SSH_PORT` (default `2222`): SSH BBS published port in compose/installer outputs.
@@ -42,6 +48,7 @@ This file is the single source of truth for runtime configuration knobs used by 
 - `WOLFBBS_SESSION_SECRET`: session secret used by service config/installer.
 - `WOLFBBS_SECURE_COOKIE` (default `false`): set `true` behind HTTPS to mark auth cookie `Secure`.
 - `WOLFBBS_READ_ONLY` (default `false`): blocks mutating admin actions.
+- `WOLFBBS_REQUIRE_VERIFIED_EMAIL` (default `true`): require verified user state before allowing outbound external email.
 
 ## Bootstrap Accounts
 

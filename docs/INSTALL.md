@@ -21,19 +21,19 @@
 Linux:
 
 ```bash
-git clone https://github.com/seanheiney/New-project.git wolfbbs && cd wolfbbs && bash install.sh --yes
+git clone https://github.com/seanheiney/wolfbbs.git wolfbbs && cd wolfbbs && bash install.sh --yes
 ```
 
 macOS:
 
 ```bash
-git clone https://github.com/seanheiney/New-project.git wolfbbs && cd wolfbbs && bash install.sh --yes --install-brew
+git clone https://github.com/seanheiney/wolfbbs.git wolfbbs && cd wolfbbs && bash install.sh --yes --install-brew
 ```
 
 If the repository is private and HTTPS clone fails, use SSH clone instead:
 
 ```bash
-git clone git@github.com:seanheiney/New-project.git wolfbbs && cd wolfbbs && bash install.sh --yes
+git clone git@github.com:seanheiney/wolfbbs.git wolfbbs && cd wolfbbs && bash install.sh --yes
 ```
 
 ## Optional Quick Install (`curl | bash`)
@@ -41,25 +41,25 @@ git clone git@github.com:seanheiney/New-project.git wolfbbs && cd wolfbbs && bas
 Use this only when the repo's raw GitHub URL is publicly reachable:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/seanheiney/New-project/main/install.sh" | bash -s -- --yes
+curl -fsSL "https://raw.githubusercontent.com/seanheiney/wolfbbs/main/install.sh" | bash -s -- --yes
 ```
 
 macOS variant:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/seanheiney/New-project/main/install.sh" | bash -s -- --yes --install-brew
+curl -fsSL "https://raw.githubusercontent.com/seanheiney/wolfbbs/main/install.sh" | bash -s -- --yes --install-brew
 ```
 
 Dry-run preflight:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/seanheiney/New-project/main/install.sh" | bash -s -- --yes --install-brew --dry-run
+curl -fsSL "https://raw.githubusercontent.com/seanheiney/wolfbbs/main/install.sh" | bash -s -- --yes --install-brew --dry-run
 ```
 
 Install from a fork/custom repository:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/seanheiney/New-project/main/install.sh" | bash -s -- --yes --repo your-org/your-repo
+curl -fsSL "https://raw.githubusercontent.com/seanheiney/wolfbbs/main/install.sh" | bash -s -- --yes --repo your-org/your-repo
 ```
 
 ## Install From Local Clone
@@ -67,6 +67,13 @@ curl -fsSL "https://raw.githubusercontent.com/seanheiney/New-project/main/instal
 ```bash
 cd /path/to/wolfbbs
 bash install.sh --with-docker --ssh-port 2222 --web-port 8080 --irc-port 6667
+```
+
+UI-first setup (recommended): complete identity/profile/runtime config in the product after install:
+
+```bash
+http://localhost:8080/admin/setup
+http://localhost:8080/admin/config
 ```
 
 ## What the Installer Does
@@ -95,6 +102,9 @@ bash install.sh --with-docker --ssh-port 2222 --web-port 8080 --irc-port 6667
 - `--yes`, `--non-interactive`: disable prompts
 - `--install-brew`: allow Homebrew install on macOS if missing
 - `--force`: overwrite generated config (`.env`) and allow replacement behavior
+- `--bbs-name <name>`: advanced automation override for BBS display name (prefer `/admin/setup`)
+- `--hostname <name>`: advanced automation override for hostname (prefer `/admin/setup`)
+- `--setup-profile <name>`: advanced automation baseline (`basic`, `critical`, or `expert`; prefer `/admin/setup`)
 - `--ssh-port <port>`: default `2222`
 - `--web-port <port>`: default `8080`
 - `--irc-port <port>`: default `6667`
@@ -126,6 +136,7 @@ Important generated values include:
 - `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`
 - `WOLFBBS_SESSION_SECRET`
 - `WOLFBBS_INBOUND_TOKEN`
+- `WOLFBBS_BBS_NAME`, `WOLFBBS_HOSTNAME`, `WOLFBBS_SETUP_PROFILE` (automation overrides; prefer UI setup)
 - `WOLFBBS_SSH_PORT`, `WOLFBBS_WEB_PORT`, `WOLFBBS_IRC_PORT`, `WOLFBBS_IRC_TLS_PORT`, `WOLFBBS_MAILIN_PORT`
 - `WOLFBBS_BOOTSTRAP_ADMIN_HANDLE`, `WOLFBBS_BOOTSTRAP_ADMIN_PASSWORD`
 
@@ -247,6 +258,15 @@ COMPOSE_CMD_TIMEOUT_SECONDS=10 COMPOSE_UP_TIMEOUT_SECONDS=180 scripts/verify.sh 
 
 # allow Playwright run on non-LTS Node when explicitly needed
 WOLFBBS_ALLOW_UNSUPPORTED_NODE=true scripts/run-e2e.sh --no-go --no-tui
+
+# skip browser install only when Chromium cache is already present
+WOLFBBS_SKIP_BROWSER_INSTALL=true scripts/run-e2e.sh --no-go --no-tui
+
+# skip npm dependency install when node_modules + lock hash are unchanged
+WOLFBBS_SKIP_NPM_INSTALL=true scripts/run-e2e.sh --no-go --no-tui
+
+# lower/raise web e2e disk preflight threshold in MB (default 1200)
+WOLFBBS_WEB_E2E_MIN_FREE_MB=800 scripts/run-e2e.sh --no-go --no-tui
 ```
 
 Manual acceptance checklist and report:
@@ -257,9 +277,16 @@ scripts/manual-acceptance.sh --guided
 
 Installer setup wizard:
 
-- Interactive installs now show a first-run setup wizard to set bootstrap `sysop` handle/password before writing `.env`.
+- Interactive installs now focus on bootstrap `sysop` credentials.
+- Site identity, setup profile, and runtime configuration are done in `/admin/setup` and `/admin/config`.
 - After install, the script prints a "First Login Wizard" block with exact URLs and commands for `/admin/login`, `/admin/setup`, SSH, chat, and runtime status.
 - Non-interactive installs (`--yes`) skip prompts and auto-generate bootstrap credentials, then print where to retrieve them.
+
+Setup profiles:
+
+- `basic`: identity + ports + bootstrap users with safe defaults.
+- `critical`: includes security-critical prompts (`secure cookie`, external-email verification gate).
+- `expert`: includes critical prompts plus runtime tuning prompts (`menu enable`, terminal encoding).
 
 First sysop pass (recommended):
 

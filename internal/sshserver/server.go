@@ -78,14 +78,10 @@ func New(address string, logger *slog.Logger, authSvc *auth.Service) *Server {
 		menuMod: menu.NewRegistry(),
 	}
 	s.server = &gssh.Server{
-		Addr:            address,
-		Handler:         s.handleSession,
-		PasswordHandler: func(_ gssh.Context, _ string) bool { return true },
-		IdleTimeout:     10 * time.Minute,
-		MaxTimeout:      30 * time.Minute,
-		PublicKeyHandler: func(_ gssh.Context, _ gssh.PublicKey) bool {
-			return false
-		},
+		Addr:        address,
+		Handler:     s.handleSession,
+		IdleTimeout: 10 * time.Minute,
+		MaxTimeout:  30 * time.Minute,
 	}
 	return s
 }
@@ -311,7 +307,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 			setArea("Welcome")
 			touch()
 			writeClear(sess, sessionANSI)
-			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "WolfBBS", currentUser, time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
+			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName(), currentUser, time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
 			io.WriteString(sess, "\r\n")
 			renderFrame(sess, termWidth, renderWidth, ui.RenderWelcome(renderWidth), sessionANSI, sessionEncoding)
 			io.WriteString(sess, ui.FooterPrompt(renderWidth, "Press any key to continue")+"\r\n")
@@ -329,7 +325,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 			setArea("Login")
 			touch()
 			writeClear(sess, sessionANSI)
-			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "WolfBBS", "Guest", time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
+			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName(), "Guest", time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
 			renderFrame(sess, termWidth, renderWidth, ui.RenderLoginPromptWithGuest(renderWidth, s.guestTourEnabled())+"\r\n", sessionANSI, sessionEncoding)
 			io.WriteString(sess, "Handle: ")
 			handle, err := readLine(reader, 32)
@@ -339,7 +335,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 			touch()
 			handle = strings.TrimSpace(handle)
 			if handle == "?" {
-				showHelpPanel(sess, reader, termWidth, renderWidth, "WolfBBS Help", "Guest", nodeLabel, th, sessionTime24h, sessionANSI, sessionEncoding, ui.RenderLoginHelp(renderWidth, s.guestTourEnabled()), touch)
+				showHelpPanel(sess, reader, termWidth, renderWidth, s.siteName()+" Help", "Guest", nodeLabel, th, sessionTime24h, sessionANSI, sessionEncoding, ui.RenderLoginHelp(renderWidth, s.guestTourEnabled()), touch)
 				state = stateLogin
 				continue
 			}
@@ -414,7 +410,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 				continue
 			}
 			if created {
-				io.WriteString(sess, "\r\nWelcome to WolfBBS! Press any key to continue.\r\n")
+				io.WriteString(sess, "\r\nWelcome to "+s.siteName()+"! Press any key to continue.\r\n")
 				_, _ = readKey(reader)
 				touch()
 			}
@@ -437,7 +433,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 			setArea("Bulletins")
 			touch()
 			writeClear(sess, sessionANSI)
-			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "WolfBBS", currentUser, time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
+			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName(), currentUser, time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
 			since := time.Now().UTC().Add(-24 * time.Hour)
 			digestLines := []string{
 				"System maintenance window: Sundays 03:00 UTC.",
@@ -474,7 +470,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 			setArea("Guest Tour")
 			touch()
 			writeClear(sess, sessionANSI)
-			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "WolfBBS", "Guest", time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
+			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName(), "Guest", time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
 			renderFrame(sess, termWidth, renderWidth, ui.RenderGuestTour(renderWidth, s.guestTourLines(sessionTime24h))+"\r\n", sessionANSI, sessionEncoding)
 			_, _ = readKey(reader)
 			touch()
@@ -483,7 +479,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 			setArea("Main Menu")
 			touch()
 			writeClear(sess, sessionANSI)
-			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "WolfBBS", currentUser, time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
+			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName(), currentUser, time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
 			menuEntries := menuEntriesForUser()
 			menuMode := configuredMenu != nil
 			if menuMode {
@@ -524,7 +520,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 			if menuMode {
 				if key == "?" {
 					helpText := strings.TrimSpace(configuredMenu.Help)
-					showHelpPanel(sess, reader, termWidth, renderWidth, "WolfBBS Help", currentUser, nodeLabel, th, sessionTime24h, sessionANSI, sessionEncoding, ui.RenderMainMenuHelp(renderWidth, helpText), touch)
+					showHelpPanel(sess, reader, termWidth, renderWidth, s.siteName()+" Help", currentUser, nodeLabel, th, sessionTime24h, sessionANSI, sessionEncoding, ui.RenderMainMenuHelp(renderWidth, helpText), touch)
 					break
 				}
 				for _, entry := range menuEntries {
@@ -545,7 +541,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 				}
 			} else {
 				if key == "?" {
-					showHelpPanel(sess, reader, termWidth, renderWidth, "WolfBBS Help", currentUser, nodeLabel, th, sessionTime24h, sessionANSI, sessionEncoding, ui.RenderMainMenuHelp(renderWidth, ""), touch)
+					showHelpPanel(sess, reader, termWidth, renderWidth, s.siteName()+" Help", currentUser, nodeLabel, th, sessionTime24h, sessionANSI, sessionEncoding, ui.RenderMainMenuHelp(renderWidth, ""), touch)
 					break
 				}
 				action = legacyHotkeyToAction(key)
@@ -718,7 +714,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 			setArea("Doors")
 			touch()
 			writeClear(sess, sessionANSI)
-			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "WolfBBS Doors", currentUser, time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
+			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName()+" Doors", currentUser, time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
 			userID := int64(0)
 			role := "user"
 			createdAt := ""
@@ -773,7 +769,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 				break
 			}
 			if choice == "?" {
-				showHelpPanel(sess, reader, termWidth, renderWidth, "WolfBBS Help", currentUser, nodeLabel, th, sessionTime24h, sessionANSI, sessionEncoding, ui.RenderDoorsHelp(renderWidth), touch)
+				showHelpPanel(sess, reader, termWidth, renderWidth, s.siteName()+" Help", currentUser, nodeLabel, th, sessionTime24h, sessionANSI, sessionEncoding, ui.RenderDoorsHelp(renderWidth), touch)
 				state = stateDoors
 				break
 			}
@@ -868,7 +864,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 			setArea("Gateways")
 			touch()
 			writeClear(sess, sessionANSI)
-			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "WolfBBS Gateway", currentUser, time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
+			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName()+" Gateway", currentUser, time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
 			renderFrame(sess, termWidth, renderWidth, ui.RenderGatewayMenu(renderWidth)+"\r\n", sessionANSI, sessionEncoding)
 			io.WriteString(sess, "Selection: ")
 			gw, err := readKey(reader)
@@ -880,7 +876,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 			case "R", "Q", "ESC":
 				state = stateMainMenu
 			case "?":
-				showHelpPanel(sess, reader, termWidth, renderWidth, "WolfBBS Help", currentUser, nodeLabel, th, sessionTime24h, sessionANSI, sessionEncoding, ui.RenderGatewayHelp(renderWidth), touch)
+				showHelpPanel(sess, reader, termWidth, renderWidth, s.siteName()+" Help", currentUser, nodeLabel, th, sessionTime24h, sessionANSI, sessionEncoding, ui.RenderGatewayHelp(renderWidth), touch)
 				state = stateGateway
 			case "E":
 				io.WriteString(sess, "\r\nTo external email: ")
@@ -916,7 +912,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 					state = stateMainMenu
 					continue
 				}
-				if !user.Verified {
+				if s.requireVerifiedEmail() && !user.Verified {
 					io.WriteString(sess, "\r\nAccount must be verified before external email. Press any key.\r\n")
 					_, _ = readKey(reader)
 					touch()
@@ -995,7 +991,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 			setArea("Last Callers")
 			touch()
 			writeClear(sess, sessionANSI)
-			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "WolfBBS", currentUser, time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
+			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName(), currentUser, time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
 			io.WriteString(sess, "\r\n")
 			last := []string{}
 			if s.admin != nil {
@@ -1029,7 +1025,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 			setArea("Who's Online")
 			touch()
 			writeClear(sess, sessionANSI)
-			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "WolfBBS", currentUser, time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
+			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName(), currentUser, time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
 			onlineRows := []string{}
 			if s.admin != nil {
 				if sessions, err := s.admin.ListNodeSessions(64); err == nil {
@@ -1072,10 +1068,15 @@ func (s *Server) handleSession(sess gssh.Session) {
 				fmt.Sprintf("ANSI enabled: %s", boolText(currentAccount.ANSIEnabled)),
 				fmt.Sprintf("Paging enabled: %s", boolText(currentAccount.PagingEnabled)),
 				fmt.Sprintf("24h clock: %s", boolText(currentAccount.TimeFormat24h)),
+				fmt.Sprintf("ACS strict: %s", boolText(s.flagFromConfig("runtime.acs.strict", "WOLFBBS_ACS_STRICT", false))),
 				fmt.Sprintf("Guest tour enabled: %s", boolText(s.guestTourEnabled())),
 				fmt.Sprintf("Smart newscan enabled: %s", boolText(s.smartNewscanEnabled())),
 				fmt.Sprintf("Quick jump enabled: %s", boolText(s.quickJumpEnabled())),
 				fmt.Sprintf("Classic search enabled: %s", boolText(s.classicSearchEnabled())),
+				fmt.Sprintf("Trusted proxies: %s", s.textFromConfig("runtime.login.trusted_proxies", "WOLFBBS_TRUSTED_PROXIES", "(none)")),
+				fmt.Sprintf("Telnet login: %s (%s)", boolText(s.flagFromConfig("runtime.login.telnet.enabled", "WOLFBBS_TELNET_ENABLE", false)), s.textFromConfig("runtime.login.telnet.listen", "WOLFBBS_TELNET_LISTEN", ":2323")),
+				fmt.Sprintf("WebSocket login: %s (%s%s)", boolText(s.flagFromConfig("runtime.login.ws.enabled", "WOLFBBS_WS_ENABLE", false)), s.textFromConfig("runtime.login.ws.listen", "WOLFBBS_WS_LISTEN", ":6080"), s.textFromConfig("runtime.login.ws.path", "WOLFBBS_WS_PATH", "/ws-login")),
+				fmt.Sprintf("WebSocket TLS: %s (%s%s)", boolText(s.flagFromConfig("runtime.login.wss.enabled", "WOLFBBS_WSS_ENABLE", false)), s.textFromConfig("runtime.login.wss.listen", "WOLFBBS_WSS_LISTEN", ":6443"), s.textFromConfig("runtime.login.wss.path", "WOLFBBS_WSS_PATH", "/ws-login")),
 				"",
 				"User preferences: press S at main menu for Settings.",
 				"Sysop runtime flags: /admin/config on web panel.",
@@ -1113,9 +1114,9 @@ func (s *Server) handleSession(sess gssh.Session) {
 				fmt.Sprintf("Discover feed state: %s", boolText(s.discoverEnabled())),
 				fmt.Sprintf("Quick jump state: %s", boolText(s.quickJumpEnabled())),
 				fmt.Sprintf("Classic search state: %s", boolText(s.classicSearchEnabled())),
-				fmt.Sprintf("Telnet login enabled: %s", boolText(envBool(strings.TrimSpace(os.Getenv("WOLFBBS_TELNET_ENABLE"))))),
-				fmt.Sprintf("WebSocket login enabled: %s", boolText(envBool(strings.TrimSpace(os.Getenv("WOLFBBS_WS_ENABLE"))))),
-				fmt.Sprintf("WebSocket TLS enabled: %s", boolText(envBool(strings.TrimSpace(os.Getenv("WOLFBBS_WSS_ENABLE"))))),
+				fmt.Sprintf("Telnet login enabled: %s", boolText(s.flagFromConfig("runtime.login.telnet.enabled", "WOLFBBS_TELNET_ENABLE", false))),
+				fmt.Sprintf("WebSocket login enabled: %s", boolText(s.flagFromConfig("runtime.login.ws.enabled", "WOLFBBS_WS_ENABLE", false))),
+				fmt.Sprintf("WebSocket TLS enabled: %s", boolText(s.flagFromConfig("runtime.login.wss.enabled", "WOLFBBS_WSS_ENABLE", false))),
 			}
 			renderFrame(sess, termWidth, renderWidth, ui.RenderStatusCenter(renderWidth, statusLines), sessionANSI, sessionEncoding)
 			_, _ = readKey(reader)
@@ -1123,7 +1124,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 			state = stateMainMenu
 		case stateExit:
 			writeClear(sess, sessionANSI)
-			io.WriteString(sess, "Signing off WolfBBS...\r\n")
+			io.WriteString(sess, "Signing off "+s.siteName()+"...\r\n")
 			return
 		}
 	}
@@ -1399,7 +1400,7 @@ func quickJumpToAction(raw string) string {
 
 func (s *Server) guestTourLines(time24h bool) []string {
 	lines := []string{
-		"Welcome to WolfBBS. This mode is read-only.",
+		"Welcome to " + s.siteName() + ". This mode is read-only.",
 		"Create an account from Login to post and chat.",
 		"",
 		"Last callers:",
@@ -1491,6 +1492,30 @@ func (s *Server) flagFromConfig(settingKey, envKey string, fallback bool) bool {
 		return fallback
 	}
 	return envBool(raw)
+}
+
+func (s *Server) textFromConfig(settingKey, envKey, fallback string) string {
+	if s != nil && s.admin != nil {
+		if raw, err := s.admin.GetSystemSetting(settingKey); err == nil {
+			raw = strings.TrimSpace(raw)
+			if raw != "" {
+				return raw
+			}
+		}
+	}
+	raw := strings.TrimSpace(os.Getenv(envKey))
+	if raw == "" {
+		return fallback
+	}
+	return raw
+}
+
+func (s *Server) siteName() string {
+	return s.textFromConfig("site.name", "WOLFBBS_BBS_NAME", "WolfBBS")
+}
+
+func (s *Server) requireVerifiedEmail() bool {
+	return s.flagFromConfig("mail.require_verified", "WOLFBBS_REQUIRE_VERIFIED_EMAIL", true)
 }
 
 func (s *Server) guestTourEnabled() bool {
@@ -1621,7 +1646,7 @@ func (s *Server) runChat(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 		lines = append(lines, "(S)end  (J)oin  (O)nline  (R)efresh  (?)Help  (Q)uit")
 
 		writeClear(sess, ansiEnabled)
-		renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "WolfBBS Chat", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
+		renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName()+" Chat", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
 		renderFrame(sess, termWidth, renderWidth, ui.DrawBox(renderWidth, len(lines)+2, "Live Chat", lines, ui.CP437Box, ui.FgCyan, ui.BgBlack), ansiEnabled, encoding)
 		io.WriteString(sess, "Selection: ")
 		key, err := readKey(reader)
@@ -1635,7 +1660,7 @@ func (s *Server) runChat(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 		case "R", "ENTER":
 			continue
 		case "?":
-			showHelpPanel(sess, reader, termWidth, renderWidth, "WolfBBS Help", handle, nodeLabel, th, time24h, ansiEnabled, encoding, ui.RenderChatHelp(renderWidth), touch)
+			showHelpPanel(sess, reader, termWidth, renderWidth, s.siteName()+" Help", handle, nodeLabel, th, time24h, ansiEnabled, encoding, ui.RenderChatHelp(renderWidth), touch)
 		case "O":
 			io.WriteString(sess, "\r\nOnline users:\r\n")
 			if len(online) == 0 {
@@ -1750,7 +1775,7 @@ func (s *Server) runBoards(sess gssh.Session, reader *bufio.Reader, termWidth, r
 		}
 
 		writeClear(sess, ansiEnabled)
-		renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "WolfBBS Boards", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
+		renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName()+" Boards", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
 		renderFrame(sess, termWidth, renderWidth, ui.RenderMessageBoardList(renderWidth, names)+"\r\n", ansiEnabled, encoding)
 		confLabel := conferenceFilter
 		if confLabel == "" {
@@ -1794,7 +1819,7 @@ func (s *Server) runBoards(sess gssh.Session, reader *bufio.Reader, termWidth, r
 			continue
 		}
 		if raw == "?" {
-			showHelpPanel(sess, reader, termWidth, renderWidth, "WolfBBS Help", handle, nodeLabel, th, time24h, ansiEnabled, encoding, ui.RenderBoardsHelp(renderWidth), touch)
+			showHelpPanel(sess, reader, termWidth, renderWidth, s.siteName()+" Help", handle, nodeLabel, th, time24h, ansiEnabled, encoding, ui.RenderBoardsHelp(renderWidth), touch)
 			continue
 		}
 		boardID, err := strconv.ParseInt(raw, 10, 64)
@@ -1989,7 +2014,7 @@ func (s *Server) runBoards(sess gssh.Session, reader *bufio.Reader, termWidth, r
 					continue
 				}
 			case "?":
-				showHelpPanel(sess, reader, termWidth, renderWidth, "WolfBBS Help", handle, nodeLabel, th, time24h, ansiEnabled, encoding, ui.RenderBoardsHelp(renderWidth), touch)
+				showHelpPanel(sess, reader, termWidth, renderWidth, s.siteName()+" Help", handle, nodeLabel, th, time24h, ansiEnabled, encoding, ui.RenderBoardsHelp(renderWidth), touch)
 			default:
 				io.WriteString(sess, "\r\nUnknown command. Press any key.")
 				_, _ = readKey(reader)
@@ -2119,7 +2144,7 @@ func (s *Server) runBoardReader(sess gssh.Session, reader *bufio.Reader, termWid
 			posted = true
 			return posted, nil
 		case "?", "H":
-			showHelpPanel(sess, reader, termWidth, renderWidth, "WolfBBS Help", handle, nodeLabel, th, time24h, ansiEnabled, encoding, ui.RenderBoardsHelp(renderWidth), touch)
+			showHelpPanel(sess, reader, termWidth, renderWidth, s.siteName()+" Help", handle, nodeLabel, th, time24h, ansiEnabled, encoding, ui.RenderBoardsHelp(renderWidth), touch)
 		case "Q", "ESC":
 			return posted, nil
 		default:
@@ -2157,7 +2182,7 @@ func (s *Server) runMail(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 		outbox, _ := s.mail.ListOutbox(currentUser.ID, 50)
 
 		writeClear(sess, ansiEnabled)
-		renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "WolfBBS Mail", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
+		renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName()+" Mail", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
 		inboxRows := make([]string, 0, len(inbox))
 		for _, row := range inbox {
 			status := "new"
@@ -2185,7 +2210,7 @@ func (s *Server) runMail(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 		case "Q":
 			return
 		case "?":
-			showHelpPanel(sess, reader, termWidth, renderWidth, "WolfBBS Help", handle, nodeLabel, th, time24h, ansiEnabled, encoding, ui.RenderMailHelp(renderWidth), touch)
+			showHelpPanel(sess, reader, termWidth, renderWidth, s.siteName()+" Help", handle, nodeLabel, th, time24h, ansiEnabled, encoding, ui.RenderMailHelp(renderWidth), touch)
 		case "C":
 			if !evaluateAccess(strings.TrimSpace(os.Getenv("WOLFBBS_ACS_MAIL_SEND")), currentUser, handle, map[string]string{"area": "mail", "mode": "compose"}, acsStrict, s.logger) {
 				io.WriteString(sess, "\r\nSending mail denied by ACS rule. Press any key.")
@@ -2194,7 +2219,7 @@ func (s *Server) runMail(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 				continue
 			}
 			writeClear(sess, ansiEnabled)
-			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "WolfBBS Mail Compose", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
+			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName()+" Mail Compose", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
 			renderFrame(sess, termWidth, renderWidth, ui.RenderPostEditor(renderWidth, "")+"\r\n", ansiEnabled, encoding)
 			io.WriteString(sess, "To handle or external email: ")
 			to, err := readLine(reader, 128)
@@ -2300,7 +2325,7 @@ func (s *Server) runMail(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 				subject = "Re: " + subject
 			}
 			writeClear(sess, ansiEnabled)
-			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "WolfBBS Mail Reply", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
+			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName()+" Mail Reply", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
 			renderFrame(sess, termWidth, renderWidth, ui.RenderPostEditor(renderWidth, subject)+"\r\n", ansiEnabled, encoding)
 			io.WriteString(sess, "Subject ["+subject+"]: ")
 			inputSubject, err := readLine(reader, 120)
@@ -2563,7 +2588,7 @@ func (s *Server) runFiles(sess gssh.Session, reader *bufio.Reader, termWidth, re
 		}
 
 		writeClear(sess, ansiEnabled)
-		renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "WolfBBS Files", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
+		renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName()+" Files", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
 		renderFrame(sess, termWidth, renderWidth, ui.RenderFilesMenu(renderWidth, areaRows), ansiEnabled, encoding)
 		io.WriteString(sess, "Selection: ")
 		choice, err := readLine(reader, 64)
@@ -2575,7 +2600,7 @@ func (s *Server) runFiles(sess gssh.Session, reader *bufio.Reader, termWidth, re
 		case "Q":
 			return
 		case "?":
-			showHelpPanel(sess, reader, termWidth, renderWidth, "WolfBBS Help", handle, nodeLabel, th, time24h, ansiEnabled, encoding, ui.RenderFilesHelp(renderWidth), touch)
+			showHelpPanel(sess, reader, termWidth, renderWidth, s.siteName()+" Help", handle, nodeLabel, th, time24h, ansiEnabled, encoding, ui.RenderFilesHelp(renderWidth), touch)
 		case "R":
 			rows := formatFileRows(s.collectFilesAcrossAreas(areas, "", nil, 40), true, time24h)
 			writeClear(sess, ansiEnabled)
@@ -2675,7 +2700,7 @@ func (s *Server) runFileArea(sess gssh.Session, reader *bufio.Reader, termWidth,
 			return
 		case "R":
 		case "?":
-			showHelpPanel(sess, reader, termWidth, renderWidth, "WolfBBS Help", handle, nodeLabel, th, time24h, ansiEnabled, encoding, ui.RenderFilesHelp(renderWidth), touch)
+			showHelpPanel(sess, reader, termWidth, renderWidth, s.siteName()+" Help", handle, nodeLabel, th, time24h, ansiEnabled, encoding, ui.RenderFilesHelp(renderWidth), touch)
 		case "S":
 			io.WriteString(sess, "\r\nSearch query (blank clears): ")
 			next, err := readLine(reader, 64)
@@ -3130,7 +3155,7 @@ func (s *Server) runSettingsMCI(sess gssh.Session, reader *bufio.Reader, termWid
 		}
 		previewTheme := ui.ThemeByName(user.Theme)
 		writeClear(sess, currentANSI)
-		renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "WolfBBS Settings", user.Handle, time.Now(), nodeLabel, previewTheme, user.TimeFormat24h)+"\r\n", currentANSI, currentEncoding)
+		renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName()+" Settings", user.Handle, time.Now(), nodeLabel, previewTheme, user.TimeFormat24h)+"\r\n", currentANSI, currentEncoding)
 		renderFrame(sess, termWidth, renderWidth, ui.DrawBox(renderWidth, len(lines)+2, "MCI Preferences", lines, ui.CP437Box, previewTheme.BodyFg, ui.BgBlack), currentANSI, currentEncoding)
 		io.WriteString(sess, "Selection: ")
 		key, err := readKey(reader)
@@ -3162,7 +3187,7 @@ func (s *Server) runSettingsMCI(sess gssh.Session, reader *bufio.Reader, termWid
 			touch()
 			return user, nil
 		case "?":
-			showHelpPanel(sess, reader, termWidth, renderWidth, "WolfBBS Help", user.Handle, nodeLabel, previewTheme, user.TimeFormat24h, currentANSI, currentEncoding, ui.RenderSettingsHelp(renderWidth), touch)
+			showHelpPanel(sess, reader, termWidth, renderWidth, s.siteName()+" Help", user.Handle, nodeLabel, previewTheme, user.TimeFormat24h, currentANSI, currentEncoding, ui.RenderSettingsHelp(renderWidth), touch)
 		default:
 			io.WriteString(sess, "\r\nUnknown key. Press any key.")
 			_, _ = readKey(reader)
@@ -3177,7 +3202,7 @@ func (s *Server) buildSettingsMCIView(user *domain.User, themes []string, select
 		Title:  "Settings",
 		Footer: "T theme, A ansi, P paging, C clock, S save, Q quit",
 		Controls: []mci.Control{
-			{Type: mci.ControlLabel, ID: "header", Label: "WolfBBS user preferences"},
+			{Type: mci.ControlLabel, ID: "header", Label: s.siteName() + " user preferences"},
 			{Type: mci.ControlInput, ID: "theme", Label: "Theme", Value: user.Theme},
 			{Type: mci.ControlToggle, ID: "ansi", Label: "ANSI enabled", Value: boolText(user.ANSIEnabled)},
 			{Type: mci.ControlToggle, ID: "paging", Label: "Paging enabled", Value: boolText(user.PagingEnabled)},

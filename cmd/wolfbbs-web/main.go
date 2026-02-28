@@ -69,6 +69,29 @@ type chatModerationPayload struct {
 	Duration string `json:"duration"`
 }
 
+type statusCheck struct {
+	Name   string `json:"name"`
+	OK     bool   `json:"ok"`
+	Detail string `json:"detail"`
+}
+
+type statusSummary struct {
+	Total int `json:"total"`
+	Pass  int `json:"pass"`
+	Warn  int `json:"warn"`
+}
+
+type statusSnapshot struct {
+	GeneratedAt     time.Time     `json:"generated_at"`
+	Site            string        `json:"site"`
+	Host            string        `json:"host"`
+	User            string        `json:"user"`
+	Role            string        `json:"role"`
+	Summary         statusSummary `json:"summary"`
+	Checks          []statusCheck `json:"checks"`
+	Recommendations []string      `json:"recommendations,omitempty"`
+}
+
 type sessionState struct {
 	handle string
 	expire time.Time
@@ -103,18 +126,51 @@ type appErrorEntry struct {
 }
 
 const (
-	sysSettingMOTD           = "site.motd"
-	sysSettingAnnouncement   = "site.announcement"
-	sysSettingReadOnly       = "site.read_only"
-	sysSettingWebOnRamp      = "site.web_onramp_enable"
-	sysSettingGuestTour      = "site.guest_tour_enable"
-	sysSettingDiscover       = "site.discover_enable"
-	sysSettingQuickJump      = "site.quick_jump_enable"
-	sysSettingClassicSearch  = "site.classic_search_enable"
-	sysSettingMenuEnabled    = "menu.enabled"
-	sysSettingMenuFile       = "menu.file"
-	sysSettingLockedChannels = "chat.locked_channels"
-	maxAdminErrorEntries     = 300
+	sysSettingSiteName               = "site.name"
+	sysSettingSiteHostname           = "site.hostname"
+	sysSettingMOTD                   = "site.motd"
+	sysSettingAnnouncement           = "site.announcement"
+	sysSettingReadOnly               = "site.read_only"
+	sysSettingSecureCookie           = "site.secure_cookie"
+	sysSettingWebOnRamp              = "site.web_onramp_enable"
+	sysSettingGuestTour              = "site.guest_tour_enable"
+	sysSettingDiscover               = "site.discover_enable"
+	sysSettingQuickJump              = "site.quick_jump_enable"
+	sysSettingClassicSearch          = "site.classic_search_enable"
+	sysSettingRequireVerifiedEmail   = "mail.require_verified"
+	sysSettingMenuEnabled            = "menu.enabled"
+	sysSettingMenuFile               = "menu.file"
+	sysSettingLockedChannels         = "chat.locked_channels"
+	sysSettingACSStrict              = "runtime.acs.strict"
+	sysSettingContentHost            = "runtime.content.host"
+	sysSettingContentGopherListen    = "runtime.content.gopher_listen"
+	sysSettingContentNNTPListen      = "runtime.content.nntp_listen"
+	sysSettingContentNNTPSListen     = "runtime.content.nntps_listen"
+	sysSettingContentNNTPSCert       = "runtime.content.nntps_cert"
+	sysSettingContentNNTPSKey        = "runtime.content.nntps_key"
+	sysSettingActivityPubEnabled     = "runtime.activitypub.enabled"
+	sysSettingActivityPubBaseURL     = "runtime.activitypub.base_url"
+	sysSettingLoginTelnetEnabled     = "runtime.login.telnet.enabled"
+	sysSettingLoginTelnetListen      = "runtime.login.telnet.listen"
+	sysSettingLoginWSEnabled         = "runtime.login.ws.enabled"
+	sysSettingLoginWSListen          = "runtime.login.ws.listen"
+	sysSettingLoginWSPath            = "runtime.login.ws.path"
+	sysSettingLoginWSSEnabled        = "runtime.login.wss.enabled"
+	sysSettingLoginWSSListen         = "runtime.login.wss.listen"
+	sysSettingLoginWSSPath           = "runtime.login.wss.path"
+	sysSettingLoginWSSCert           = "runtime.login.wss.cert"
+	sysSettingLoginWSSKey            = "runtime.login.wss.key"
+	sysSettingTrustedProxies         = "runtime.login.trusted_proxies"
+	sysSettingConnectorDoorPartyOn   = "runtime.connector.doorparty.enabled"
+	sysSettingConnectorDoorPartyCmd  = "runtime.connector.doorparty.command"
+	sysSettingConnectorDoorPartyArgs = "runtime.connector.doorparty.args"
+	sysSettingConnectorBBSLinkOn     = "runtime.connector.bbslink.enabled"
+	sysSettingConnectorBBSLinkCmd    = "runtime.connector.bbslink.command"
+	sysSettingConnectorBBSLinkArgs   = "runtime.connector.bbslink.args"
+	sysSettingConnectorTelnetOn      = "runtime.connector.telnet_bridge.enabled"
+	sysSettingConnectorTelnetCmd     = "runtime.connector.telnet_bridge.command"
+	sysSettingConnectorTelnetArgs    = "runtime.connector.telnet_bridge.args"
+	maxAdminErrorEntries             = 300
 )
 
 type webApp struct {
@@ -128,39 +184,43 @@ type webApp struct {
 	email     *gateway.EmailGateway
 	sessions  map[string]sessionState
 	sync.Mutex
-	chatSvc       *chat.Service
-	doorRegistry  *doors.Registry
-	eventBus      *events.Bus
-	offlineDir    string
-	readOnly      bool
-	inboundToken  string
-	inboundAllow  map[string]struct{}
-	resetTTL      time.Duration
-	showResetDev  bool
-	apEnabled     bool
-	apBaseURL     string
-	publicBaseURL string
-	resetNotifier func(handle, token string, r *http.Request) error
-	startedAt     time.Time
-	runtimeCfg    config.Runtime
-	modernOnRamp  bool
-	guestTour     bool
-	discover      bool
-	quickJump     bool
-	classicSearch bool
-	wsTerminalURL string
-	menuRoot      string
-	savedSearches map[string][]string
-	motd          string
-	announcement  string
-	errorLog      []appErrorEntry
-	lockedChat    map[string]bool
-	networkSvc    *network.Service
-	modsManager   *mods.Manager
-	oneLinerzMod  *mods.OneLinerzMod
-	rumorzMod     *mods.RumorzMod
-	bbsListMod    *mods.BBSListMod
-	whoOnlineMod  *mods.WhoOnlineMod
+	chatSvc              *chat.Service
+	doorRegistry         *doors.Registry
+	eventBus             *events.Bus
+	offlineDir           string
+	siteName             string
+	siteHostname         string
+	readOnly             bool
+	secureCookie         bool
+	requireVerifiedEmail bool
+	inboundToken         string
+	inboundAllow         map[string]struct{}
+	resetTTL             time.Duration
+	showResetDev         bool
+	apEnabled            bool
+	apBaseURL            string
+	publicBaseURL        string
+	resetNotifier        func(handle, token string, r *http.Request) error
+	startedAt            time.Time
+	runtimeCfg           config.Runtime
+	modernOnRamp         bool
+	guestTour            bool
+	discover             bool
+	quickJump            bool
+	classicSearch        bool
+	wsTerminalURL        string
+	menuRoot             string
+	savedSearches        map[string][]string
+	motd                 string
+	announcement         string
+	errorLog             []appErrorEntry
+	lockedChat           map[string]bool
+	networkSvc           *network.Service
+	modsManager          *mods.Manager
+	oneLinerzMod         *mods.OneLinerzMod
+	rumorzMod            *mods.RumorzMod
+	bbsListMod           *mods.BBSListMod
+	whoOnlineMod         *mods.WhoOnlineMod
 }
 
 func seedWebUsers(authSvc *auth.Service) {
@@ -288,9 +348,25 @@ func main() {
 			}
 			return dir
 		}(),
-		readOnly:     strings.EqualFold(strings.TrimSpace(os.Getenv("WOLFBBS_READ_ONLY")), "1") || strings.EqualFold(strings.TrimSpace(os.Getenv("WOLFBBS_READ_ONLY")), "true"),
-		inboundToken: strings.TrimSpace(os.Getenv("WOLFBBS_INBOUND_TOKEN")),
-		inboundAllow: parseAllowDomains(strings.TrimSpace(os.Getenv("WOLFBBS_MAILIN_ALLOW_DOMAINS"))),
+		siteName: func() string {
+			name := strings.TrimSpace(os.Getenv("WOLFBBS_BBS_NAME"))
+			if name == "" {
+				name = "WolfBBS"
+			}
+			return name
+		}(),
+		siteHostname: func() string {
+			host := strings.TrimSpace(os.Getenv("WOLFBBS_HOSTNAME"))
+			if host == "" {
+				host = "localhost"
+			}
+			return host
+		}(),
+		readOnly:             strings.EqualFold(strings.TrimSpace(os.Getenv("WOLFBBS_READ_ONLY")), "1") || strings.EqualFold(strings.TrimSpace(os.Getenv("WOLFBBS_READ_ONLY")), "true"),
+		secureCookie:         envEnabledDefault("WOLFBBS_SECURE_COOKIE", false),
+		requireVerifiedEmail: envEnabledDefault("WOLFBBS_REQUIRE_VERIFIED_EMAIL", true),
+		inboundToken:         strings.TrimSpace(os.Getenv("WOLFBBS_INBOUND_TOKEN")),
+		inboundAllow:         parseAllowDomains(strings.TrimSpace(os.Getenv("WOLFBBS_MAILIN_ALLOW_DOMAINS"))),
 		resetTTL: func() time.Duration {
 			raw := strings.TrimSpace(os.Getenv("WOLFBBS_RESET_TTL_MINUTES"))
 			if raw == "" {
@@ -384,6 +460,7 @@ func main() {
 	http.Handle("/mail", app.authRequired(http.HandlerFunc(app.handleMail)))
 	http.Handle("/settings", app.authRequired(http.HandlerFunc(app.handleSettings)))
 	http.Handle("/status", app.authRequired(http.HandlerFunc(app.handleStatusCenter)))
+	http.Handle("/statusz", app.authRequired(http.HandlerFunc(app.handleStatusJSON)))
 	http.Handle("/config", app.authRequired(http.HandlerFunc(app.handleConfigCenter)))
 	http.Handle("/discover", app.authRequired(http.HandlerFunc(app.handleDiscover)))
 	http.Handle("/admin", app.mustBeRole(roleAdmin, app.handleAdmin))
@@ -718,8 +795,8 @@ func (a *webApp) deliverPasswordReset(r *http.Request, handle, token string) err
 	}
 	base = strings.TrimRight(base, "/")
 	resetURL := base + "/reset/complete?token=" + url.QueryEscape(strings.TrimSpace(token))
-	subject := "WolfBBS password reset"
-	body := "A password reset was requested for your WolfBBS account.\n\n" +
+	subject := a.siteDisplayName() + " password reset"
+	body := "A password reset was requested for your " + a.siteDisplayName() + " account.\n\n" +
 		"If this was you, open this link to set a new password:\n" + resetURL + "\n\n" +
 		"If you did not request this reset, you can ignore this message."
 	return a.email.SendOutbound("wolfbbs-reset", []string{recipient}, subject, body)
@@ -800,15 +877,18 @@ connect();
 	if strings.TrimSpace(a.announcement) != "" {
 		announcementBlock = `<p><strong>Announcement:</strong> ` + htmlEscape(a.announcement) + `</p>`
 	}
+	connectHost := a.siteHost()
+	sshPort := parseInt(strings.TrimSpace(os.Getenv("WOLFBBS_SSH_PORT")), 2222)
+	telnetPort := parseInt(strings.TrimSpace(os.Getenv("WOLFBBS_TELNET_PORT")), 2323)
 
 	page := `<html><body>
-<h1>WolfBBS Connect</h1>
+<h1>` + htmlEscape(a.siteDisplayName()) + ` Connect</h1>
 <p>Terminal-first remains the primary UX.</p>
 ` + motdBlock + `
 ` + announcementBlock + `
 <ul>
-<li>SSH (recommended): <code>ssh localhost -p 2222</code></li>
-<li>Telnet (optional): <code>telnet localhost 2323</code></li>
+<li>SSH (recommended): <code>ssh ` + htmlEscape(connectHost) + ` -p ` + strconv.Itoa(sshPort) + `</code></li>
+<li>Telnet (optional): <code>telnet ` + htmlEscape(connectHost) + ` ` + strconv.Itoa(telnetPort) + `</code></li>
 <li>WebSocket login endpoint: <code>` + htmlEscape(wsURL) + `</code></li>
 </ul>
 <p><a href="/login">Sign in with account</a> | <a href="/help">help</a></p>
@@ -862,7 +942,7 @@ func (a *webApp) handleGuestTour(w http.ResponseWriter, r *http.Request) {
 	}
 
 	page := `<html><body>
-<h1>WolfBBS Guided Tour (Read-Only)</h1>
+<h1>` + htmlEscape(a.siteDisplayName()) + ` Guided Tour (Read-Only)</h1>
 <p><a href="/connect">connect</a> | <a href="/login">login</a> | <a href="/help">help</a></p>
 <h2>Last Callers</h2><ul>` + rows.String() + `</ul>
 <h2>One-Liners</h2><ul>` + chatRows.String() + `</ul>
@@ -884,7 +964,7 @@ func (a *webApp) handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(loginPage(r.URL.Path, a.modernOnRamp, a.guestTour)))
+		_, _ = w.Write([]byte(loginPage(a.siteDisplayName(), r.URL.Path, a.modernOnRamp, a.guestTour)))
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -913,7 +993,7 @@ func (a *webApp) handleLogin(w http.ResponseWriter, r *http.Request) {
 			Value:    sid,
 			Path:     "/",
 			HttpOnly: true,
-			Secure:   strings.EqualFold(strings.TrimSpace(os.Getenv("WOLFBBS_SECURE_COOKIE")), "true"),
+			Secure:   a.secureCookie,
 			SameSite: http.SameSiteStrictMode,
 			Expires:  time.Now().Add(2 * time.Hour),
 		})
@@ -929,7 +1009,7 @@ func (a *webApp) handlePasswordResetRequest(w http.ResponseWriter, r *http.Reque
 	switch r.Method {
 	case http.MethodGet:
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(resetRequestPage("")))
+		_, _ = w.Write([]byte(resetRequestPage(a.siteDisplayName(), "")))
 		return
 	case http.MethodPost:
 		handle := strings.TrimSpace(r.FormValue("handle"))
@@ -947,7 +1027,7 @@ func (a *webApp) handlePasswordResetRequest(w http.ResponseWriter, r *http.Reque
 			message = message + " Dev token: " + token
 		}
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(resetRequestPage(htmlEscape(message))))
+		_, _ = w.Write([]byte(resetRequestPage(a.siteDisplayName(), htmlEscape(message))))
 		return
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -960,14 +1040,14 @@ func (a *webApp) handlePasswordResetComplete(w http.ResponseWriter, r *http.Requ
 	case http.MethodGet:
 		token := strings.TrimSpace(r.URL.Query().Get("token"))
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(resetCompletePage(token, "")))
+		_, _ = w.Write([]byte(resetCompletePage(a.siteDisplayName(), token, "")))
 		return
 	case http.MethodPost:
 		token := strings.TrimSpace(r.FormValue("token"))
 		password := strings.TrimSpace(r.FormValue("password"))
 		if err := a.authSvc.ResetPasswordWithToken(token, password); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(resetCompletePage(token, "Reset token is invalid/expired or password is too short.")))
+			_, _ = w.Write([]byte(resetCompletePage(a.siteDisplayName(), token, "Reset token is invalid/expired or password is too short.")))
 			return
 		}
 		http.Redirect(w, r, "/login", http.StatusFound)
@@ -1009,7 +1089,7 @@ func (a *webApp) handleHelp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	page := `<html><body>
-<h1>WolfBBS Help</h1>
+<h1>` + htmlEscape(a.siteDisplayName()) + ` Help</h1>
 <p>` + nav + `</p>
 <p>Current role: ` + htmlEscape(roleLabel) + `</p>
 <h2>Terminal (SSH) quick keys</h2>
@@ -1024,13 +1104,15 @@ func (a *webApp) handleHelp(w http.ResponseWriter, r *http.Request) {
 <ul>
 <li>/boards, /mail, /chat, /settings, /gateway, /status, /config</li>
 <li>/scores for door leaderboards</li>
-<li>/healthz, /readyz, /metrics for health/ops checks</li>
+<li>/healthz, /readyz, /metrics, /statusz for health/ops checks</li>
 </ul>
-<h2>Admin routes (sysop only)</h2>
-<ul>
-<li>/admin/users, /admin/boards, /admin/mail, /admin/files, /admin/gateways</li>
-<li>/admin/chat, /admin/doors, /admin/setup, /admin/config, /admin/system, /admin/errors, /admin/audit</li>
-</ul>
+	<h2>Admin routes (sysop only)</h2>
+	<ul>
+	<li>/admin/users, /admin/boards, /admin/mail, /admin/files, /admin/gateways</li>
+	<li>/admin/chat, /admin/doors, /admin/setup, /admin/config, /admin/system, /admin/errors, /admin/audit</li>
+	<li>Setup wizard path: /admin/setup?step=1 (Identity), step=2 (Safety), step=3 (Experience), step=4 (Bootstrap)</li>
+	<li>Runtime service settings (telnet/ws/wss/content/connectors): /admin/config</li>
+	</ul>
 <h2>Reference docs</h2>
 <ul>
 <li><code>docs/help-guides.md</code></li>
@@ -1058,22 +1140,26 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 			action = "post"
 		}
 		boardID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("board_id")), 10, 64)
+		boardPath := "/boards"
+		if boardID > 0 {
+			boardPath = fmt.Sprintf("/boards?board=%d", boardID)
+		}
 		switch action {
 		case "report":
 			messageID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("message_id")), 10, 64)
 			reason := strings.TrimSpace(r.FormValue("reason"))
 			if messageID <= 0 {
-				http.Error(w, "message id required", http.StatusBadRequest)
+				redirectWithError(w, r, boardPath, "Message ID is required for reporting.")
 				return
 			}
 			msg, err := a.msgRepo.GetMessage(messageID)
 			if err != nil || msg == nil {
-				http.Error(w, "message not found", http.StatusNotFound)
+				redirectWithError(w, r, boardPath, "Message not found.")
 				return
 			}
 			board, err := a.boardRepo.Get(msg.BoardID)
 			if err != nil || board == nil {
-				http.Error(w, "board not found", http.StatusNotFound)
+				redirectWithError(w, r, "/boards", "Board not found for that message.")
 				return
 			}
 			if !a.canReadBoard(user, board) {
@@ -1099,18 +1185,18 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 					"message": strconv.FormatInt(messageID, 10),
 				})
 			}
-			http.Redirect(w, r, fmt.Sprintf("/boards?board=%d&id=%d", msg.BoardID, messageID), http.StatusFound)
+			redirectWithNotice(w, r, fmt.Sprintf("/boards?board=%d&id=%d", msg.BoardID, messageID), "Report submitted to moderation queue.")
 		case "post":
 			parentID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("parent_id")), 10, 64)
 			subject := strings.TrimSpace(r.FormValue("subject"))
 			body := strings.TrimSpace(r.FormValue("body"))
 			if boardID <= 0 || subject == "" || body == "" {
-				http.Error(w, "board/subject/body required", http.StatusBadRequest)
+				redirectWithError(w, r, boardPath, "Board, subject, and body are required.")
 				return
 			}
 			board, err := a.boardRepo.Get(boardID)
 			if err != nil || board == nil {
-				http.Error(w, "board not found", http.StatusNotFound)
+				redirectWithError(w, r, "/boards", "Board not found.")
 				return
 			}
 			if !a.canWriteBoard(user, board) {
@@ -1125,10 +1211,10 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 				Body:     body,
 			}); err != nil {
 				if strings.Contains(strings.ToLower(err.Error()), "locked") {
-					http.Error(w, "thread is locked", http.StatusForbidden)
+					redirectWithError(w, r, boardPath, "Thread is locked.")
 					return
 				}
-				http.Error(w, "could not create message", http.StatusInternalServerError)
+				redirectWithError(w, r, boardPath, "Could not create message. Please retry.")
 				return
 			}
 			if a.eventBus != nil {
@@ -1138,9 +1224,9 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 					"subject": subject,
 				})
 			}
-			http.Redirect(w, r, fmt.Sprintf("/boards?board=%d", boardID), http.StatusFound)
+			redirectWithNotice(w, r, fmt.Sprintf("/boards?board=%d", boardID), "Message posted.")
 		default:
-			http.Error(w, "unsupported action", http.StatusBadRequest)
+			redirectWithError(w, r, boardPath, "Unsupported board action.")
 		}
 		return
 	}
@@ -1190,6 +1276,7 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 		}
 		sort.Slice(conferences, func(i, j int) bool { return strings.ToLower(conferences[i]) < strings.ToLower(conferences[j]) })
 		rows := strings.Builder{}
+		messageBlock := pageMessageBlock(r)
 		motdBlock := ""
 		if strings.TrimSpace(a.motd) != "" {
 			motdBlock = `<p><strong>MOTD:</strong> ` + htmlEscape(a.motd) + `</p>`
@@ -1249,10 +1336,12 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 %s
 %s
 %s
+%s
+<p><strong>Tip:</strong> Select a board to read, then open a message ID to reply/report. Use conference filter to keep scans short.</p>
 <h1>Message Boards</h1>
 <table border="1">
 <tr><th>ID</th><th>Board</th><th>Conf</th><th>Topics</th><th>New</th><th>Last</th><th>Last subject</th></tr>%s</table>
-</body></html>`, user.Handle, discoverLink, motdBlock, announcementBlock, quickJumpBlock, confFilterBlock, rows.String())
+</body></html>`, user.Handle, discoverLink, messageBlock, motdBlock, announcementBlock, quickJumpBlock, confFilterBlock, rows.String())
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(page))
 		return
@@ -1324,6 +1413,7 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 	if a.discover {
 		discoverLink = ` | <a href="/discover">discover</a>`
 	}
+	messageBlock := pageMessageBlock(r)
 	motdBlock := ""
 	if strings.TrimSpace(a.motd) != "" {
 		motdBlock = `<p><strong>MOTD:</strong> ` + htmlEscape(a.motd) + `</p>`
@@ -1334,6 +1424,8 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 	}
 	page := `<html><body><h1>Board: ` + htmlEscape(board.Name) + `</h1>` +
 		`<p><a href="/boards">all boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/status">status</a> | <a href="/config">config</a>` + discoverLink + ` | <a href="/help">help</a> | <a href="/logout">logout</a></p>` +
+		messageBlock +
+		`<p><strong>Reader keys:</strong> open subject to read, use Reply form, and Report for abuse/moderation queue.</p>` +
 		`<p><strong>Conference:</strong> ` + htmlEscape(defaultConferenceValue(board.Conference)) + `</p>` +
 		motdBlock + announcementBlock +
 		`<table border="1"><tr><th>ID</th><th>New</th><th>Subject</th><th>Author</th><th>When</th></tr>` + rows.String() + `</table>`
@@ -1371,7 +1463,7 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 		subject := strings.TrimSpace(r.FormValue("subject"))
 		body := strings.TrimSpace(r.FormValue("body"))
 		if toRaw == "" || subject == "" || body == "" {
-			http.Error(w, "to/subject/body required", http.StatusBadRequest)
+			redirectWithError(w, r, "/mail", "To, subject, and body are required.")
 			return
 		}
 
@@ -1381,7 +1473,7 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 			Body:       body,
 		}
 		if strings.Contains(toRaw, "@") {
-			if !user.Verified {
+			if a.requireVerifiedEmail && !user.Verified {
 				http.Error(w, "verified account required for external email", http.StatusForbidden)
 				return
 			}
@@ -1395,19 +1487,19 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 			recipient := toRaw
 			msg.ExternalTo = &recipient
 			if err := a.email.SendOutbound(user.Handle, []string{recipient}, subject, body); err != nil {
-				http.Error(w, "email relay error: "+err.Error(), http.StatusBadRequest)
+				redirectWithError(w, r, "/mail", "Email relay error: "+err.Error())
 				return
 			}
 		} else {
 			target, err := a.authSvc.GetUser(toRaw)
 			if err != nil || target == nil {
-				http.Error(w, "unknown recipient handle", http.StatusBadRequest)
+				redirectWithError(w, r, "/mail", "Unknown recipient handle.")
 				return
 			}
 			msg.ToUserID = target.ID
 		}
 		if err := a.mailRepo.CreateMail(msg); err != nil {
-			http.Error(w, "could not save mail", http.StatusInternalServerError)
+			redirectWithError(w, r, "/mail", "Could not save mail. Please retry.")
 			return
 		}
 		if a.eventBus != nil {
@@ -1416,7 +1508,7 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 				"to":   toRaw,
 			})
 		}
-		http.Redirect(w, r, "/mail", http.StatusFound)
+		redirectWithNotice(w, r, "/mail", "Mail sent to "+toRaw+".")
 		return
 	}
 	if r.Method != http.MethodGet {
@@ -1428,7 +1520,7 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 		mailID, _ := strconv.ParseInt(id, 10, 64)
 		item, err := a.mailRepo.GetMail(mailID)
 		if err != nil || item == nil {
-			http.Error(w, "mail not found", http.StatusNotFound)
+			redirectWithError(w, r, "/mail", "Mail not found.")
 			return
 		}
 		if item.ToUserID != user.ID && item.FromUserID != user.ID {
@@ -1445,7 +1537,7 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 		} else {
 			to = handleByID[item.ToUserID]
 		}
-		page := `<html><body><h1>Mail #` + strconv.FormatInt(item.ID, 10) + `</h1><p><a href="/mail">back</a> | <a href="/help">help</a></p>` +
+		page := `<html><body><h1>Mail #` + strconv.FormatInt(item.ID, 10) + `</h1><p><a href="/mail">back</a> | <a href="/boards">boards</a> | <a href="/help">help</a></p>` +
 			`<p><strong>From:</strong> ` + htmlEscape(handleByID[item.FromUserID]) + `<br>` +
 			`<strong>To:</strong> ` + htmlEscape(to) + `<br>` +
 			`<strong>Subject:</strong> ` + htmlEscape(item.Subject) + `<br>` +
@@ -1468,6 +1560,9 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 		inRows.WriteString(fmt.Sprintf(`<tr><td><a href="/mail?id=%d">%d</a></td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>`,
 			row.ID, row.ID, htmlEscape(handleByID[row.FromUserID]), htmlEscape(row.Subject), row.CreatedAt.Format("2006-01-02 15:04"), status))
 	}
+	if inRows.Len() == 0 {
+		inRows.WriteString(`<tr><td colspan="5">Inbox is empty.</td></tr>`)
+	}
 	outRows := strings.Builder{}
 	for _, row := range outbox {
 		target := handleByID[row.ToUserID]
@@ -1477,12 +1572,18 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 		outRows.WriteString(fmt.Sprintf(`<tr><td><a href="/mail?id=%d">%d</a></td><td>%s</td><td>%s</td><td>%s</td></tr>`,
 			row.ID, row.ID, htmlEscape(target), htmlEscape(row.Subject), row.CreatedAt.Format("2006-01-02 15:04")))
 	}
+	if outRows.Len() == 0 {
+		outRows.WriteString(`<tr><td colspan="4">Outbox is empty.</td></tr>`)
+	}
 	csrf := a.csrfHiddenInput(r)
+	messageBlock := pageMessageBlock(r)
 	discoverLink := ""
 	if a.discover {
 		discoverLink = ` | <a href="/discover">discover</a>`
 	}
 	page := `<html><body><h1>Private Mail</h1><p><a href="/boards">boards</a> | <a href="/chat">chat</a> | <a href="/status">status</a> | <a href="/config">config</a>` + discoverLink + ` | <a href="/help">help</a> | <a href="/logout">logout</a></p>` +
+		messageBlock +
+		`<p><strong>Tip:</strong> Use handle for local mail, email address for external relay (if enabled by policy).</p>` +
 		`<h2>Compose</h2><form method="POST" action="/mail">` + csrf +
 		`<label>To (handle or email): <input name="to" size="40"></label><br>` +
 		`<label>Subject: <input name="subject" size="60"></label><br>` +
@@ -1522,9 +1623,11 @@ func (a *webApp) handleGateway(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		csrf := a.csrfHiddenInput(r)
+		messageBlock := pageMessageBlock(r)
 		page := `<html><body>
 	<h1>Gateway</h1>
 	<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
+	` + messageBlock + `
 	<p>Fetch readable text via text gateway (safety limits and SSRF blocks apply).</p>
 	<form method="POST" action="/gateway">
 		` + csrf + `
@@ -1555,14 +1658,12 @@ func (a *webApp) handleGateway(w http.ResponseWriter, r *http.Request) {
 	}
 	url := strings.TrimSpace(r.FormValue("url"))
 	if url == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte("missing url"))
+		redirectWithError(w, r, "/gateway", "Enter a URL before fetching.")
 		return
 	}
 	result, err := gateway.FetchText(r.Context(), url, gateway.DefaultFetchConfig)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte("web gateway fetch failed: " + err.Error()))
+		redirectWithError(w, r, "/gateway", "Web gateway fetch failed: "+err.Error())
 		return
 	}
 	note := ""
@@ -1594,25 +1695,24 @@ func (a *webApp) handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		action := strings.TrimSpace(strings.ToLower(r.FormValue("action")))
+		notice := "Settings updated."
 		switch action {
 		case "change_password":
 			next := strings.TrimSpace(r.FormValue("password"))
 			confirm := strings.TrimSpace(r.FormValue("confirm"))
 			if next == "" || confirm == "" {
-				w.WriteHeader(http.StatusBadRequest)
-				_, _ = w.Write([]byte("missing password"))
+				redirectWithError(w, r, "/settings", "Password and confirmation are required.")
 				return
 			}
 			if next != confirm {
-				w.WriteHeader(http.StatusBadRequest)
-				_, _ = w.Write([]byte("passwords do not match"))
+				redirectWithError(w, r, "/settings", "Passwords do not match.")
 				return
 			}
 			if err := a.authSvc.SetPassword(user.Handle, next); err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				_, _ = w.Write([]byte("password update failed"))
+				redirectWithError(w, r, "/settings", "Password update failed.")
 				return
 			}
+			notice = "Password changed."
 		case "update_prefs":
 			theme := strings.TrimSpace(r.FormValue("theme"))
 			if theme == "" {
@@ -1622,47 +1722,52 @@ func (a *webApp) handleSettings(w http.ResponseWriter, r *http.Request) {
 			pagingEnabled := parseCheckbox(r.FormValue("paging_enabled"))
 			timeFormat24h := parseCheckbox(r.FormValue("time_format_24h"))
 			if err := a.authSvc.SetPreferences(user.Handle, theme, ansiEnabled, pagingEnabled, timeFormat24h); err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				_, _ = w.Write([]byte("preference update failed"))
+				redirectWithError(w, r, "/settings", "Preference update failed.")
 				return
 			}
+			notice = "Display preferences saved."
 		case "enable_2fa":
 			secret, err := auth.GenerateTOTPSecret()
 			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				_, _ = w.Write([]byte("2FA setup failed"))
+				redirectWithError(w, r, "/settings", "2FA setup failed.")
 				return
 			}
 			codes, err := auth.GenerateRecoveryCodes(8)
 			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				_, _ = w.Write([]byte("2FA setup failed"))
+				redirectWithError(w, r, "/settings", "2FA setup failed.")
 				return
 			}
 			_ = a.authSvc.SetTOTPSecret(user.Handle, secret)
 			_ = a.authSvc.SetRecoveryCodes(user.Handle, codes)
+			notice = "2FA enabled. Save your recovery codes."
 		case "disable_2fa":
 			_ = a.authSvc.SetTOTPSecret(user.Handle, "")
 			_ = a.authSvc.SetRecoveryCodes(user.Handle, nil)
+			notice = "2FA disabled."
 		case "regen_codes":
 			codes, err := auth.GenerateRecoveryCodes(8)
 			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				_, _ = w.Write([]byte("2FA setup failed"))
+				redirectWithError(w, r, "/settings", "2FA setup failed.")
 				return
 			}
 			_ = a.authSvc.SetRecoveryCodes(user.Handle, codes)
+			notice = "Recovery codes regenerated."
 		default:
 			http.Redirect(w, r, "/settings", http.StatusFound)
 			return
 		}
-		http.Redirect(w, r, "/settings", http.StatusFound)
+		redirectWithNotice(w, r, "/settings", notice)
 		return
 	}
 
 	csrf := a.csrfHiddenInput(r)
+	messageBlock := pageMessageBlock(r)
 	themeOptions := buildThemeOptionsHTML(user.Theme)
 	var secondFactorBlock strings.Builder
+	adminSettingsBlock := ""
+	if a.hasRole(user, roleAdmin) {
+		adminSettingsBlock = `<h2>Sysop Runtime Settings</h2><p><a href="/admin/setup">Setup Wizard</a> | <a href="/admin/config">Runtime Configuration</a> | <a href="/admin/system">WFC Dashboard</a></p>`
+	}
 	if user.TOTPSecret == "" {
 		secondFactorBlock.WriteString(`<p>2FA is currently disabled.</p>`)
 		secondFactorBlock.WriteString(`<form method="POST" action="/settings"><input type="hidden" name="action" value="enable_2fa">` + csrf + `<button type="submit">Enable TOTP</button></form>`)
@@ -1672,7 +1777,7 @@ func (a *webApp) handleSettings(w http.ResponseWriter, r *http.Request) {
 		secondFactorBlock.WriteString(`<form method="POST" action="/settings"><input type="hidden" name="action" value="regen_codes">` + csrf + `<button type="submit">Regenerate recovery codes</button></form>`)
 		secondFactorBlock.WriteString(`<p>Recovery Codes: ` + strings.Join(user.RecoveryCodes, ", ") + `</p>`)
 	}
-	page := `<html><body><h1>Settings</h1><p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p><p>User: ` + user.Handle + `</p><ul>` +
+	page := `<html><body><h1>Settings</h1><p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>` + messageBlock + `<p>User: ` + user.Handle + `</p><ul>` +
 		`<li>ANSI: ` + boolToText(user.ANSIEnabled) + `</li>` +
 		`<li>Paging: ` + boolToText(user.PagingEnabled) + `</li>` +
 		`<li>Time format 24h: ` + boolToText(user.TimeFormat24h) + `</li>` +
@@ -1686,6 +1791,7 @@ func (a *webApp) handleSettings(w http.ResponseWriter, r *http.Request) {
 		`<h2>Password</h2><form method="POST" action="/settings"><input type="hidden" name="action" value="change_password">` + csrf +
 		`<label>New password: <input name="password" type="password"></label><br>` +
 		`<label>Confirm: <input name="confirm" type="password"></label><br><button type="submit">Change password</button></form>` +
+		adminSettingsBlock +
 		secondFactorBlock.String() +
 		`</body></html>`
 	w.WriteHeader(http.StatusOK)
@@ -1827,17 +1933,7 @@ func (a *webApp) handleDiscover(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(page))
 }
 
-func (a *webApp) handleStatusCenter(w http.ResponseWriter, r *http.Request) {
-	user, ok := a.currentUser(r)
-	if !ok {
-		http.Redirect(w, r, "/login", http.StatusFound)
-		return
-	}
-	if r.Method != http.MethodGet {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-
+func (a *webApp) buildStatusSnapshot(user *domain.User) statusSnapshot {
 	boardsCount := 0
 	if a.boardRepo != nil {
 		if boards, err := a.boardRepo.List(); err == nil {
@@ -1860,15 +1956,6 @@ func (a *webApp) handleStatusCenter(w http.ResponseWriter, r *http.Request) {
 			gatewayConfigured = strings.TrimSpace(cfg.SMTPHost) != "" || strings.TrimSpace(cfg.FromDomain) != ""
 		}
 	}
-	loginTelnet := a.runtimeCfg.Login.Telnet.Enabled
-	loginWS := a.runtimeCfg.Login.WebSocket.Enabled
-	loginWSS := a.runtimeCfg.Login.WebSocketTLS.Enabled
-	contentGopher := strings.TrimSpace(a.runtimeCfg.Content.GopherListen) != ""
-	contentNNTP := strings.TrimSpace(a.runtimeCfg.Content.NNTPListen) != ""
-	contentNNTPS := strings.TrimSpace(a.runtimeCfg.Content.NNTPSListen) != ""
-	connectorDoorParty := a.runtimeCfg.Connectors.DoorParty.Enabled
-	connectorBBSLink := a.runtimeCfg.Connectors.BBSLink.Enabled
-	connectorTelnetBridge := a.runtimeCfg.Connectors.Telnet.Enabled
 	netState := "n/a"
 	netEnabled := false
 	if a.networkSvc != nil {
@@ -1890,39 +1977,129 @@ func (a *webApp) handleStatusCenter(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	role := rbac.NormalizeRole(user.Role)
+	role := roleUser
+	handle := "unknown"
+	if user != nil {
+		handle = user.Handle
+		role = rbac.NormalizeRole(user.Role)
+	}
+	checks := []statusCheck{
+		{Name: "Site identity", OK: strings.TrimSpace(a.siteDisplayName()) != "" && strings.TrimSpace(a.siteHost()) != "", Detail: a.siteDisplayName() + " @ " + a.siteHost()},
+		{Name: "Account role", OK: true, Detail: role},
+		{Name: "Boards service", OK: a.boardRepo != nil, Detail: strconv.Itoa(boardsCount) + " boards"},
+		{Name: "Chat service", OK: a.chatSvc != nil, Detail: strconv.Itoa(channelCount) + " channels, " + strconv.Itoa(onlineCount) + " online"},
+		{Name: "Doors registry", OK: a.doorRegistry != nil, Detail: strconv.Itoa(doorCount) + " doors loaded"},
+		{Name: "Gateway config", OK: gatewayConfigured, Detail: boolToText(gatewayConfigured)},
+		{Name: "Telnet login server", OK: a.runtimeCfg.Login.Telnet.Enabled, Detail: a.runtimeCfg.Login.Telnet.Listen},
+		{Name: "WebSocket login server", OK: a.runtimeCfg.Login.WebSocket.Enabled, Detail: a.runtimeCfg.Login.WebSocket.Listen + a.runtimeCfg.Login.WebSocket.Path},
+		{Name: "WebSocket TLS login server", OK: a.runtimeCfg.Login.WebSocketTLS.Enabled, Detail: a.runtimeCfg.Login.WebSocketTLS.Listen + a.runtimeCfg.Login.WebSocketTLS.Path},
+		{Name: "Gopher content server", OK: strings.TrimSpace(a.runtimeCfg.Content.GopherListen) != "", Detail: a.runtimeCfg.Content.GopherListen},
+		{Name: "NNTP content server", OK: strings.TrimSpace(a.runtimeCfg.Content.NNTPListen) != "", Detail: a.runtimeCfg.Content.NNTPListen},
+		{Name: "NNTPS content server", OK: strings.TrimSpace(a.runtimeCfg.Content.NNTPSListen) != "", Detail: a.runtimeCfg.Content.NNTPSListen},
+		{Name: "Message network spool", OK: netEnabled, Detail: netState},
+		{Name: "DoorParty connector", OK: a.runtimeCfg.Connectors.DoorParty.Enabled, Detail: boolToText(a.runtimeCfg.Connectors.DoorParty.Enabled)},
+		{Name: "BBSLink connector", OK: a.runtimeCfg.Connectors.BBSLink.Enabled, Detail: boolToText(a.runtimeCfg.Connectors.BBSLink.Enabled)},
+		{Name: "Telnet bridge connector", OK: a.runtimeCfg.Connectors.Telnet.Enabled, Detail: boolToText(a.runtimeCfg.Connectors.Telnet.Enabled)},
+		{Name: "ACS strict mode", OK: a.runtimeCfg.ACS.Strict, Detail: boolToText(a.runtimeCfg.ACS.Strict)},
+		{Name: "ActivityPub bridge", OK: a.runtimeCfg.ActivityPub.Enabled, Detail: a.runtimeCfg.ActivityPub.BaseURL},
+		{Name: "Trusted proxies configured", OK: strings.TrimSpace(a.runtimeCfg.Login.TrustedProxies) != "", Detail: a.runtimeCfg.Login.TrustedProxies},
+		{Name: "HJSON menu runtime", OK: a.runtimeCfg.Menu.Enabled, Detail: a.runtimeCfg.Menu.File},
+		{Name: "Built-in mods", OK: modCount > 0, Detail: fmt.Sprintf("%d total / %d running", modCount, modRunning)},
+		{Name: "Discover feed", OK: a.discover, Detail: "flag: discover"},
+		{Name: "Guest tour", OK: a.guestTour, Detail: "flag: guest tour"},
+		{Name: "Web on-ramp", OK: a.modernOnRamp, Detail: "flag: connect/tour pages"},
+		{Name: "Quick jump", OK: a.quickJump, Detail: "opt-in feature flag"},
+		{Name: "Classic search", OK: a.classicSearch, Detail: "opt-in feature flag"},
+		{Name: "Secure cookie", OK: a.secureCookie, Detail: "web session cookie security"},
+		{Name: "Verified required for external email", OK: a.requireVerifiedEmail, Detail: "mail gateway protection"},
+		{Name: "Read-only mode", OK: a.readOnly, Detail: "write operations blocked when true"},
+	}
+	pass := 0
+	for _, row := range checks {
+		if row.OK {
+			pass++
+		}
+	}
+	recommendations := make([]string, 0, 6)
+	if !gatewayConfigured {
+		recommendations = append(recommendations, "Configure SMTP relay and gateway limits in /admin/gateways.")
+	}
+	if !a.secureCookie {
+		recommendations = append(recommendations, "Enable secure cookie mode in /admin/setup (Step 2) before public deployment.")
+	}
+	if !a.requireVerifiedEmail {
+		recommendations = append(recommendations, "Require verified accounts for outbound external email in /admin/setup or /admin/config.")
+	}
+	if !a.runtimeCfg.ACS.Strict {
+		recommendations = append(recommendations, "Enable ACS strict mode in /admin/config for tighter authorization defaults.")
+	}
+	if !a.runtimeCfg.Login.WebSocketTLS.Enabled {
+		recommendations = append(recommendations, "Enable WSS login transport in /admin/config for browser terminal security.")
+	}
+	if len(recommendations) == 0 {
+		recommendations = append(recommendations, "No immediate issues detected. Continue monitoring /metrics and /admin/system.")
+	}
+	return statusSnapshot{
+		GeneratedAt: time.Now().UTC(),
+		Site:        a.siteDisplayName(),
+		Host:        a.siteHost(),
+		User:        handle,
+		Role:        role,
+		Summary: statusSummary{
+			Total: len(checks),
+			Pass:  pass,
+			Warn:  len(checks) - pass,
+		},
+		Checks:          checks,
+		Recommendations: recommendations,
+	}
+}
+
+func (a *webApp) handleStatusCenter(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	snapshot := a.buildStatusSnapshot(user)
 	adminLink := ""
 	if a.hasRole(user, roleAdmin) {
 		adminLink = ` | <a href="/admin/system">sysop system</a>`
 	}
+	rows := strings.Builder{}
+	for _, row := range snapshot.Checks {
+		rows.WriteString(statusRow(row.Name, row.OK, row.Detail))
+	}
+	recoRows := strings.Builder{}
+	for _, row := range snapshot.Recommendations {
+		recoRows.WriteString(`<li>` + htmlEscape(row) + `</li>`)
+	}
 	page := `<html><body><h1>Status Center</h1>` +
 		`<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/config">config</a> | <a href="/settings">settings</a> | <a href="/help">help</a> | <a href="/logout">logout</a>` + adminLink + `</p>` +
-		`<table border="1"><tr><th>Function</th><th>State</th><th>Details</th></tr>` +
-		statusRow("Account role", true, role) +
-		statusRow("Boards service", a.boardRepo != nil, strconv.Itoa(boardsCount)+" boards") +
-		statusRow("Chat service", a.chatSvc != nil, strconv.Itoa(channelCount)+" channels, "+strconv.Itoa(onlineCount)+" online") +
-		statusRow("Doors registry", a.doorRegistry != nil, strconv.Itoa(doorCount)+" doors loaded") +
-		statusRow("Gateway config", gatewayConfigured, boolToText(gatewayConfigured)) +
-		statusRow("Telnet login server", loginTelnet, a.runtimeCfg.Login.Telnet.Listen) +
-		statusRow("WebSocket login server", loginWS, a.runtimeCfg.Login.WebSocket.Listen+a.runtimeCfg.Login.WebSocket.Path) +
-		statusRow("WebSocket TLS login server", loginWSS, a.runtimeCfg.Login.WebSocketTLS.Listen+a.runtimeCfg.Login.WebSocketTLS.Path) +
-		statusRow("Gopher content server", contentGopher, a.runtimeCfg.Content.GopherListen) +
-		statusRow("NNTP content server", contentNNTP, a.runtimeCfg.Content.NNTPListen) +
-		statusRow("NNTPS content server", contentNNTPS, a.runtimeCfg.Content.NNTPSListen) +
-		statusRow("Message network spool", netEnabled, netState) +
-		statusRow("DoorParty connector", connectorDoorParty, boolToText(connectorDoorParty)) +
-		statusRow("BBSLink connector", connectorBBSLink, boolToText(connectorBBSLink)) +
-		statusRow("Telnet bridge connector", connectorTelnetBridge, boolToText(connectorTelnetBridge)) +
-		statusRow("Built-in mods", modCount > 0, fmt.Sprintf("%d total / %d running", modCount, modRunning)) +
-		statusRow("Discover feed", a.discover, "flag: discover") +
-		statusRow("Guest tour", a.guestTour, "flag: guest tour") +
-		statusRow("Web on-ramp", a.modernOnRamp, "flag: connect/tour pages") +
-		statusRow("Quick jump", a.quickJump, "opt-in feature flag") +
-		statusRow("Classic search", a.classicSearch, "opt-in feature flag") +
-		statusRow("Read-only mode", a.readOnly, "write operations blocked when true") +
-		`</table></body></html>`
+		`<p><strong>Summary:</strong> ` + strconv.Itoa(snapshot.Summary.Pass) + `/` + strconv.Itoa(snapshot.Summary.Total) + ` PASS, ` + strconv.Itoa(snapshot.Summary.Warn) + ` WARN | generated ` + snapshot.GeneratedAt.Local().Format("2006-01-02 15:04:05") + `</p>` +
+		`<p><a href="/statusz">Machine-readable status JSON (/statusz)</a></p>` +
+		`<h2>Checks</h2><table border="1"><tr><th>Function</th><th>State</th><th>Details</th></tr>` + rows.String() + `</table>` +
+		`<h2>Recommendations</h2><ul>` + recoRows.String() + `</ul></body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
+}
+
+func (a *webApp) handleStatusJSON(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	_ = writeJSON(w, http.StatusOK, a.buildStatusSnapshot(user))
 }
 
 func (a *webApp) handleConfigCenter(w http.ResponseWriter, r *http.Request) {
@@ -1938,29 +2115,53 @@ func (a *webApp) handleConfigCenter(w http.ResponseWriter, r *http.Request) {
 	role := rbac.NormalizeRole(user.Role)
 	adminLinks := ""
 	if a.hasRole(user, roleAdmin) {
-		adminLinks = `<p><a href="/admin/config">Edit Sysop Runtime Config</a> | <a href="/admin/setup">Setup</a></p>`
+		adminLinks = `<h2>Sysop Configuration Directory</h2><table border="1"><tr><th>Area</th><th>Configure</th><th>Status</th></tr>` +
+			`<tr><td>Identity + safety baseline</td><td><a href="/admin/setup">/admin/setup</a></td><td><a href="/admin/system">/admin/system</a></td></tr>` +
+			`<tr><td>Runtime toggles + menu editor</td><td><a href="/admin/config">/admin/config</a></td><td><a href="/admin/system">/admin/system</a></td></tr>` +
+			`<tr><td>Users + RBAC + verification</td><td><a href="/admin/users">/admin/users</a></td><td><a href="/admin/audit">/admin/audit</a></td></tr>` +
+			`<tr><td>Boards + moderation + ACS</td><td><a href="/admin/boards">/admin/boards</a></td><td><a href="/admin/system">/admin/system</a></td></tr>` +
+			`<tr><td>Mail policies</td><td><a href="/admin/mail">/admin/mail</a></td><td><a href="/admin/system">/admin/system</a></td></tr>` +
+			`<tr><td>File areas + queue + tickets</td><td><a href="/admin/files">/admin/files</a></td><td><a href="/admin/system">/admin/system</a></td></tr>` +
+			`<tr><td>Gateway safety limits</td><td><a href="/admin/gateways">/admin/gateways</a></td><td><a href="/admin/system">/admin/system</a></td></tr>` +
+			`<tr><td>Chat channels + moderation</td><td><a href="/admin/chat">/admin/chat</a></td><td><a href="/admin/system">/admin/system</a></td></tr>` +
+			`<tr><td>Doors + turns + scores</td><td><a href="/admin/doors">/admin/doors</a></td><td><a href="/admin/system">/admin/system</a></td></tr>` +
+			`<tr><td>Errors + audit logs</td><td><a href="/admin/errors">/admin/errors</a> / <a href="/admin/audit">/admin/audit</a></td><td><a href="/admin/system">/admin/system</a></td></tr>` +
+			`</table>`
+	}
+	runtimeConfigPath := strings.TrimSpace(config.ResolveConfigPath())
+	if runtimeConfigPath == "" {
+		runtimeConfigPath = "env-only defaults"
 	}
 	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Config Center</title></head><body><h1>Config Center</h1>` +
 		`<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/status">status</a> | <a href="/settings">settings</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>` +
 		`<p>Role: ` + htmlEscape(role) + `</p>` +
+		`<p><strong>Site:</strong> ` + htmlEscape(a.siteDisplayName()) + ` (` + htmlEscape(a.siteHost()) + `)</p>` +
 		`<h2>User Configuration</h2><ul>` +
 		`<li>Display + ANSI + pager + 24h clock: <a href="/settings">/settings</a></li>` +
 		`<li>Password + 2FA: <a href="/settings">/settings</a></li>` +
+		`<li>Personal inbox/outbox and posting workflow: <a href="/mail">/mail</a> and <a href="/boards">/boards</a></li>` +
 		`</ul>` +
-		`<h2>Runtime Feature Flags</h2><ul>` +
+		`<h2>Runtime Feature Flags (Current State)</h2><ul>` +
 		`<li>Discover: ` + boolToText(a.discover) + `</li>` +
 		`<li>Quick jump: ` + boolToText(a.quickJump) + `</li>` +
 		`<li>Classic search: ` + boolToText(a.classicSearch) + `</li>` +
 		`<li>Guest tour: ` + boolToText(a.guestTour) + `</li>` +
 		`<li>Web on-ramp: ` + boolToText(a.modernOnRamp) + `</li>` +
 		`<li>Read-only mode: ` + boolToText(a.readOnly) + `</li>` +
+		`<li>Secure cookie mode: ` + boolToText(a.secureCookie) + `</li>` +
+		`<li>External email requires verified account: ` + boolToText(a.requireVerifiedEmail) + `</li>` +
 		`</ul>` +
 		`<h2>Transport and Service Config</h2><ul>` +
+		`<li>ACS strict mode: ` + boolToText(a.runtimeCfg.ACS.Strict) + `</li>` +
 		`<li>Telnet login: ` + boolToText(a.runtimeCfg.Login.Telnet.Enabled) + ` (` + htmlEscape(a.runtimeCfg.Login.Telnet.Listen) + `)</li>` +
 		`<li>WebSocket login: ` + boolToText(a.runtimeCfg.Login.WebSocket.Enabled) + ` (` + htmlEscape(a.runtimeCfg.Login.WebSocket.Listen+a.runtimeCfg.Login.WebSocket.Path) + `)</li>` +
 		`<li>WebSocket TLS login: ` + boolToText(a.runtimeCfg.Login.WebSocketTLS.Enabled) + ` (` + htmlEscape(a.runtimeCfg.Login.WebSocketTLS.Listen+a.runtimeCfg.Login.WebSocketTLS.Path) + `)</li>` +
+		`<li>Trusted proxy CIDRs: <code>` + htmlEscape(a.runtimeCfg.Login.TrustedProxies) + `</code></li>` +
 		`<li>Gopher/NNTP/NNTPS: ` + htmlEscape(a.runtimeCfg.Content.GopherListen) + ` / ` + htmlEscape(a.runtimeCfg.Content.NNTPListen) + ` / ` + htmlEscape(a.runtimeCfg.Content.NNTPSListen) + `</li>` +
+		`<li>Content host: ` + htmlEscape(a.runtimeCfg.Content.Host) + `</li>` +
+		`<li>ActivityPub bridge: ` + boolToText(a.runtimeCfg.ActivityPub.Enabled) + ` (` + htmlEscape(a.runtimeCfg.ActivityPub.BaseURL) + `)</li>` +
 		`<li>DoorParty/BBSLink/Telnet bridge: ` + boolToText(a.runtimeCfg.Connectors.DoorParty.Enabled) + ` / ` + boolToText(a.runtimeCfg.Connectors.BBSLink.Enabled) + ` / ` + boolToText(a.runtimeCfg.Connectors.Telnet.Enabled) + `</li>` +
+		`<li>Connector commands: doorparty=<code>` + htmlEscape(a.runtimeCfg.Connectors.DoorParty.Command) + `</code> bbslink=<code>` + htmlEscape(a.runtimeCfg.Connectors.BBSLink.Command) + `</code> telnet=<code>` + htmlEscape(a.runtimeCfg.Connectors.Telnet.Command) + `</code></li>` +
 		`<li>Network spool dir: ` + htmlEscape(func() string {
 		if a.networkSvc == nil {
 			return "disabled"
@@ -1972,7 +2173,13 @@ func (a *webApp) handleConfigCenter(w http.ResponseWriter, r *http.Request) {
 		return status.SpoolDir
 	}()) + `</li>` +
 		`<li>Built-in mods: onelinerz / rumorz / bbslist / whos_online</li>` +
+		`<li>Runtime config source: <code>` + htmlEscape(runtimeConfigPath) + `</code></li>` +
 		`</ul>` +
+		`<h2>Easy Setup Path</h2><ol>` +
+		`<li>Open <a href="/admin/setup">/admin/setup</a> to set site identity and safety baseline.</li>` +
+		`<li>Use <a href="/admin/config">/admin/config</a> for runtime toggles and menu runtime.</li>` +
+		`<li>Use <a href="/status">/status</a> and <a href="/admin/system">/admin/system</a> to verify health.</li>` +
+		`</ol>` +
 		adminLinks +
 		`</body></html>`
 	w.WriteHeader(http.StatusOK)
@@ -2011,6 +2218,13 @@ func (a *webApp) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
+	setupNotice := strings.TrimSpace(r.URL.Query().Get("notice"))
+	setupStep := strings.TrimSpace(r.URL.Query().Get("step"))
+	switch setupStep {
+	case "1", "2", "3", "4":
+	default:
+		setupStep = "1"
+	}
 	if r.Method == http.MethodPost {
 		if !a.requireAdminWrite(w, r) {
 			return
@@ -2023,6 +2237,59 @@ func (a *webApp) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
 		case "ensure_mailbot":
 			seedServiceUsers(a.authSvc)
 			a.recordAdminAction(user.Handle, "setup", "ensure_mailbot", "mailbot service account checked")
+		case "save_setup_profile":
+			siteName := strings.TrimSpace(r.FormValue("site_name"))
+			siteHost := strings.TrimSpace(r.FormValue("site_hostname"))
+			if siteName == "" {
+				siteName = "WolfBBS"
+			}
+			if siteHost == "" {
+				siteHost = "localhost"
+			}
+			a.siteName = siteName
+			a.siteHostname = siteHost
+			a.motd = strings.TrimSpace(r.FormValue("motd"))
+			a.announcement = strings.TrimSpace(r.FormValue("announcement"))
+			a.readOnly = formHasValue(r, "read_only")
+			a.secureCookie = formHasValue(r, "secure_cookie")
+			a.requireVerifiedEmail = formHasValue(r, "require_verified_email")
+			a.modernOnRamp = formHasValue(r, "web_onramp")
+			a.guestTour = formHasValue(r, "guest_tour")
+			a.discover = formHasValue(r, "discover")
+			a.quickJump = formHasValue(r, "quick_jump")
+			a.classicSearch = formHasValue(r, "classic_search")
+			a.persistSystemSetting(sysSettingSiteName, a.siteName)
+			a.persistSystemSetting(sysSettingSiteHostname, a.siteHostname)
+			a.persistSystemSetting(sysSettingMOTD, a.motd)
+			a.persistSystemSetting(sysSettingAnnouncement, a.announcement)
+			a.persistSystemSetting(sysSettingReadOnly, strconv.FormatBool(a.readOnly))
+			a.persistSystemSetting(sysSettingSecureCookie, strconv.FormatBool(a.secureCookie))
+			a.persistSystemSetting(sysSettingRequireVerifiedEmail, strconv.FormatBool(a.requireVerifiedEmail))
+			a.persistSystemSetting(sysSettingWebOnRamp, strconv.FormatBool(a.modernOnRamp))
+			a.persistSystemSetting(sysSettingGuestTour, strconv.FormatBool(a.guestTour))
+			a.persistSystemSetting(sysSettingDiscover, strconv.FormatBool(a.discover))
+			a.persistSystemSetting(sysSettingQuickJump, strconv.FormatBool(a.quickJump))
+			a.persistSystemSetting(sysSettingClassicSearch, strconv.FormatBool(a.classicSearch))
+			a.recordAdminAction(
+				user.Handle,
+				"setup",
+				"save_setup_profile",
+				fmt.Sprintf(
+					"site=%s host=%s read_only=%t secure_cookie=%t require_verified=%t onramp=%t tour=%t discover=%t quick_jump=%t classic_search=%t",
+					a.siteName,
+					a.siteHostname,
+					a.readOnly,
+					a.secureCookie,
+					a.requireVerifiedEmail,
+					a.modernOnRamp,
+					a.guestTour,
+					a.discover,
+					a.quickJump,
+					a.classicSearch,
+				),
+			)
+			http.Redirect(w, r, "/admin/setup?notice="+url.QueryEscape("Setup profile saved."), http.StatusFound)
+			return
 		}
 		http.Redirect(w, r, "/admin/setup", http.StatusFound)
 		return
@@ -2068,12 +2335,60 @@ func (a *webApp) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
 	healthRows.WriteString(statusRow("Boards seeded", len(boards) > 0, strconv.Itoa(len(boards))+" board(s)"))
 	healthRows.WriteString(statusRow("Gateway settings", gatewayConfigured, boolToText(gatewayConfigured)))
 	healthRows.WriteString(statusRow("Inbound token configured", strings.TrimSpace(a.inboundToken) != "", boolToText(strings.TrimSpace(a.inboundToken) != "")))
+	healthRows.WriteString(statusRow("Site identity configured", strings.TrimSpace(a.siteName) != "" && strings.TrimSpace(a.siteHostname) != "", a.siteDisplayName()+" @ "+a.siteHost()))
+	healthRows.WriteString(statusRow("Secure cookie mode", a.secureCookie, boolToText(a.secureCookie)))
+	healthRows.WriteString(statusRow("Verified required for external email", a.requireVerifiedEmail, boolToText(a.requireVerifiedEmail)))
 
 	csrf := a.csrfHiddenInput(r)
+	noticeBlock := ""
+	if setupNotice != "" {
+		noticeBlock = `<p><strong>` + htmlEscape(setupNotice) + `</strong></p>`
+	}
+	wizardHint := map[string]string{
+		"1": "Step 1 of 4: set site identity, MOTD, and announcement text.",
+		"2": "Step 2 of 4: apply critical safety controls (secure cookie, verified email, read-only switch).",
+		"3": "Step 3 of 4: choose optional modern helpers while keeping ANSI-first defaults.",
+		"4": "Step 4 of 4: run bootstrap actions and confirm health checks are green.",
+	}[setupStep]
+	progress := `<ol>` +
+		`<li><a href="/admin/setup?step=1">Step 1: Identity</a></li>` +
+		`<li><a href="/admin/setup?step=2">Step 2: Safety</a></li>` +
+		`<li><a href="/admin/setup?step=3">Step 3: Experience</a></li>` +
+		`<li><a href="/admin/setup?step=4">Step 4: Bootstrap</a></li>` +
+		`</ol>`
 	page := `<html><body><h1>Setup & Install</h1><p><a href="/admin">back</a> | <a href="/admin/system">system</a> | <a href="/help">help</a></p>` +
 		`<p>Use this screen to verify base services and bootstrap sysop dependencies after install/upgrade.</p>` +
+		`<p>UI-first setup: keep installer flags minimal; set board identity and runtime policy here.</p>` +
+		`<h2>Setup Wizard</h2>` +
+		`<p>` + htmlEscape(wizardHint) + `</p>` +
+		progress +
+		`<p><strong>Tip:</strong> use the step links above, then save once after each section change.</p>` +
+		noticeBlock +
+		`<h2>Guided Setup Profile</h2><form method="POST"><input type="hidden" name="action" value="save_setup_profile">` + csrf +
+		`<fieldset><legend><strong>Step 1: Basic</strong></legend>` +
+		`<label>Site name <input name="site_name" value="` + htmlEscape(a.siteDisplayName()) + `" size="32"></label><br>` +
+		`<label>Hostname <input name="site_hostname" value="` + htmlEscape(a.siteHost()) + `" size="32"></label><br>` +
+		`<label>MOTD<br><textarea name="motd" rows="3" cols="90">` + htmlEscape(a.motd) + `</textarea></label><br>` +
+		`<label>Announcement<br><textarea name="announcement" rows="3" cols="90">` + htmlEscape(a.announcement) + `</textarea></label><br>` +
+		`<small><a href="/admin/setup?step=2">Next: Safety &raquo;</a></small>` +
+		`</fieldset>` +
+		`<fieldset><legend><strong>Step 2: Critical</strong></legend>` +
+		`<label><input type="checkbox" name="secure_cookie"` + checkedIf(a.secureCookie) + `> Secure cookie (enable behind HTTPS reverse proxy)</label><br>` +
+		`<label><input type="checkbox" name="require_verified_email"` + checkedIf(a.requireVerifiedEmail) + `> Require verified account for external email gateway</label><br>` +
+		`<label><input type="checkbox" name="read_only"` + checkedIf(a.readOnly) + `> Read-only maintenance mode</label><br>` +
+		`<small><a href="/admin/setup?step=1">&laquo; Back</a> | <a href="/admin/setup?step=3">Next: Experience &raquo;</a></small>` +
+		`</fieldset>` +
+		`<fieldset><legend><strong>Step 3: Expert</strong></legend>` +
+		`<label><input type="checkbox" name="web_onramp"` + checkedIf(a.modernOnRamp) + `> Enable web connect on-ramp</label><br>` +
+		`<label><input type="checkbox" name="guest_tour"` + checkedIf(a.guestTour) + `> Enable guest tour</label><br>` +
+		`<label><input type="checkbox" name="discover"` + checkedIf(a.discover) + `> Enable discover/newscan view</label><br>` +
+		`<label><input type="checkbox" name="quick_jump"` + checkedIf(a.quickJump) + `> Enable quick jump</label><br>` +
+		`<label><input type="checkbox" name="classic_search"` + checkedIf(a.classicSearch) + `> Enable classic search lists</label><br>` +
+		`<small><a href="/admin/setup?step=2">&laquo; Back</a> | <a href="/admin/setup?step=4">Next: Bootstrap &raquo;</a></small>` +
+		`</fieldset>` +
+		`<button type="submit">Save Setup Profile</button></form>` +
 		`<table border="1"><tr><th>Check</th><th>Status</th><th>Details</th></tr>` + healthRows.String() + `</table>` +
-		`<h2>Bootstrap Actions</h2>` +
+		`<h2>Step 4: Bootstrap Actions</h2>` +
 		`<form method="POST"><input type="hidden" name="action" value="seed_default_boards">` + csrf + `<button type="submit">Seed Default Boards</button></form>` +
 		`<form method="POST"><input type="hidden" name="action" value="ensure_mailbot">` + csrf + `<button type="submit">Ensure Mailbot Account</button></form>` +
 		`<h2>Install and Ops Shortcuts</h2>` +
@@ -2112,6 +2427,22 @@ func (a *webApp) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		action := strings.ToLower(strings.TrimSpace(r.FormValue("action")))
 		switch action {
+		case "save_identity":
+			siteName := strings.TrimSpace(r.FormValue("site_name"))
+			siteHost := strings.TrimSpace(r.FormValue("site_hostname"))
+			if siteName == "" {
+				siteName = "WolfBBS"
+			}
+			if siteHost == "" {
+				siteHost = "localhost"
+			}
+			a.siteName = siteName
+			a.siteHostname = siteHost
+			a.persistSystemSetting(sysSettingSiteName, a.siteName)
+			a.persistSystemSetting(sysSettingSiteHostname, a.siteHostname)
+			a.recordAdminAction(user.Handle, "config", "save_identity", "site="+a.siteName+" host="+a.siteHostname)
+			http.Redirect(w, r, "/admin/config", http.StatusFound)
+			return
 		case "save_text":
 			a.motd = strings.TrimSpace(r.FormValue("motd"))
 			a.announcement = strings.TrimSpace(r.FormValue("announcement"))
@@ -2120,20 +2451,108 @@ func (a *webApp) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 			a.recordAdminAction(user.Handle, "config", "save_site_text", "updated motd/announcement")
 			http.Redirect(w, r, "/admin/config", http.StatusFound)
 			return
-		case "save_flags":
+		case "save_security":
 			a.readOnly = formHasValue(r, "read_only")
+			a.secureCookie = formHasValue(r, "secure_cookie")
+			a.requireVerifiedEmail = formHasValue(r, "require_verified_email")
+			a.persistSystemSetting(sysSettingReadOnly, strconv.FormatBool(a.readOnly))
+			a.persistSystemSetting(sysSettingSecureCookie, strconv.FormatBool(a.secureCookie))
+			a.persistSystemSetting(sysSettingRequireVerifiedEmail, strconv.FormatBool(a.requireVerifiedEmail))
+			a.recordAdminAction(
+				user.Handle,
+				"config",
+				"save_security_flags",
+				fmt.Sprintf("read_only=%t secure_cookie=%t require_verified=%t", a.readOnly, a.secureCookie, a.requireVerifiedEmail),
+			)
+			http.Redirect(w, r, "/admin/config", http.StatusFound)
+			return
+		case "save_flags":
 			a.modernOnRamp = formHasValue(r, "web_onramp")
 			a.guestTour = formHasValue(r, "guest_tour")
 			a.discover = formHasValue(r, "discover")
 			a.quickJump = formHasValue(r, "quick_jump")
 			a.classicSearch = formHasValue(r, "classic_search")
-			a.persistSystemSetting(sysSettingReadOnly, strconv.FormatBool(a.readOnly))
 			a.persistSystemSetting(sysSettingWebOnRamp, strconv.FormatBool(a.modernOnRamp))
 			a.persistSystemSetting(sysSettingGuestTour, strconv.FormatBool(a.guestTour))
 			a.persistSystemSetting(sysSettingDiscover, strconv.FormatBool(a.discover))
 			a.persistSystemSetting(sysSettingQuickJump, strconv.FormatBool(a.quickJump))
 			a.persistSystemSetting(sysSettingClassicSearch, strconv.FormatBool(a.classicSearch))
-			a.recordAdminAction(user.Handle, "config", "save_runtime_flags", fmt.Sprintf("read_only=%t web_onramp=%t guest_tour=%t discover=%t quick_jump=%t classic_search=%t", a.readOnly, a.modernOnRamp, a.guestTour, a.discover, a.quickJump, a.classicSearch))
+			a.recordAdminAction(user.Handle, "config", "save_runtime_flags", fmt.Sprintf("web_onramp=%t guest_tour=%t discover=%t quick_jump=%t classic_search=%t", a.modernOnRamp, a.guestTour, a.discover, a.quickJump, a.classicSearch))
+			http.Redirect(w, r, "/admin/config", http.StatusFound)
+			return
+		case "save_runtime_services":
+			a.runtimeCfg.ACS.Strict = formHasValue(r, "acs_strict")
+			a.runtimeCfg.Content.Host = strings.TrimSpace(r.FormValue("content_host"))
+			a.runtimeCfg.Content.GopherListen = strings.TrimSpace(r.FormValue("content_gopher_listen"))
+			a.runtimeCfg.Content.NNTPListen = strings.TrimSpace(r.FormValue("content_nntp_listen"))
+			a.runtimeCfg.Content.NNTPSListen = strings.TrimSpace(r.FormValue("content_nntps_listen"))
+			a.runtimeCfg.Content.NNTPSCert = strings.TrimSpace(r.FormValue("content_nntps_cert"))
+			a.runtimeCfg.Content.NNTPSKey = strings.TrimSpace(r.FormValue("content_nntps_key"))
+			a.runtimeCfg.ActivityPub.Enabled = formHasValue(r, "activitypub_enabled")
+			a.runtimeCfg.ActivityPub.BaseURL = strings.TrimSpace(r.FormValue("activitypub_base_url"))
+			a.runtimeCfg.Login.Telnet.Enabled = formHasValue(r, "login_telnet_enabled")
+			a.runtimeCfg.Login.Telnet.Listen = strings.TrimSpace(r.FormValue("login_telnet_listen"))
+			a.runtimeCfg.Login.WebSocket.Enabled = formHasValue(r, "login_ws_enabled")
+			a.runtimeCfg.Login.WebSocket.Listen = strings.TrimSpace(r.FormValue("login_ws_listen"))
+			a.runtimeCfg.Login.WebSocket.Path = strings.TrimSpace(r.FormValue("login_ws_path"))
+			a.runtimeCfg.Login.WebSocketTLS.Enabled = formHasValue(r, "login_wss_enabled")
+			a.runtimeCfg.Login.WebSocketTLS.Listen = strings.TrimSpace(r.FormValue("login_wss_listen"))
+			a.runtimeCfg.Login.WebSocketTLS.Path = strings.TrimSpace(r.FormValue("login_wss_path"))
+			a.runtimeCfg.Login.WebSocketTLS.Cert = strings.TrimSpace(r.FormValue("login_wss_cert"))
+			a.runtimeCfg.Login.WebSocketTLS.Key = strings.TrimSpace(r.FormValue("login_wss_key"))
+			a.runtimeCfg.Login.TrustedProxies = strings.TrimSpace(r.FormValue("login_trusted_proxies"))
+			a.runtimeCfg.Connectors.DoorParty.Enabled = formHasValue(r, "connector_doorparty_enabled")
+			a.runtimeCfg.Connectors.DoorParty.Command = strings.TrimSpace(r.FormValue("connector_doorparty_command"))
+			a.runtimeCfg.Connectors.DoorParty.Args = strings.TrimSpace(r.FormValue("connector_doorparty_args"))
+			a.runtimeCfg.Connectors.BBSLink.Enabled = formHasValue(r, "connector_bbslink_enabled")
+			a.runtimeCfg.Connectors.BBSLink.Command = strings.TrimSpace(r.FormValue("connector_bbslink_command"))
+			a.runtimeCfg.Connectors.BBSLink.Args = strings.TrimSpace(r.FormValue("connector_bbslink_args"))
+			a.runtimeCfg.Connectors.Telnet.Enabled = formHasValue(r, "connector_telnet_enabled")
+			a.runtimeCfg.Connectors.Telnet.Command = strings.TrimSpace(r.FormValue("connector_telnet_command"))
+			a.runtimeCfg.Connectors.Telnet.Args = strings.TrimSpace(r.FormValue("connector_telnet_args"))
+			a.persistSystemSetting(sysSettingACSStrict, strconv.FormatBool(a.runtimeCfg.ACS.Strict))
+			a.persistSystemSetting(sysSettingContentHost, a.runtimeCfg.Content.Host)
+			a.persistSystemSetting(sysSettingContentGopherListen, a.runtimeCfg.Content.GopherListen)
+			a.persistSystemSetting(sysSettingContentNNTPListen, a.runtimeCfg.Content.NNTPListen)
+			a.persistSystemSetting(sysSettingContentNNTPSListen, a.runtimeCfg.Content.NNTPSListen)
+			a.persistSystemSetting(sysSettingContentNNTPSCert, a.runtimeCfg.Content.NNTPSCert)
+			a.persistSystemSetting(sysSettingContentNNTPSKey, a.runtimeCfg.Content.NNTPSKey)
+			a.persistSystemSetting(sysSettingActivityPubEnabled, strconv.FormatBool(a.runtimeCfg.ActivityPub.Enabled))
+			a.persistSystemSetting(sysSettingActivityPubBaseURL, a.runtimeCfg.ActivityPub.BaseURL)
+			a.persistSystemSetting(sysSettingLoginTelnetEnabled, strconv.FormatBool(a.runtimeCfg.Login.Telnet.Enabled))
+			a.persistSystemSetting(sysSettingLoginTelnetListen, a.runtimeCfg.Login.Telnet.Listen)
+			a.persistSystemSetting(sysSettingLoginWSEnabled, strconv.FormatBool(a.runtimeCfg.Login.WebSocket.Enabled))
+			a.persistSystemSetting(sysSettingLoginWSListen, a.runtimeCfg.Login.WebSocket.Listen)
+			a.persistSystemSetting(sysSettingLoginWSPath, a.runtimeCfg.Login.WebSocket.Path)
+			a.persistSystemSetting(sysSettingLoginWSSEnabled, strconv.FormatBool(a.runtimeCfg.Login.WebSocketTLS.Enabled))
+			a.persistSystemSetting(sysSettingLoginWSSListen, a.runtimeCfg.Login.WebSocketTLS.Listen)
+			a.persistSystemSetting(sysSettingLoginWSSPath, a.runtimeCfg.Login.WebSocketTLS.Path)
+			a.persistSystemSetting(sysSettingLoginWSSCert, a.runtimeCfg.Login.WebSocketTLS.Cert)
+			a.persistSystemSetting(sysSettingLoginWSSKey, a.runtimeCfg.Login.WebSocketTLS.Key)
+			a.persistSystemSetting(sysSettingTrustedProxies, a.runtimeCfg.Login.TrustedProxies)
+			a.persistSystemSetting(sysSettingConnectorDoorPartyOn, strconv.FormatBool(a.runtimeCfg.Connectors.DoorParty.Enabled))
+			a.persistSystemSetting(sysSettingConnectorDoorPartyCmd, a.runtimeCfg.Connectors.DoorParty.Command)
+			a.persistSystemSetting(sysSettingConnectorDoorPartyArgs, a.runtimeCfg.Connectors.DoorParty.Args)
+			a.persistSystemSetting(sysSettingConnectorBBSLinkOn, strconv.FormatBool(a.runtimeCfg.Connectors.BBSLink.Enabled))
+			a.persistSystemSetting(sysSettingConnectorBBSLinkCmd, a.runtimeCfg.Connectors.BBSLink.Command)
+			a.persistSystemSetting(sysSettingConnectorBBSLinkArgs, a.runtimeCfg.Connectors.BBSLink.Args)
+			a.persistSystemSetting(sysSettingConnectorTelnetOn, strconv.FormatBool(a.runtimeCfg.Connectors.Telnet.Enabled))
+			a.persistSystemSetting(sysSettingConnectorTelnetCmd, a.runtimeCfg.Connectors.Telnet.Command)
+			a.persistSystemSetting(sysSettingConnectorTelnetArgs, a.runtimeCfg.Connectors.Telnet.Args)
+			a.recordAdminAction(
+				user.Handle,
+				"config",
+				"save_runtime_services",
+				fmt.Sprintf(
+					"telnet=%t ws=%t wss=%t gopher=%s nntp=%s nntps=%s",
+					a.runtimeCfg.Login.Telnet.Enabled,
+					a.runtimeCfg.Login.WebSocket.Enabled,
+					a.runtimeCfg.Login.WebSocketTLS.Enabled,
+					a.runtimeCfg.Content.GopherListen,
+					a.runtimeCfg.Content.NNTPListen,
+					a.runtimeCfg.Content.NNTPSListen,
+				),
+			)
 			http.Redirect(w, r, "/admin/config", http.StatusFound)
 			return
 		case "save_menu_settings":
@@ -3420,7 +3839,11 @@ func (a *webApp) handleAdminSystem(w http.ResponseWriter, r *http.Request) {
 
 	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>System / WFC Dashboard</title></head><body><h1>System / WFC Dashboard</h1><p><a href="/admin">back</a> | <a href="/admin/setup">setup</a> | <a href="/admin/config">config</a> | <a href="/admin/errors">errors</a> | <a href="/admin/node-state">node-state json</a> | <a href="/help">help</a></p>` +
 		`<table border="1"><tr><th>Metric</th><th>Value</th></tr>` +
+		`<tr><td>Site name</td><td>` + htmlEscape(a.siteDisplayName()) + `</td></tr>` +
+		`<tr><td>Site hostname</td><td>` + htmlEscape(a.siteHost()) + `</td></tr>` +
 		`<tr><td>Read-only mode</td><td>` + boolToText(a.readOnly) + `</td></tr>` +
+		`<tr><td>Secure cookie mode</td><td>` + boolToText(a.secureCookie) + `</td></tr>` +
+		`<tr><td>Require verified external email</td><td>` + boolToText(a.requireVerifiedEmail) + `</td></tr>` +
 		`<tr><td>Uptime</td><td>` + uptime + `</td></tr>` +
 		`<tr><td>Web sessions</td><td>` + strconv.Itoa(webSessions) + `</td></tr>` +
 		`<tr><td>Users</td><td>` + strconv.Itoa(userCount) + `</td></tr>` +
@@ -3784,6 +4207,46 @@ func (a *webApp) loadPersistedAdminSettings() {
 	if len(settings) == 0 {
 		return
 	}
+	applyText := func(key string, target *string) {
+		if target == nil {
+			return
+		}
+		value, ok := settings[key]
+		if !ok {
+			return
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		*target = value
+	}
+	applyBool := func(key string, target *bool) {
+		if target == nil {
+			return
+		}
+		value, ok := settings[key]
+		if !ok {
+			return
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		*target = parseCheckbox(value)
+	}
+	if value, ok := settings[sysSettingSiteName]; ok {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			a.siteName = value
+		}
+	}
+	if value, ok := settings[sysSettingSiteHostname]; ok {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			a.siteHostname = value
+		}
+	}
 	if value, ok := settings[sysSettingMOTD]; ok {
 		a.motd = strings.TrimSpace(value)
 	}
@@ -3792,6 +4255,12 @@ func (a *webApp) loadPersistedAdminSettings() {
 	}
 	if value, ok := settings[sysSettingReadOnly]; ok && strings.TrimSpace(value) != "" {
 		a.readOnly = parseCheckbox(value)
+	}
+	if value, ok := settings[sysSettingSecureCookie]; ok && strings.TrimSpace(value) != "" {
+		a.secureCookie = parseCheckbox(value)
+	}
+	if value, ok := settings[sysSettingRequireVerifiedEmail]; ok && strings.TrimSpace(value) != "" {
+		a.requireVerifiedEmail = parseCheckbox(value)
 	}
 	if value, ok := settings[sysSettingWebOnRamp]; ok && strings.TrimSpace(value) != "" {
 		a.modernOnRamp = parseCheckbox(value)
@@ -3817,6 +4286,35 @@ func (a *webApp) loadPersistedAdminSettings() {
 			a.runtimeCfg.Menu.File = value
 		}
 	}
+	applyBool(sysSettingACSStrict, &a.runtimeCfg.ACS.Strict)
+	applyText(sysSettingContentHost, &a.runtimeCfg.Content.Host)
+	applyText(sysSettingContentGopherListen, &a.runtimeCfg.Content.GopherListen)
+	applyText(sysSettingContentNNTPListen, &a.runtimeCfg.Content.NNTPListen)
+	applyText(sysSettingContentNNTPSListen, &a.runtimeCfg.Content.NNTPSListen)
+	applyText(sysSettingContentNNTPSCert, &a.runtimeCfg.Content.NNTPSCert)
+	applyText(sysSettingContentNNTPSKey, &a.runtimeCfg.Content.NNTPSKey)
+	applyBool(sysSettingActivityPubEnabled, &a.runtimeCfg.ActivityPub.Enabled)
+	applyText(sysSettingActivityPubBaseURL, &a.runtimeCfg.ActivityPub.BaseURL)
+	applyBool(sysSettingLoginTelnetEnabled, &a.runtimeCfg.Login.Telnet.Enabled)
+	applyText(sysSettingLoginTelnetListen, &a.runtimeCfg.Login.Telnet.Listen)
+	applyBool(sysSettingLoginWSEnabled, &a.runtimeCfg.Login.WebSocket.Enabled)
+	applyText(sysSettingLoginWSListen, &a.runtimeCfg.Login.WebSocket.Listen)
+	applyText(sysSettingLoginWSPath, &a.runtimeCfg.Login.WebSocket.Path)
+	applyBool(sysSettingLoginWSSEnabled, &a.runtimeCfg.Login.WebSocketTLS.Enabled)
+	applyText(sysSettingLoginWSSListen, &a.runtimeCfg.Login.WebSocketTLS.Listen)
+	applyText(sysSettingLoginWSSPath, &a.runtimeCfg.Login.WebSocketTLS.Path)
+	applyText(sysSettingLoginWSSCert, &a.runtimeCfg.Login.WebSocketTLS.Cert)
+	applyText(sysSettingLoginWSSKey, &a.runtimeCfg.Login.WebSocketTLS.Key)
+	applyText(sysSettingTrustedProxies, &a.runtimeCfg.Login.TrustedProxies)
+	applyBool(sysSettingConnectorDoorPartyOn, &a.runtimeCfg.Connectors.DoorParty.Enabled)
+	applyText(sysSettingConnectorDoorPartyCmd, &a.runtimeCfg.Connectors.DoorParty.Command)
+	applyText(sysSettingConnectorDoorPartyArgs, &a.runtimeCfg.Connectors.DoorParty.Args)
+	applyBool(sysSettingConnectorBBSLinkOn, &a.runtimeCfg.Connectors.BBSLink.Enabled)
+	applyText(sysSettingConnectorBBSLinkCmd, &a.runtimeCfg.Connectors.BBSLink.Command)
+	applyText(sysSettingConnectorBBSLinkArgs, &a.runtimeCfg.Connectors.BBSLink.Args)
+	applyBool(sysSettingConnectorTelnetOn, &a.runtimeCfg.Connectors.Telnet.Enabled)
+	applyText(sysSettingConnectorTelnetCmd, &a.runtimeCfg.Connectors.Telnet.Command)
+	applyText(sysSettingConnectorTelnetArgs, &a.runtimeCfg.Connectors.Telnet.Args)
 	a.loadLockedChannels(settings[sysSettingLockedChannels])
 }
 
@@ -3929,6 +4427,28 @@ func boolToText(v bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+func (a *webApp) siteDisplayName() string {
+	if a == nil {
+		return "WolfBBS"
+	}
+	name := strings.TrimSpace(a.siteName)
+	if name == "" {
+		name = "WolfBBS"
+	}
+	return name
+}
+
+func (a *webApp) siteHost() string {
+	if a == nil {
+		return "localhost"
+	}
+	host := strings.TrimSpace(a.siteHostname)
+	if host == "" {
+		host = "localhost"
+	}
+	return host
 }
 
 func checkedAttr(active bool) string {
@@ -4054,13 +4574,15 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 	chatPage := `<!doctype html>
 	<html>
 	<body>
-		<h1>WolfBBS Chat</h1>
+		<h1>` + htmlEscape(a.siteDisplayName()) + ` Chat</h1>
 		<p>Logged in as ` + user.Handle + `</p>
 		<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/settings">settings</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
+		<p><strong>Quick keys:</strong> Enter sends message, Ctrl+L clears chat pane, channel selector switches rooms instantly.</p>
 		<p><label>Channel:
 			<select id="channelSelect"></select>
 		</label></p>
 		<div id="chat" style="height:300px; width: 800px; border:1px solid #333; overflow:auto; font-family: monospace; white-space: pre;"></div>
+		<p id="chatStatus" style="font-family: monospace;">Ready.</p>
 		<form id="sendForm">
 			<input type="text" id="message" style="width: 600px;" autocomplete="off">
 			<button type="submit">Send</button>
@@ -4072,6 +4594,10 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 		<script>
 			const csrf = ` + csrfJSON + `;
 			const streamState = {es: null, channel: '#lobby'};
+			function setStatus(msg) {
+				const el = document.getElementById('chatStatus');
+				if (el) el.textContent = msg;
+			}
 
 			function formatLine(m) {
 				return '[' + m.created_at + '] ' + m.from + ': ' + m.body;
@@ -4079,7 +4605,10 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 
 			async function loadChannels() {
 				const res = await fetch('/chat/channels', {credentials: 'same-origin'});
-				if (!res.ok) return;
+				if (!res.ok) {
+					setStatus('Failed to load channels.');
+					return;
+				}
 				const payload = await res.json();
 				const select = document.getElementById('channelSelect');
 				select.innerHTML = '';
@@ -4100,7 +4629,10 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 			async function loadHistory() {
 				const ch = streamState.channel;
 				const res = await fetch('/chat/history?channel=' + encodeURIComponent(ch) + '&limit=100', {credentials: 'same-origin'});
-				if (!res.ok) return;
+				if (!res.ok) {
+					setStatus('Could not load history for ' + ch);
+					return;
+				}
 				const payload = await res.json();
 				const box = document.getElementById('chat');
 				box.textContent = '';
@@ -4114,7 +4646,10 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 			async function loadOnline() {
 				const ch = streamState.channel;
 				const res = await fetch('/chat/online?channel=' + encodeURIComponent(ch), {credentials: 'same-origin'});
-				if (!res.ok) return;
+				if (!res.ok) {
+					setStatus('Could not load online list.');
+					return;
+				}
 				const payload = await res.json();
 				const online = document.getElementById('online');
 				const names = (payload.presence || []).map((p) => p.nick).join(', ');
@@ -4123,7 +4658,7 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 
 			async function join() {
 				const ch = streamState.channel;
-				await fetch('/chat/join', {
+				const res = await fetch('/chat/join', {
 					method: 'POST',
 					headers: {
 						'Content-Type': 'application/json',
@@ -4131,6 +4666,9 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 					},
 					body: JSON.stringify({ channel: ch }),
 				});
+				if (!res.ok) {
+					setStatus('Join failed for ' + ch);
+				}
 			}
 
 			function stopStream() {
@@ -4151,9 +4689,11 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 					const box = document.getElementById('chat');
 					box.appendChild(line);
 					box.scrollTop = box.scrollHeight;
+					setStatus('Live on ' + streamState.channel);
 				};
 				es.onerror = function() {
 					es.close();
+					setStatus('Realtime disconnected; retrying...');
 					setTimeout(watch, 1200);
 				};
 			}
@@ -4182,13 +4722,28 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 				evt.preventDefault();
 				const message = document.getElementById('message').value;
 				if (!message) return;
-				await fetch('/chat/send', {
+				const sendRes = await fetch('/chat/send', {
 					method:'POST',
 					headers:{'Content-Type':'application/json','X-CSRF-Token': csrf},
 					body: JSON.stringify({channel: streamState.channel, message: message}),
 				});
+				if (!sendRes.ok) {
+					const body = await sendRes.text();
+					setStatus('Send failed: ' + body);
+					return;
+				}
 				document.getElementById('message').value = '';
+				setStatus('Sent to ' + streamState.channel);
 				await loadHistory();
+			});
+
+			document.getElementById('message').addEventListener('keydown', function(evt){
+				if (evt.key === 'l' && evt.ctrlKey) {
+					evt.preventDefault();
+					const box = document.getElementById('chat');
+					box.textContent = '';
+					setStatus('Chat pane cleared.');
+				}
 			});
 
 			window.addEventListener('load', async () => {
@@ -4832,6 +5387,48 @@ func htmlEscape(value string) string {
 	return value
 }
 
+func pageMessageBlock(r *http.Request) string {
+	if r == nil || r.URL == nil {
+		return ""
+	}
+	notice := strings.TrimSpace(r.URL.Query().Get("notice"))
+	errText := strings.TrimSpace(r.URL.Query().Get("error"))
+	out := strings.Builder{}
+	if notice != "" {
+		out.WriteString(`<p><strong>Notice:</strong> ` + htmlEscape(notice) + `</p>`)
+	}
+	if errText != "" {
+		out.WriteString(`<p><strong>Error:</strong> ` + htmlEscape(errText) + `</p>`)
+	}
+	return out.String()
+}
+
+func redirectWithNotice(w http.ResponseWriter, r *http.Request, path, notice string) {
+	redirectWithQueryMessage(w, r, path, "notice", notice)
+}
+
+func redirectWithError(w http.ResponseWriter, r *http.Request, path, errText string) {
+	redirectWithQueryMessage(w, r, path, "error", errText)
+}
+
+func redirectWithQueryMessage(w http.ResponseWriter, r *http.Request, path, key, value string) {
+	key = strings.TrimSpace(key)
+	value = strings.TrimSpace(value)
+	if key == "" || value == "" {
+		http.Redirect(w, r, path, http.StatusFound)
+		return
+	}
+	u, err := url.Parse(path)
+	if err != nil {
+		http.Redirect(w, r, path, http.StatusFound)
+		return
+	}
+	q := u.Query()
+	q.Set(key, value)
+	u.RawQuery = q.Encode()
+	http.Redirect(w, r, u.String(), http.StatusFound)
+}
+
 func quoteBody(body string) string {
 	lines := strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
 	out := make([]string, 0, len(lines))
@@ -5007,7 +5604,12 @@ func writeJSON(w http.ResponseWriter, status int, body interface{}) error {
 	return err
 }
 
-func loginPage(path string, showConnect bool, showTour bool) string {
+func loginPage(siteName, path string, showConnect bool, showTour bool) string {
+	siteName = strings.TrimSpace(siteName)
+	if siteName == "" {
+		siteName = "WolfBBS"
+	}
+	title := htmlEscape(siteName)
 	extra := strings.Builder{}
 	if showConnect {
 		extra.WriteString(`<p><a href="/connect">Quick connect</a></p>`)
@@ -5019,8 +5621,8 @@ func loginPage(path string, showConnect bool, showTour bool) string {
 	if strings.HasPrefix(strings.TrimSpace(path), "/admin") {
 		postPath = "/admin/login"
 	}
-	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>WolfBBS Login</title></head><body>
-	<h1>WolfBBS Web Login</h1>
+	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>` + title + ` Login</title></head><body>
+	<h1>` + title + ` Web Login</h1>
 	<p><a href="/help">Help</a></p>
 	<form method="POST" action="` + postPath + `">
 		<label>Handle: <input name="handle"></label><br>
@@ -5033,12 +5635,17 @@ func loginPage(path string, showConnect bool, showTour bool) string {
 	</body></html>`
 }
 
-func resetRequestPage(message string) string {
+func resetRequestPage(siteName, message string) string {
+	siteName = strings.TrimSpace(siteName)
+	if siteName == "" {
+		siteName = "WolfBBS"
+	}
+	title := htmlEscape(siteName)
 	if strings.TrimSpace(message) != "" {
 		message = `<p>` + message + `</p>`
 	}
 	return `<html><body>
-	<h1>WolfBBS Password Reset</h1>
+	<h1>` + title + ` Password Reset</h1>
 	<p><a href="/help">Help</a></p>
 	<p>Enter your handle and we will issue a reset token.</p>
 	<form method="POST" action="/reset/request">
@@ -5049,14 +5656,19 @@ func resetRequestPage(message string) string {
 	</body></html>`
 }
 
-func resetCompletePage(token, message string) string {
+func resetCompletePage(siteName, token, message string) string {
+	siteName = strings.TrimSpace(siteName)
+	if siteName == "" {
+		siteName = "WolfBBS"
+	}
+	title := htmlEscape(siteName)
 	token = htmlEscape(strings.TrimSpace(token))
 	message = strings.TrimSpace(message)
 	if message != "" {
 		message = `<p>` + htmlEscape(message) + `</p>`
 	}
 	return `<html><body>
-	<h1>Set New Password</h1>
+	<h1>` + title + ` Set New Password</h1>
 	<p><a href="/help">Help</a></p>
 	<form method="POST" action="/reset/complete">
 		<input type="hidden" name="token" value="` + token + `">

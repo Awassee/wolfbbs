@@ -10,6 +10,7 @@ run_web=true
 web_timeout_seconds="${WOLFBBS_WEB_E2E_TIMEOUT_SECONDS:-900}"
 allow_unsupported_node="${WOLFBBS_ALLOW_UNSUPPORTED_NODE:-false}"
 skip_browser_install="${WOLFBBS_SKIP_BROWSER_INSTALL:-false}"
+skip_npm_install="${WOLFBBS_SKIP_NPM_INSTALL:-false}"
 web_e2e_mirror_mode="${WOLFBBS_WEB_E2E_MIRROR:-auto}"
 web_e2e_mirror_dir="${WOLFBBS_WEB_E2E_MIRROR_DIR:-/tmp/wolfbbs-web-e2e-runner}"
 web_e2e_dir="${WOLFBBS_WEB_E2E_DIR:-$ROOT_DIR/e2e/web}"
@@ -23,13 +24,20 @@ has_cmd() {
 run_with_timeout() {
   local seconds="$1"
   shift
-  if has_cmd timeout; then
-    timeout "$seconds" "$@"
-    return $?
+  local command_name="$1"
+  local is_function=false
+  if declare -F "$command_name" >/dev/null 2>&1; then
+    is_function=true
   fi
-  if has_cmd gtimeout; then
-    gtimeout "$seconds" "$@"
-    return $?
+  if [[ "$is_function" == "false" ]]; then
+    if has_cmd timeout; then
+      timeout "$seconds" "$@"
+      return $?
+    fi
+    if has_cmd gtimeout; then
+      gtimeout "$seconds" "$@"
+      return $?
+    fi
   fi
 
   "$@" &
@@ -143,6 +151,97 @@ run_npm() {
   PATH="$npm_dir:$PATH" "$npm_bin" --prefix "$web_e2e_dir" "$@"
 }
 
+run_npm_skip_browser_download() {
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 run_npm "$@"
+}
+
+file_hash() {
+  local file="$1"
+  if has_cmd shasum; then
+    shasum -a 256 "$file" | awk '{print $1}'
+    return 0
+  fi
+  if has_cmd sha256sum; then
+    sha256sum "$file" | awk '{print $1}'
+    return 0
+  fi
+  return 1
+}
+
+npm_lock_hash_file() {
+  echo "$web_e2e_dir/node_modules/.wolfbbs-lock.sha256"
+}
+
+npm_install_needed() {
+  local lock_file="$web_e2e_dir/package-lock.json"
+  local node_modules_dir="$web_e2e_dir/node_modules"
+  local playwright_pkg="$node_modules_dir/@playwright/test"
+  local stamp_file
+  stamp_file="$(npm_lock_hash_file)"
+
+  if [[ ! -d "$node_modules_dir" || ! -d "$playwright_pkg" ]]; then
+    return 0
+  fi
+  if [[ ! -f "$lock_file" ]]; then
+    # Without a lockfile, fall back to installing to keep dependencies consistent.
+    return 0
+  fi
+  if [[ ! -f "$stamp_file" ]]; then
+    return 0
+  fi
+  local current_hash
+  local recorded_hash
+  current_hash="$(file_hash "$lock_file" || true)"
+  recorded_hash="$(tr -d ' \n\r\t' <"$stamp_file" 2>/dev/null || true)"
+  if [[ -z "$current_hash" || -z "$recorded_hash" || "$current_hash" != "$recorded_hash" ]]; then
+    return 0
+  fi
+  return 1
+}
+
+record_npm_lock_hash() {
+  local lock_file="$web_e2e_dir/package-lock.json"
+  local stamp_file
+  stamp_file="$(npm_lock_hash_file)"
+  if [[ ! -f "$lock_file" ]]; then
+    return 0
+  fi
+  local hash
+  hash="$(file_hash "$lock_file" || true)"
+  if [[ -z "$hash" ]]; then
+    return 0
+  fi
+  mkdir -p "$(dirname "$stamp_file")"
+  printf '%s\n' "$hash" >"$stamp_file"
+}
+
+free_space_mb() {
+  local path="$1"
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    df -Pm "$path" | awk 'NR==2 {print $4}'
+  else
+    df -Pm "$path" | awk 'NR==2 {print $4}'
+  fi
+}
+
+ensure_disk_space_for_browser_install() {
+  local min_mb="${WOLFBBS_WEB_E2E_MIN_FREE_MB:-1200}"
+  if ! [[ "$min_mb" =~ ^[0-9]+$ ]]; then
+    min_mb=1200
+  fi
+  local free_mb
+  free_mb="$(free_space_mb "$ROOT_DIR" 2>/dev/null || echo 0)"
+  if ! [[ "$free_mb" =~ ^[0-9]+$ ]]; then
+    free_mb=0
+  fi
+  if (( free_mb < min_mb )); then
+    echo "Insufficient free disk for Playwright browser install: ${free_mb}MB available, ${min_mb}MB required." >&2
+    echo "Set WOLFBBS_SKIP_BROWSER_INSTALL=true if browsers are already installed, or free disk space and retry." >&2
+    return 1
+  fi
+  return 0
+}
+
 prepare_web_e2e_dir() {
   local source_dir="$ROOT_DIR/e2e/web"
   local mirror_mode
@@ -252,6 +351,8 @@ Options:
                  Allow Playwright run on Node >= 25 (may hang in some environments)
   --skip-browser-install
                  Skip Playwright browser installation step (or set WOLFBBS_SKIP_BROWSER_INSTALL=true)
+  --skip-npm-install
+                 Skip npm dependency installation step (or set WOLFBBS_SKIP_NPM_INSTALL=true)
 Environment overrides:
   WOLFBBS_NODE_BIN / WOLFBBS_NPM_BIN
                  Explicit node/npm binaries for web e2e (useful on macOS with node@24)
@@ -291,6 +392,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-browser-install)
       skip_browser_install=true
+      ;;
+    --skip-npm-install)
+      skip_npm_install=true
       ;;
     -h|--help)
       usage
@@ -342,15 +446,39 @@ if [[ "$run_web" == "true" ]]; then
   echo "Web e2e node toolchain: node=${node_bin} npm=${npm_bin} (major=${local_node_major})"
   echo "Web e2e working directory: ${web_e2e_dir}"
   echo "[3/3] web e2e (Playwright)"
-  if ! run_with_timeout "$web_timeout_seconds" run_npm install; then
-    echo "web e2e dependency install failed or timed out" >&2
-    exit 1
+  if [[ "$skip_npm_install" == "true" ]]; then
+    echo "Skipping npm dependency install (--skip-npm-install)."
+  elif npm_install_needed; then
+    echo "Installing web e2e dependencies..."
+    if [[ -f "$web_e2e_dir/package-lock.json" ]]; then
+      if ! run_with_timeout "$web_timeout_seconds" run_npm_skip_browser_download ci; then
+        echo "web e2e dependency install (npm ci) failed or timed out" >&2
+        exit 1
+      fi
+    else
+      if ! run_with_timeout "$web_timeout_seconds" run_npm_skip_browser_download install; then
+        echo "web e2e dependency install (npm install) failed or timed out" >&2
+        exit 1
+      fi
+    fi
+    record_npm_lock_hash
+  else
+    echo "Web e2e dependencies already up to date; skipping npm install."
   fi
   if [[ "$skip_browser_install" == "true" ]]; then
-    echo "Skipping Playwright browser install (--skip-browser-install)."
+    if playwright_chromium_installed; then
+      echo "Skipping Playwright browser install (--skip-browser-install)."
+    else
+      echo "--skip-browser-install was set, but no Playwright Chromium browser is installed." >&2
+      echo "Run without --skip-browser-install once, or pre-install browsers with: npm --prefix \"$web_e2e_dir\" run install:browsers" >&2
+      exit 1
+    fi
   elif playwright_chromium_installed; then
     echo "Playwright Chromium cache already present; skipping browser install."
   else
+    if ! ensure_disk_space_for_browser_install; then
+      exit 1
+    fi
     if ! run_with_timeout "$web_timeout_seconds" run_npm run install:browsers; then
       echo "web e2e browser install failed or timed out" >&2
       exit 1

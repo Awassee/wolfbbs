@@ -1,19 +1,19 @@
-FROM golang:1.22 AS build
+FROM --platform=$BUILDPLATFORM golang:1.22-alpine AS build
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum* ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/wolfbbs ./cmd/wolfbbs
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/wolfbbs-web ./cmd/wolfbbs-web
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/wolfbbs-irc ./cmd/wolfbbs-irc
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/wolfbbs-mailin ./cmd/wolfbbs-mailin
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/wolfbbs-trivia ./cmd/doors-trivia
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/oputil ./cmd/oputil
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -o /out/wolfbbs ./cmd/wolfbbs
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -o /out/wolfbbs-web ./cmd/wolfbbs-web
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -o /out/wolfbbs-irc ./cmd/wolfbbs-irc
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -o /out/wolfbbs-mailin ./cmd/wolfbbs-mailin
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -o /out/wolfbbs-trivia ./cmd/doors-trivia
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -o /out/oputil ./cmd/oputil
 
-FROM debian:bookworm-slim
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl netcat-openbsd \
-    && rm -rf /var/lib/apt/lists/*
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates curl netcat-openbsd
 WORKDIR /app
 COPY --from=build /out/wolfbbs /app/wolfbbs
 COPY --from=build /out/wolfbbs-web /app/wolfbbs-web

@@ -175,21 +175,72 @@ func (a *webApp) renderAdminConfigPage(w http.ResponseWriter, r *http.Request, s
 	csrf := a.csrfHiddenInput(r)
 	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Runtime Configuration</title></head><body><h1>Runtime Configuration</h1><p><a href="/admin">back</a> | <a href="/admin/setup">setup</a> | <a href="/help">help</a></p>` +
 		`<p>These values are persisted in system settings and applied on service startup. Environment values remain fallback defaults.</p>` +
-		`<h2>Site Text</h2><form method="POST">` + csrf +
+		`<h2>Basic: Identity</h2><form method="POST">` + csrf +
+		`<input type="hidden" name="action" value="save_identity">` +
+		`<label>Site Name <input name="site_name" value="` + htmlEscape(a.siteDisplayName()) + `" size="32"></label><br>` +
+		`<label>Hostname <input name="site_hostname" value="` + htmlEscape(a.siteHost()) + `" size="32"></label><br>` +
+		`<button type="submit">Save Identity</button></form>` +
+		`<h2>Basic: Site Text</h2><form method="POST">` + csrf +
 		`<input type="hidden" name="action" value="save_text">` +
 		`<label>MOTD<br><textarea name="motd" rows="4" cols="90">` + htmlEscape(a.motd) + `</textarea></label><br>` +
 		`<label>Announcement<br><textarea name="announcement" rows="4" cols="90">` + htmlEscape(a.announcement) + `</textarea></label><br>` +
 		`<button type="submit">Save Text</button></form>` +
-		`<h2>Feature and Safety Flags</h2><form method="POST">` + csrf +
-		`<input type="hidden" name="action" value="save_flags">` +
+		`<h2>Critical: Security + Safety</h2><form method="POST">` + csrf +
+		`<input type="hidden" name="action" value="save_security">` +
 		`<label><input type="checkbox" name="read_only"` + checkedIf(a.readOnly) + `> Read-only mode (block admin writes)</label><br>` +
+		`<label><input type="checkbox" name="secure_cookie"` + checkedIf(a.secureCookie) + `> Secure cookie mode (enable behind HTTPS)</label><br>` +
+		`<label><input type="checkbox" name="require_verified_email"` + checkedIf(a.requireVerifiedEmail) + `> Require verified users for external email</label><br>` +
+		`<button type="submit">Save Security</button></form>` +
+		`<h2>Feature Flags</h2><form method="POST">` + csrf +
+		`<input type="hidden" name="action" value="save_flags">` +
 		`<label><input type="checkbox" name="web_onramp"` + checkedIf(a.modernOnRamp) + `> Enable web connect on-ramp</label><br>` +
 		`<label><input type="checkbox" name="guest_tour"` + checkedIf(a.guestTour) + `> Enable guided guest tour</label><br>` +
 		`<label><input type="checkbox" name="discover"` + checkedIf(a.discover) + `> Enable discover/newscan web page</label><br>` +
 		`<label><input type="checkbox" name="quick_jump"` + checkedIf(a.quickJump) + `> Enable quick jump commands (TUI/web)</label><br>` +
 		`<label><input type="checkbox" name="classic_search"` + checkedIf(a.classicSearch) + `> Enable classic deep search presentation</label><br>` +
 		`<button type="submit">Save Flags</button></form>` +
-		`<h2>ANSI Menu Runtime</h2>` +
+		`<h2>Advanced: Runtime Services</h2><form method="POST">` + csrf +
+		`<input type="hidden" name="action" value="save_runtime_services">` +
+		`<fieldset><legend><strong>Access + Security</strong></legend>` +
+		`<label><input type="checkbox" name="acs_strict"` + checkedIf(a.runtimeCfg.ACS.Strict) + `> ACS strict mode (deny by default when rules fail)</label><br>` +
+		`<label>Trusted proxies CIDR list <input name="login_trusted_proxies" value="` + htmlEscape(a.runtimeCfg.Login.TrustedProxies) + `" size="80"></label><br>` +
+		`</fieldset>` +
+		`<fieldset><legend><strong>Login Servers</strong></legend>` +
+		`<label><input type="checkbox" name="login_telnet_enabled"` + checkedIf(a.runtimeCfg.Login.Telnet.Enabled) + `> Enable Telnet</label> ` +
+		`<label>Listen <input name="login_telnet_listen" value="` + htmlEscape(a.runtimeCfg.Login.Telnet.Listen) + `" size="14"></label><br>` +
+		`<label><input type="checkbox" name="login_ws_enabled"` + checkedIf(a.runtimeCfg.Login.WebSocket.Enabled) + `> Enable WebSocket</label> ` +
+		`<label>Listen <input name="login_ws_listen" value="` + htmlEscape(a.runtimeCfg.Login.WebSocket.Listen) + `" size="14"></label> ` +
+		`<label>Path <input name="login_ws_path" value="` + htmlEscape(a.runtimeCfg.Login.WebSocket.Path) + `" size="20"></label><br>` +
+		`<label><input type="checkbox" name="login_wss_enabled"` + checkedIf(a.runtimeCfg.Login.WebSocketTLS.Enabled) + `> Enable WebSocket TLS</label> ` +
+		`<label>Listen <input name="login_wss_listen" value="` + htmlEscape(a.runtimeCfg.Login.WebSocketTLS.Listen) + `" size="14"></label> ` +
+		`<label>Path <input name="login_wss_path" value="` + htmlEscape(a.runtimeCfg.Login.WebSocketTLS.Path) + `" size="20"></label><br>` +
+		`<label>TLS Cert <input name="login_wss_cert" value="` + htmlEscape(a.runtimeCfg.Login.WebSocketTLS.Cert) + `" size="52"></label><br>` +
+		`<label>TLS Key <input name="login_wss_key" value="` + htmlEscape(a.runtimeCfg.Login.WebSocketTLS.Key) + `" size="52"></label><br>` +
+		`</fieldset>` +
+		`<fieldset><legend><strong>Content Servers</strong></legend>` +
+		`<label>Public host <input name="content_host" value="` + htmlEscape(a.runtimeCfg.Content.Host) + `" size="28"></label><br>` +
+		`<label>Gopher listen <input name="content_gopher_listen" value="` + htmlEscape(a.runtimeCfg.Content.GopherListen) + `" size="14"></label><br>` +
+		`<label>NNTP listen <input name="content_nntp_listen" value="` + htmlEscape(a.runtimeCfg.Content.NNTPListen) + `" size="14"></label><br>` +
+		`<label>NNTPS listen <input name="content_nntps_listen" value="` + htmlEscape(a.runtimeCfg.Content.NNTPSListen) + `" size="14"></label><br>` +
+		`<label>NNTPS cert <input name="content_nntps_cert" value="` + htmlEscape(a.runtimeCfg.Content.NNTPSCert) + `" size="52"></label><br>` +
+		`<label>NNTPS key <input name="content_nntps_key" value="` + htmlEscape(a.runtimeCfg.Content.NNTPSKey) + `" size="52"></label><br>` +
+		`</fieldset>` +
+		`<fieldset><legend><strong>Federation + Connectors</strong></legend>` +
+		`<label><input type="checkbox" name="activitypub_enabled"` + checkedIf(a.runtimeCfg.ActivityPub.Enabled) + `> Enable ActivityPub bridge</label> ` +
+		`<label>Base URL <input name="activitypub_base_url" value="` + htmlEscape(a.runtimeCfg.ActivityPub.BaseURL) + `" size="52"></label><br>` +
+		`<label><input type="checkbox" name="connector_doorparty_enabled"` + checkedIf(a.runtimeCfg.Connectors.DoorParty.Enabled) + `> DoorParty connector</label> ` +
+		`<label>Command <input name="connector_doorparty_command" value="` + htmlEscape(a.runtimeCfg.Connectors.DoorParty.Command) + `" size="34"></label> ` +
+		`<label>Args <input name="connector_doorparty_args" value="` + htmlEscape(a.runtimeCfg.Connectors.DoorParty.Args) + `" size="34"></label><br>` +
+		`<label><input type="checkbox" name="connector_bbslink_enabled"` + checkedIf(a.runtimeCfg.Connectors.BBSLink.Enabled) + `> BBSLink connector</label> ` +
+		`<label>Command <input name="connector_bbslink_command" value="` + htmlEscape(a.runtimeCfg.Connectors.BBSLink.Command) + `" size="34"></label> ` +
+		`<label>Args <input name="connector_bbslink_args" value="` + htmlEscape(a.runtimeCfg.Connectors.BBSLink.Args) + `" size="34"></label><br>` +
+		`<label><input type="checkbox" name="connector_telnet_enabled"` + checkedIf(a.runtimeCfg.Connectors.Telnet.Enabled) + `> Telnet bridge connector</label> ` +
+		`<label>Command <input name="connector_telnet_command" value="` + htmlEscape(a.runtimeCfg.Connectors.Telnet.Command) + `" size="34"></label> ` +
+		`<label>Args <input name="connector_telnet_args" value="` + htmlEscape(a.runtimeCfg.Connectors.Telnet.Args) + `" size="34"></label><br>` +
+		`</fieldset>` +
+		`<p><small>Runtime service values are persisted in system settings and loaded on startup. Restart BBS/Web services after transport/listener changes.</small></p>` +
+		`<button type="submit">Save Runtime Services</button></form>` +
+		`<h2>Advanced: ANSI Menu Runtime</h2>` +
 		noticeBlock +
 		errBlock +
 		`<form method="POST">` + csrf +
@@ -203,7 +254,15 @@ func (a *webApp) renderAdminConfigPage(w http.ResponseWriter, r *http.Request, s
 		`<textarea name="menu_body" rows="26" cols="120">` + htmlEscape(menuBody) + `</textarea><br>` +
 		`<button type="submit" name="action" value="validate_menu">Validate Menu</button> ` +
 		`<button type="submit" name="action" value="save_menu">Save Menu File</button></form>` +
-		`<p>Menu edits are validated via HJSON schema checks before save. Reconnect SSH sessions after saving to load changes.</p></body></html>`
+		`<p>Menu edits are validated via HJSON schema checks before save. Reconnect SSH sessions after saving to load changes.</p>` +
+		`<h2>Config Directory</h2><ul>` +
+		`<li><a href="/admin/setup">Setup Wizard</a> (identity + first-run baseline)</li>` +
+		`<li><a href="/admin/users">Users</a> (roles, verification, bans)</li>` +
+		`<li><a href="/admin/boards">Boards</a> (permissions and moderation)</li>` +
+		`<li><a href="/admin/mail">Mail</a> and <a href="/admin/gateways">Gateways</a> (email/web gateway policies)</li>` +
+		`<li><a href="/admin/files">Files</a>, <a href="/admin/chat">Chat</a>, <a href="/admin/doors">Doors</a></li>` +
+		`<li><a href="/admin/system">System Dashboard</a> and <a href="/admin/errors">Errors</a></li>` +
+		`</ul></body></html>`
 	w.WriteHeader(statusCode)
 	_, _ = w.Write([]byte(page))
 }

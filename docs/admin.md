@@ -49,8 +49,17 @@ This version ships a read/write web-first control panel with role-aware routes a
   - reset door leaderboards
   - usage stats and door event logs
 - System
+  - `/admin/setup` is the primary first-run setup UX
+  - setup grouped as a 4-step wizard:
+    - Step 1: Identity
+    - Step 2: Safety
+    - Step 3: Experience Flags
+    - Step 4: Bootstrap + Health
+  - installer flags are optional automation overrides; normal setup is UI-first
   - motd/announcement editor
   - runtime feature toggles (read-only, on-ramp, guest tour, discover)
+  - runtime services profile (ACS strict, telnet/ws/wss, trusted proxies, content listeners, ActivityPub, connector commands)
+  - runtime service values persist in system settings and apply on startup/restart
   - ANSI menu runtime editor (HJSON file selection, validation, save)
   - WFC-style dashboard with session/channel/online metrics
   - node diagnostics endpoint for persisted node/caller state

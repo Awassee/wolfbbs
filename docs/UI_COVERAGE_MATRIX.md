@@ -93,4 +93,5 @@ Auto-generated from `docs/function-registry.json`.
 | `web:/scores` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/settings` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/status` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
+| `web:/statusz` | `web_route` | N | Y | N | N | `/admin/config` | `/status` |
 | `web:/tour` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |

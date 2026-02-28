@@ -178,6 +178,25 @@ ensure_docker_host() {
   fi
 }
 
+set_docker_default_platform() {
+  if [[ -n "${DOCKER_DEFAULT_PLATFORM:-}" ]]; then
+    return
+  fi
+  if ! has_cmd docker; then
+    return
+  fi
+  local arch=""
+  arch="$(docker info --format '{{.Architecture}}' 2>/dev/null || true)"
+  case "$arch" in
+    aarch64|arm64)
+      export DOCKER_DEFAULT_PLATFORM="linux/arm64"
+      ;;
+    x86_64|amd64)
+      export DOCKER_DEFAULT_PLATFORM="linux/amd64"
+      ;;
+  esac
+}
+
 env_permissions_are_600() {
   local f="$1"
   local perm
@@ -239,6 +258,7 @@ run_static_checks() {
   local cfile
   cfile="$(compose_file || true)"
   ensure_docker_host
+  set_docker_default_platform
   local ccmd
   ccmd="$(compose_cmd)"
   if [[ -n "$cfile" && -n "$ccmd" ]]; then
@@ -372,6 +392,7 @@ run_smoke_checks() {
   local cfile
   cfile="$(compose_file || true)"
   ensure_docker_host
+  set_docker_default_platform
   local ccmd
   ccmd="$(compose_cmd)"
   if [[ -z "$cfile" ]]; then
@@ -392,17 +413,29 @@ run_smoke_checks() {
   # Reset smoke project state to avoid stale DB volume credential mismatches.
   run_with_timeout "$COMPOSE_CMD_TIMEOUT_SECONDS" run_compose "$ccmd" -f "$cfile" down -v --remove-orphans >/dev/null 2>&1 || true
 
-  if run_with_timeout "$COMPOSE_UP_TIMEOUT_SECONDS" run_compose "$ccmd" -f "$cfile" up -d --build >/dev/null; then
+  local compose_build_log=""
+  compose_build_log="$(mktemp)"
+  if run_with_timeout "$COMPOSE_UP_TIMEOUT_SECONDS" run_compose "$ccmd" -f "$cfile" up -d --build >"$compose_build_log" 2>&1; then
     pass "C-008" "stack starts with docker compose up -d --build"
   else
-    warn_should "C-008-BUILD" "compose up -d --build failed/timed out; retrying without build"
-    if run_with_timeout "$COMPOSE_UP_TIMEOUT_SECONDS" run_compose "$ccmd" -f "$cfile" up -d --no-build >/dev/null; then
-      pass "C-008" "stack starts with docker compose up -d --no-build (build fallback)"
+    if grep -Eiq 'input/output error|meta\.db' "$compose_build_log"; then
+      fail_must "C-008" "docker engine storage is unhealthy (input/output error). Free disk space, restart Docker Desktop/Colima, and retry."
+      rm -f "$compose_build_log"
+      return
+    fi
+    warn_should "C-008-BUILD" "compose up -d --build failed/timed out; retrying with standard up -d"
+    if run_with_timeout "$COMPOSE_UP_TIMEOUT_SECONDS" run_compose "$ccmd" -f "$cfile" up -d >>"$compose_build_log" 2>&1; then
+      pass "C-008" "stack starts with docker compose up -d (build fallback)"
     else
       fail_must "C-008" "stack starts with docker compose up -d --build (or fallback up -d)"
+      if [[ -f "$compose_build_log" ]]; then
+        echo "--- compose startup log tail ---"
+        tail -n 12 "$compose_build_log" || true
+      fi
       return
     fi
   fi
+  rm -f "$compose_build_log"
 
   if [[ "$KEEP_STACK" != "true" ]]; then
     trap 'run_compose "'"$ccmd"'" -f "'"$cfile"'" down -v --remove-orphans >/dev/null 2>&1 || true; rmdir "'"$lock_dir"'" >/dev/null 2>&1 || true' EXIT

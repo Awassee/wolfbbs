@@ -593,6 +593,19 @@
       "notes": "Discovered from cmd/wolfbbs-web route registration."
     },
     {
+      "id": "web:/statusz",
+      "type": "web_route",
+      "entrypoint": "/statusz",
+      "user_tui": false,
+      "user_web": true,
+      "admin_tui": false,
+      "admin_web": false,
+      "config_ui": "/admin/config",
+      "status_ui": "/status",
+      "state_visibility": "enabled/configured/healthy surfaced via status center",
+      "notes": "Discovered from cmd/wolfbbs-web route registration."
+    },
+    {
       "id": "web:/tour",
       "type": "web_route",
       "entrypoint": "/tour",

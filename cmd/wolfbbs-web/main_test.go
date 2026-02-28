@@ -417,13 +417,54 @@ func TestAdminSetupConfigAndErrorScreens(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), "Setup & Install") {
 		t.Fatalf("missing setup heading: %s", rr.Body.String())
 	}
+	if !strings.Contains(rr.Body.String(), "Guided Setup Profile") {
+		t.Fatalf("missing guided setup profile section: %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "Basic") || !strings.Contains(rr.Body.String(), "Critical") || !strings.Contains(rr.Body.String(), "Expert") {
+		t.Fatalf("missing setup sections: %s", rr.Body.String())
+	}
 
 	form := url.Values{}
+	form.Set("action", "save_setup_profile")
+	form.Set("site_name", "WolfTest")
+	form.Set("site_hostname", "bbs.test")
+	form.Set("motd", "Welcome aboard")
+	form.Set("announcement", "Maintenance tonight")
+	form.Set("secure_cookie", "1")
+	form.Set("require_verified_email", "1")
+	form.Set("guest_tour", "1")
+	form.Set("discover", "1")
+	form.Set("quick_jump", "1")
+	form.Set("classic_search", "1")
+	form.Set("csrf_token", csrf)
+	req = httptest.NewRequest(http.MethodPost, "/admin/setup", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	protectedSetup.ServeHTTP(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("setup profile save status = %d", rr.Code)
+	}
+	if app.siteName != "WolfTest" || app.siteHostname != "bbs.test" {
+		t.Fatalf("site identity not updated from setup: name=%q host=%q", app.siteName, app.siteHostname)
+	}
+	if !app.secureCookie || !app.requireVerifiedEmail || !app.guestTour || !app.discover || !app.quickJump || !app.classicSearch {
+		t.Fatalf("setup profile flags not applied: secure=%t requireVerified=%t guest=%t discover=%t quick=%t classic=%t", app.secureCookie, app.requireVerifiedEmail, app.guestTour, app.discover, app.quickJump, app.classicSearch)
+	}
+	if v, err := adminRepo.GetSystemSetting(sysSettingSiteName); err != nil || strings.TrimSpace(v) != "WolfTest" {
+		t.Fatalf("expected persisted site.name=WolfTest, got value=%q err=%v", v, err)
+	}
+	if v, err := adminRepo.GetSystemSetting(sysSettingSiteHostname); err != nil || strings.TrimSpace(v) != "bbs.test" {
+		t.Fatalf("expected persisted site.hostname=bbs.test, got value=%q err=%v", v, err)
+	}
+
+	form = url.Values{}
 	form.Set("action", "save_flags")
-	form.Set("read_only", "1")
 	form.Set("web_onramp", "1")
 	form.Set("guest_tour", "1")
 	form.Set("discover", "1")
+	form.Set("quick_jump", "1")
+	form.Set("classic_search", "1")
 	form.Set("csrf_token", csrf)
 	req = httptest.NewRequest(http.MethodPost, "/admin/config", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -431,10 +472,34 @@ func TestAdminSetupConfigAndErrorScreens(t *testing.T) {
 	rr = httptest.NewRecorder()
 	app.mustBeRole(roleAdmin, http.HandlerFunc(app.handleAdminConfig)).ServeHTTP(rr, req)
 	if rr.Code != http.StatusFound {
-		t.Fatalf("config post status = %d", rr.Code)
+		t.Fatalf("runtime flags post status = %d", rr.Code)
 	}
-	if !app.readOnly || !app.modernOnRamp || !app.guestTour || !app.discover {
-		t.Fatalf("runtime flags not applied: readOnly=%t onRamp=%t tour=%t discover=%t", app.readOnly, app.modernOnRamp, app.guestTour, app.discover)
+	if !app.modernOnRamp || !app.guestTour || !app.discover || !app.quickJump || !app.classicSearch {
+		t.Fatalf("runtime flags not applied: onRamp=%t tour=%t discover=%t quick=%t classic=%t", app.modernOnRamp, app.guestTour, app.discover, app.quickJump, app.classicSearch)
+	}
+
+	form = url.Values{}
+	form.Set("action", "save_security")
+	form.Set("read_only", "1")
+	form.Set("secure_cookie", "1")
+	form.Set("require_verified_email", "1")
+	form.Set("csrf_token", csrf)
+	req = httptest.NewRequest(http.MethodPost, "/admin/config", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.mustBeRole(roleAdmin, http.HandlerFunc(app.handleAdminConfig)).ServeHTTP(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("security config post status = %d", rr.Code)
+	}
+	if !app.readOnly || !app.secureCookie || !app.requireVerifiedEmail {
+		t.Fatalf("security flags not applied: readOnly=%t secureCookie=%t requireVerified=%t", app.readOnly, app.secureCookie, app.requireVerifiedEmail)
+	}
+	if v, err := adminRepo.GetSystemSetting(sysSettingSecureCookie); err != nil || strings.TrimSpace(v) != "true" {
+		t.Fatalf("expected persisted secure_cookie=true, got value=%q err=%v", v, err)
+	}
+	if v, err := adminRepo.GetSystemSetting(sysSettingRequireVerifiedEmail); err != nil || strings.TrimSpace(v) != "true" {
+		t.Fatalf("expected persisted require_verified=true, got value=%q err=%v", v, err)
 	}
 	if v, err := adminRepo.GetSystemSetting("site.read_only"); err != nil || strings.TrimSpace(v) != "true" {
 		t.Fatalf("expected persisted read_only=true, got value=%q err=%v", v, err)
@@ -450,6 +515,9 @@ func TestAdminSetupConfigAndErrorScreens(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "ANSI Menu Runtime") {
 		t.Fatalf("expected menu editor section, got %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "Basic: Identity") {
+		t.Fatalf("expected identity config section, got %s", rr.Body.String())
 	}
 
 	form = url.Values{}
@@ -1188,12 +1256,90 @@ func TestSettingsRequiresCSRFAndUpdatesPreferences(t *testing.T) {
 	if rr.Code != http.StatusFound {
 		t.Fatalf("expected redirect after pref save, got %d", rr.Code)
 	}
+	if location := rr.Result().Header.Get("Location"); !strings.Contains(location, "/settings?notice=") {
+		t.Fatalf("expected settings notice redirect, got %q", location)
+	}
 	updated, err := authSvc.GetUser("prefs")
 	if err != nil {
 		t.Fatalf("get user: %v", err)
 	}
 	if updated.Theme != "teal" || updated.ANSIEnabled || updated.PagingEnabled || !updated.TimeFormat24h {
 		t.Fatalf("unexpected preferences after save: %+v", updated)
+	}
+}
+
+func TestSettingsValidationShowsFriendlyError(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	_, _ = authSvc.Register("prefs2", "password123")
+
+	app := &webApp{
+		authSvc:  authSvc,
+		userRepo: userRepo,
+		sessions: map[string]sessionState{},
+	}
+	sid, ok := app.createSession("prefs2")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+	app.Lock()
+	csrf := app.sessions[sid].csrf
+	app.Unlock()
+
+	form := url.Values{}
+	form.Set("action", "change_password")
+	form.Set("password", "newpass123")
+	form.Set("confirm", "different")
+	form.Set("csrf_token", csrf)
+
+	req := httptest.NewRequest(http.MethodPost, "/settings", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.handleSettings(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("expected redirect on validation error, got %d", rr.Code)
+	}
+	if location := rr.Result().Header.Get("Location"); !strings.Contains(location, "/settings?error=") {
+		t.Fatalf("expected settings error redirect, got %q", location)
+	}
+}
+
+func TestMailValidationShowsFriendlyError(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	mailRepo := repository.NewInMemoryPrivateMailRepository()
+	authSvc := auth.NewService(userRepo)
+	_, _ = authSvc.Register("mailer", "password123")
+
+	app := &webApp{
+		authSvc:  authSvc,
+		userRepo: userRepo,
+		mailRepo: mailRepo,
+		sessions: map[string]sessionState{},
+	}
+	sid, ok := app.createSession("mailer")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+	app.Lock()
+	csrf := app.sessions[sid].csrf
+	app.Unlock()
+
+	form := url.Values{}
+	form.Set("to", "nobody")
+	form.Set("subject", "missing body")
+	form.Set("body", "")
+	form.Set("csrf_token", csrf)
+	req := httptest.NewRequest(http.MethodPost, "/mail", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.handleMail(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("expected redirect on mail validation error, got %d", rr.Code)
+	}
+	if location := rr.Result().Header.Get("Location"); !strings.Contains(location, "/mail?error=") {
+		t.Fatalf("expected mail error redirect, got %q", location)
 	}
 }
 
@@ -1223,6 +1369,54 @@ func TestGatewayRequiresCSRFForPost(t *testing.T) {
 	app.handleGateway(rr, req)
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("expected csrf failure, got %d", rr.Code)
+	}
+}
+
+func TestGatewayFetchValidationShowsFriendlyError(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	_, _ = authSvc.Register("gate2", "password123")
+
+	app := &webApp{
+		authSvc:      authSvc,
+		userRepo:     userRepo,
+		sessions:     map[string]sessionState{},
+		offlineDir:   t.TempDir(),
+		inboundAllow: map[string]struct{}{},
+	}
+	sid, ok := app.createSession("gate2")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+	app.Lock()
+	csrf := app.sessions[sid].csrf
+	app.Unlock()
+
+	form := url.Values{}
+	form.Set("action", "fetch")
+	form.Set("csrf_token", csrf)
+	req := httptest.NewRequest(http.MethodPost, "/gateway", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.handleGateway(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("expected redirect for missing url, got %d", rr.Code)
+	}
+	location := rr.Result().Header.Get("Location")
+	if !strings.Contains(location, "/gateway?error=") {
+		t.Fatalf("expected error redirect on gateway validation, got %q", location)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, location, nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleGateway(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected gateway screen with error banner, got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "Error:") {
+		t.Fatalf("expected gateway error banner, got %s", rr.Body.String())
 	}
 }
 
@@ -1391,6 +1585,30 @@ func TestStatusAndConfigCenters(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), "Telnet login server") {
 		t.Fatalf("missing login transport row: %s", rr.Body.String())
 	}
+	if !strings.Contains(rr.Body.String(), "Machine-readable status JSON (/statusz)") {
+		t.Fatalf("missing statusz link: %s", rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/statusz", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleStatusJSON(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("statusz status = %d", rr.Code)
+	}
+	var snapshot statusSnapshot
+	if err := json.Unmarshal(rr.Body.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode statusz payload: %v body=%s", err, rr.Body.String())
+	}
+	if snapshot.Summary.Total == 0 || len(snapshot.Checks) == 0 {
+		t.Fatalf("expected non-empty status checks in statusz payload: %+v", snapshot)
+	}
+	if snapshot.Role != roleUser {
+		t.Fatalf("expected normalized role user in statusz payload, got %q", snapshot.Role)
+	}
+	if len(snapshot.Recommendations) == 0 {
+		t.Fatalf("expected recommendations in statusz payload: %+v", snapshot)
+	}
 
 	req = httptest.NewRequest(http.MethodGet, "/config", nil)
 	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
@@ -1404,6 +1622,12 @@ func TestStatusAndConfigCenters(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "Transport and Service Config") {
 		t.Fatalf("missing transport config section: %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "Runtime Feature Flags") {
+		t.Fatalf("missing runtime feature flags section: %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "Easy Setup Path") {
+		t.Fatalf("missing setup path section: %s", rr.Body.String())
 	}
 }
 
@@ -1531,11 +1755,11 @@ func TestHandleRootRedirectTargets(t *testing.T) {
 }
 
 func TestLoginPageFlags(t *testing.T) {
-	page := loginPage("/login", false, false)
+	page := loginPage("WolfBBS", "/login", false, false)
 	if strings.Contains(page, "/connect") || strings.Contains(page, "/tour") {
 		t.Fatalf("unexpected on-ramp links when flags disabled: %s", page)
 	}
-	page = loginPage("/login", true, true)
+	page = loginPage("WolfBBS", "/login", true, true)
 	if !strings.Contains(page, "/connect") || !strings.Contains(page, "/tour") {
 		t.Fatalf("expected on-ramp links when flags enabled: %s", page)
 	}

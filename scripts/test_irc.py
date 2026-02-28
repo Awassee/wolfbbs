@@ -72,7 +72,13 @@ def main() -> int:
     auth_pass = os.environ.get("IRC_TEST_PASS", "wolfbbs-sysop")
 
     # 1) Unauthenticated JOIN should fail with 451.
-    unauth = IRCClient(host, port)
+    try:
+        unauth = IRCClient(host, port)
+    except OSError as exc:
+        return fail(
+            f"could not connect to IRC endpoint {host}:{port} ({exc}); start the stack first (docker compose up -d --build)",
+            [],
+        )
     try:
         unauth.send("NICK unauthcheck")
         unauth.send("USER unauthcheck 0 * :unauth")
@@ -83,7 +89,13 @@ def main() -> int:
         unauth.close()
 
     # 2) Authenticated user should get welcome/motd numerics, join, names.
-    authed = IRCClient(host, port)
+    try:
+        authed = IRCClient(host, port)
+    except OSError as exc:
+        return fail(
+            f"could not reconnect to IRC endpoint {host}:{port} ({exc})",
+            [],
+        )
     try:
         authed.send(f"PASS {auth_pass}")
         authed.send(f"NICK {auth_user}")

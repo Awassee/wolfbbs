@@ -8,7 +8,9 @@ DEFAULT_WEB_PORT=8080
 DEFAULT_IRC_PORT=6667
 DEFAULT_IRC_TLS_PORT=6697
 DEFAULT_MAILIN_PORT=8091
-DEFAULT_REPO_URL="https://github.com/seanheiney/New-project.git"
+DEFAULT_REPO_URL="https://github.com/seanheiney/wolfbbs.git"
+DEFAULT_BBS_NAME="WolfBBS"
+DEFAULT_SETUP_PROFILE="basic"
 
 PREFIX=""
 WITH_DOCKER=true
@@ -32,6 +34,9 @@ LOGS=false
 REPAIR=false
 DEPS_ONLY=false
 REPO_URL="${WOLFBBS_REPO_URL:-${WOLFBBS_GH:-}}"
+BBS_NAME="${WOLFBBS_BBS_NAME:-$DEFAULT_BBS_NAME}"
+BBS_HOSTNAME="${WOLFBBS_HOSTNAME:-}"
+SETUP_PROFILE="${WOLFBBS_SETUP_PROFILE:-$DEFAULT_SETUP_PROFILE}"
 OS=""
 DISTRO=""
 ID_LIKE=""
@@ -55,6 +60,14 @@ ENV_CREATED_THIS_RUN=false
 SETUP_WIZARD_RAN=false
 WIZARD_BOOTSTRAP_ADMIN_HANDLE=""
 WIZARD_BOOTSTRAP_ADMIN_PASSWORD=""
+WIZARD_BBS_NAME=""
+WIZARD_BBS_HOSTNAME=""
+WIZARD_SETUP_PROFILE=""
+WIZARD_SECURE_COOKIE=""
+WIZARD_REQUIRE_VERIFIED_EMAIL=""
+WIZARD_MENU_ENABLE=""
+WIZARD_TERM_ENCODING=""
+USED_INSTALLER_CONFIG_FLAGS=false
 
 init_log_file() {
   local candidate=""
@@ -129,6 +142,46 @@ read_env_value() {
   awk -F= -v lookup="$key" '$1 == lookup {sub(/^[^=]*=/, "", $0); print; exit}' "$file_path"
 }
 
+default_hostname() {
+  local value=""
+  if command -v hostname >/dev/null 2>&1; then
+    value="$(hostname -f 2>/dev/null || hostname 2>/dev/null || true)"
+  fi
+  value="${value%% *}"
+  if [[ -z "$value" ]]; then
+    value="localhost"
+  fi
+  printf '%s' "$value"
+}
+
+normalize_setup_profile() {
+  local profile="${1:-}"
+  local profile_lc
+  profile_lc="$(printf '%s' "$profile" | tr '[:upper:]' '[:lower:]')"
+  case "$profile_lc" in
+    basic|critical|expert)
+      printf '%s' "$profile_lc"
+      ;;
+    *)
+      printf '%s' "basic"
+      ;;
+  esac
+}
+
+is_valid_setup_profile() {
+  local profile="${1:-}"
+  local profile_lc
+  profile_lc="$(printf '%s' "$profile" | tr '[:upper:]' '[:lower:]')"
+  case "$profile_lc" in
+    basic|critical|expert)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 run_setup_wizard() {
   if [[ "$SETUP_WIZARD_RAN" == "true" ]]; then
     return
@@ -147,12 +200,18 @@ run_setup_wizard() {
   local password_mode="Y"
   local password_one=""
   local password_two=""
+  local setup_profile_candidate
+  setup_profile_candidate="$(normalize_setup_profile "${SETUP_PROFILE:-$DEFAULT_SETUP_PROFILE}")"
 
   echo "┌──────────────────────────────────────────────────────────────┐"
   echo "│ WolfBBS First-Run Setup Wizard                              │"
-  echo "│ Configure bootstrap SYSOP credentials for your first login. │"
+  echo "│ Bootstrap SYSOP credentials; configure everything else in UI │"
   echo "└──────────────────────────────────────────────────────────────┘"
   echo
+  echo "Site name, hostname, setup profile, and runtime features are configured in:"
+  echo "  Web UI -> /admin/setup and /admin/config"
+  echo
+
   read -r -p "SYSOP handle [sysop]: " handle_input
   if [[ -n "$handle_input" ]]; then
     handle_candidate="$handle_input"
@@ -186,19 +245,28 @@ run_setup_wizard() {
 
   echo
   echo "Wizard summary:"
+  echo "  Setup profile (env default): ${setup_profile_candidate}"
   echo "  SYSOP handle: ${WIZARD_BOOTSTRAP_ADMIN_HANDLE}"
   if [[ -n "$WIZARD_BOOTSTRAP_ADMIN_PASSWORD" ]]; then
     echo "  SYSOP password: custom (hidden)"
   else
     echo "  SYSOP password: auto-generated"
   fi
+  echo "  UI setup path: /admin/setup (basic/critical/expert)"
   echo
 }
 
 print_first_login_wizard() {
-  local host="${1:-localhost}"
+  local host="${1:-$BBS_HOSTNAME}"
+  local bbs_name="${BBS_NAME:-$DEFAULT_BBS_NAME}"
   local admin_handle="$BOOTSTRAP_ADMIN_HANDLE"
   local admin_password="$BOOTSTRAP_ADMIN_PASSWORD"
+  if [[ -z "$host" ]]; then
+    host="localhost"
+  fi
+  if [[ -z "$bbs_name" ]]; then
+    bbs_name="$DEFAULT_BBS_NAME"
+  fi
   local admin_login_url="http://${host}:${WEB_PORT}/admin/login"
   local admin_setup_url="http://${host}:${WEB_PORT}/admin/setup"
   local admin_system_url="http://${host}:${WEB_PORT}/admin/system"
@@ -209,9 +277,22 @@ print_first_login_wizard() {
   if [[ -z "$admin_password" && -f "$ENV_FILE" ]]; then
     admin_password="$(read_env_value "WOLFBBS_BOOTSTRAP_ADMIN_PASSWORD" "$ENV_FILE")"
   fi
+  if [[ -f "$ENV_FILE" ]]; then
+    local env_host
+    local env_name
+    env_host="$(read_env_value "WOLFBBS_HOSTNAME" "$ENV_FILE")"
+    env_name="$(read_env_value "WOLFBBS_BBS_NAME" "$ENV_FILE")"
+    if [[ -n "$env_host" ]]; then
+      host="$env_host"
+    fi
+    if [[ -n "$env_name" ]]; then
+      bbs_name="$env_name"
+    fi
+  fi
 
   echo
   echo "=================== First Login Wizard ==================="
+  echo "BBS: ${bbs_name} (${host})"
   echo "1) Log in to SYSOP web panel:"
   echo "   URL: ${admin_login_url}"
   echo "   Handle: ${admin_handle:-sysop}"
@@ -243,13 +324,29 @@ print_first_login_wizard() {
 }
 
 print_install_summary() {
+  local host="${BBS_HOSTNAME:-localhost}"
+  local bbs_name="${BBS_NAME:-$DEFAULT_BBS_NAME}"
+  if [[ -f "$ENV_FILE" ]]; then
+    local env_host
+    local env_name
+    env_host="$(read_env_value "WOLFBBS_HOSTNAME" "$ENV_FILE")"
+    env_name="$(read_env_value "WOLFBBS_BBS_NAME" "$ENV_FILE")"
+    if [[ -n "$env_host" ]]; then
+      host="$env_host"
+    fi
+    if [[ -n "$env_name" ]]; then
+      bbs_name="$env_name"
+    fi
+  fi
   echo "WolfBBS installation complete."
-  echo "SSH: ssh localhost -p ${SSH_PORT}"
-  echo "Web Admin: http://localhost:${WEB_PORT}/admin"
-  echo "Web Chat: http://localhost:${WEB_PORT}/chat"
-  echo "IRC: localhost:${IRC_PORT} (TLS: ${IRC_TLS_PORT})"
-  echo "Mail Ingest: http://localhost:${MAILIN_PORT}/ingest"
-  print_first_login_wizard "localhost"
+  echo "BBS: ${bbs_name}"
+  echo "Host: ${host}"
+  echo "SSH: ssh ${host} -p ${SSH_PORT}"
+  echo "Web Admin: http://${host}:${WEB_PORT}/admin"
+  echo "Web Chat: http://${host}:${WEB_PORT}/chat"
+  echo "IRC: ${host}:${IRC_PORT} (TLS: ${IRC_TLS_PORT})"
+  echo "Mail Ingest: http://${host}:${MAILIN_PORT}/ingest"
+  print_first_login_wizard "$host"
 }
 
 usage() {
@@ -267,6 +364,9 @@ Options:
   --yes, --non-interactive  run non-interactively
   --install-brew            on macOS, install Homebrew when missing (requires explicit flag)
   --force                   overwrite existing generated config
+  --bbs-name <name>         ADVANCED: set BBS display name at install (prefer /admin/setup)
+  --hostname <name>         ADVANCED: set public hostname at install (prefer /admin/setup)
+  --setup-profile <name>    ADVANCED: basic|critical|expert baseline (prefer /admin/setup)
   --ssh-port <port>         SSH BBS port (default: 2222)
   --web-port <port>         web port (default: 8080)
   --irc-port <port>         IRC port (default: 6667)
@@ -288,9 +388,12 @@ Options:
   -h, --help                show this help
 
 Environment shortcuts:
-  WOLFBBS_GH=<owner/repo>         e.g. seanheiney/New-project
-  WOLFBBS_REPO_URL=<git-url>      e.g. https://github.com/seanheiney/New-project.git
-  WOLFBBS_REPO_URL defaults to:   https://github.com/seanheiney/New-project.git
+  WOLFBBS_GH=<owner/repo>         e.g. seanheiney/wolfbbs
+  WOLFBBS_REPO_URL=<git-url>      e.g. https://github.com/seanheiney/wolfbbs.git
+  WOLFBBS_BBS_NAME=<name>         optional installer identity override (prefer /admin/setup)
+  WOLFBBS_HOSTNAME=<host>         optional installer hostname override (prefer /admin/setup)
+  WOLFBBS_SETUP_PROFILE=<profile> basic|critical|expert baseline (prefer /admin/setup)
+  WOLFBBS_REPO_URL defaults to:   https://github.com/seanheiney/wolfbbs.git
 USAGE
 }
 
@@ -1092,20 +1195,30 @@ ensure_compose_file() {
   echo "Could not find docker-compose.yml or compose.yml."
   echo "Run from repository root, or pass --repo/--repo-url."
   echo "Examples:"
-  echo "  bash install.sh --with-docker --repo seanheiney/New-project --yes"
-  echo "  WOLFBBS_GH=seanheiney/New-project bash install.sh --with-docker --yes"
+  echo "  bash install.sh --with-docker --repo seanheiney/wolfbbs --yes"
+  echo "  WOLFBBS_GH=seanheiney/wolfbbs bash install.sh --with-docker --yes"
   exit 1
 }
 
 write_env_file() {
   ENV_FILE="${PREFIX}/.env"
   local db_pass db_user db_name db_seed bootstrap_admin_handle bootstrap_admin_password
+  local bbs_name bbs_hostname setup_profile secure_cookie require_verified_email menu_enable term_encoding
 
   if [[ -f "$ENV_FILE" && "$FORCE" != "true" ]]; then
     log "Using existing env file: $ENV_FILE"
     ENV_CREATED_THIS_RUN=false
+    BBS_NAME="$(read_env_value "WOLFBBS_BBS_NAME" "$ENV_FILE")"
+    BBS_HOSTNAME="$(read_env_value "WOLFBBS_HOSTNAME" "$ENV_FILE")"
+    SETUP_PROFILE="$(normalize_setup_profile "$(read_env_value "WOLFBBS_SETUP_PROFILE" "$ENV_FILE")")"
     BOOTSTRAP_ADMIN_HANDLE="$(read_env_value "WOLFBBS_BOOTSTRAP_ADMIN_HANDLE" "$ENV_FILE")"
     BOOTSTRAP_ADMIN_PASSWORD="$(read_env_value "WOLFBBS_BOOTSTRAP_ADMIN_PASSWORD" "$ENV_FILE")"
+    if [[ -z "$BBS_NAME" ]]; then
+      BBS_NAME="$DEFAULT_BBS_NAME"
+    fi
+    if [[ -z "$BBS_HOSTNAME" ]]; then
+      BBS_HOSTNAME="localhost"
+    fi
     return
   fi
   if [[ "$DRY_RUN" == "true" ]]; then
@@ -1116,8 +1229,17 @@ write_env_file() {
     if ! confirm "Overwrite existing env file at ${ENV_FILE}?"; then
       log "Keeping existing env file."
       ENV_CREATED_THIS_RUN=false
+      BBS_NAME="$(read_env_value "WOLFBBS_BBS_NAME" "$ENV_FILE")"
+      BBS_HOSTNAME="$(read_env_value "WOLFBBS_HOSTNAME" "$ENV_FILE")"
+      SETUP_PROFILE="$(normalize_setup_profile "$(read_env_value "WOLFBBS_SETUP_PROFILE" "$ENV_FILE")")"
       BOOTSTRAP_ADMIN_HANDLE="$(read_env_value "WOLFBBS_BOOTSTRAP_ADMIN_HANDLE" "$ENV_FILE")"
       BOOTSTRAP_ADMIN_PASSWORD="$(read_env_value "WOLFBBS_BOOTSTRAP_ADMIN_PASSWORD" "$ENV_FILE")"
+      if [[ -z "$BBS_NAME" ]]; then
+        BBS_NAME="$DEFAULT_BBS_NAME"
+      fi
+      if [[ -z "$BBS_HOSTNAME" ]]; then
+        BBS_HOSTNAME="localhost"
+      fi
       return
     fi
   fi
@@ -1126,33 +1248,83 @@ write_env_file() {
   db_name="wolfbbs"
   db_pass="$(random_secret)"
   db_seed="$(random_secret)"
+  bbs_name="${WOLFBBS_BBS_NAME:-${BBS_NAME:-$DEFAULT_BBS_NAME}}"
+  bbs_hostname="${WOLFBBS_HOSTNAME:-${BBS_HOSTNAME:-}}"
+  if [[ -z "$bbs_hostname" ]]; then
+    bbs_hostname="$(default_hostname)"
+  fi
+  setup_profile="$(normalize_setup_profile "${WOLFBBS_SETUP_PROFILE:-${SETUP_PROFILE:-$DEFAULT_SETUP_PROFILE}}")"
+  secure_cookie="${WOLFBBS_SECURE_COOKIE:-false}"
+  require_verified_email="${WOLFBBS_REQUIRE_VERIFIED_EMAIL:-true}"
+  menu_enable="${WOLFBBS_MENU_ENABLE:-false}"
+  term_encoding="${WOLFBBS_TERM_ENCODING:-utf-8}"
   bootstrap_admin_handle="${WOLFBBS_BOOTSTRAP_ADMIN_HANDLE:-sysop}"
   bootstrap_admin_password="${WOLFBBS_BOOTSTRAP_ADMIN_PASSWORD:-$(random_secret)}"
 
   run_setup_wizard
+  if [[ -n "$WIZARD_BBS_NAME" ]]; then
+    bbs_name="$WIZARD_BBS_NAME"
+  fi
+  if [[ -n "$WIZARD_BBS_HOSTNAME" ]]; then
+    bbs_hostname="$WIZARD_BBS_HOSTNAME"
+  fi
+  if [[ -n "$WIZARD_SETUP_PROFILE" ]]; then
+    setup_profile="$WIZARD_SETUP_PROFILE"
+  fi
   if [[ -n "$WIZARD_BOOTSTRAP_ADMIN_HANDLE" ]]; then
     bootstrap_admin_handle="$WIZARD_BOOTSTRAP_ADMIN_HANDLE"
   fi
   if [[ -n "$WIZARD_BOOTSTRAP_ADMIN_PASSWORD" ]]; then
     bootstrap_admin_password="$WIZARD_BOOTSTRAP_ADMIN_PASSWORD"
   fi
+  if [[ -n "$WIZARD_SECURE_COOKIE" ]]; then
+    secure_cookie="$WIZARD_SECURE_COOKIE"
+  fi
+  if [[ -n "$WIZARD_REQUIRE_VERIFIED_EMAIL" ]]; then
+    require_verified_email="$WIZARD_REQUIRE_VERIFIED_EMAIL"
+  fi
+  if [[ -n "$WIZARD_MENU_ENABLE" ]]; then
+    menu_enable="$WIZARD_MENU_ENABLE"
+  fi
+  if [[ -n "$WIZARD_TERM_ENCODING" ]]; then
+    term_encoding="$WIZARD_TERM_ENCODING"
+  fi
 
   cat > "$ENV_FILE" <<EOF
+# Basic setup profile
+WOLFBBS_SETUP_PROFILE=${setup_profile}
+WOLFBBS_BBS_NAME=${bbs_name}
+WOLFBBS_HOSTNAME=${bbs_hostname}
+
+# Core data services
 WOLFBBS_DATABASE_URL=postgres://$db_user:$db_pass@postgres:5432/$db_name?sslmode=disable
 POSTGRES_USER=$db_user
 POSTGRES_PASSWORD=$db_pass
 POSTGRES_DB=$db_name
 WOLFBBS_DB_CONNECT_RETRIES=15
 WOLFBBS_DB_CONNECT_DELAY_MS=500
+
+# Critical security
 WOLFBBS_SESSION_SECRET=$db_seed
 WOLFBBS_INBOUND_TOKEN=$(random_secret)
+WOLFBBS_SECURE_COOKIE=${secure_cookie}
+WOLFBBS_READ_ONLY=false
+WOLFBBS_REQUIRE_VERIFIED_EMAIL=${require_verified_email}
+
+# Network ports
 WOLFBBS_OFFLINE_DIR=/app/.wolfbbs/offline
 WOLFBBS_SSH_PORT=${SSH_PORT}
 WOLFBBS_WEB_PORT=${WEB_PORT}
 WOLFBBS_IRC_PORT=${IRC_PORT}
 WOLFBBS_IRC_TLS_PORT=${IRC_TLS_PORT}
 WOLFBBS_MAILIN_PORT=${MAILIN_PORT}
-WOLFBBS_READ_ONLY=false
+
+# Expert runtime
+WOLFBBS_TERM_ENCODING=${term_encoding}
+WOLFBBS_MENU_ENABLE=${menu_enable}
+WOLFBBS_MENU_FILE=menus/main.hjson
+
+# Bootstrap users
 WOLFBBS_BOOTSTRAP_ADMIN_HANDLE=${bootstrap_admin_handle}
 WOLFBBS_BOOTSTRAP_ADMIN_PASSWORD=${bootstrap_admin_password}
 WOLFBBS_BOOTSTRAP_MODERATOR_HANDLE=
@@ -1163,6 +1335,9 @@ EOF
   chmod 600 "$ENV_FILE"
   log "Wrote ${ENV_FILE}"
   ENV_CREATED_THIS_RUN=true
+  BBS_NAME="$bbs_name"
+  BBS_HOSTNAME="$bbs_hostname"
+  SETUP_PROFILE="$setup_profile"
   BOOTSTRAP_ADMIN_HANDLE="$bootstrap_admin_handle"
   BOOTSTRAP_ADMIN_PASSWORD="$bootstrap_admin_password"
 }
@@ -1366,11 +1541,20 @@ status_view() {
   echo "WolfBBS install status: ${PREFIX}"
   # shellcheck disable=SC1090
   . "$ENV_FILE"
-  echo "SSH: ssh ${HOSTNAME:-localhost} -p ${WOLFBBS_SSH_PORT:-$SSH_PORT}"
-  echo "Web: http://localhost:${WOLFBBS_WEB_PORT:-$WEB_PORT}/admin"
-  echo "Chat: http://localhost:${WOLFBBS_WEB_PORT:-$WEB_PORT}/chat"
-  echo "IRC: localhost:${WOLFBBS_IRC_PORT:-$IRC_PORT} (TLS: localhost:${WOLFBBS_IRC_TLS_PORT:-$IRC_TLS_PORT})"
-  echo "Mail Ingest: http://localhost:${WOLFBBS_MAILIN_PORT:-$MAILIN_PORT}/ingest"
+  local status_host="${WOLFBBS_HOSTNAME:-localhost}"
+  local status_name="${WOLFBBS_BBS_NAME:-$DEFAULT_BBS_NAME}"
+  local runtime_ssh_port="${WOLFBBS_SSH_PORT:-$SSH_PORT}"
+  local runtime_web_port="${WOLFBBS_WEB_PORT:-$WEB_PORT}"
+  local runtime_irc_port="${WOLFBBS_IRC_PORT:-$IRC_PORT}"
+  local runtime_irc_tls_port="${WOLFBBS_IRC_TLS_PORT:-$IRC_TLS_PORT}"
+  local runtime_mailin_port="${WOLFBBS_MAILIN_PORT:-$MAILIN_PORT}"
+  echo "BBS Name: ${status_name}"
+  echo "Setup Profile: ${WOLFBBS_SETUP_PROFILE:-basic}"
+  echo "SSH: ssh ${status_host} -p ${runtime_ssh_port}"
+  echo "Web: http://${status_host}:${runtime_web_port}/admin"
+  echo "Chat: http://${status_host}:${runtime_web_port}/chat"
+  echo "IRC: ${status_host}:${runtime_irc_port} (TLS: ${status_host}:${runtime_irc_tls_port})"
+  echo "Mail Ingest: http://${status_host}:${runtime_mailin_port}/ingest"
   if [[ -n "${WOLFBBS_BOOTSTRAP_ADMIN_HANDLE:-}" ]]; then
     echo "Bootstrap sysop handle: ${WOLFBBS_BOOTSTRAP_ADMIN_HANDLE} (password stored in ${ENV_FILE})"
   fi
@@ -1379,6 +1563,40 @@ status_view() {
   if [[ -n "$cmd" ]]; then
     echo "Compose status:"
     eval "$cmd -f '$compose_file' --env-file '$ENV_FILE' ps" || true
+  fi
+  echo "Runtime probes:"
+  if command -v curl >/dev/null 2>&1; then
+    if curl -fsS "http://127.0.0.1:${runtime_web_port}/healthz" >/dev/null 2>&1; then
+      echo "  PASS web healthz: http://127.0.0.1:${runtime_web_port}/healthz"
+    else
+      echo "  WARN web healthz unreachable: http://127.0.0.1:${runtime_web_port}/healthz"
+    fi
+    if curl -fsS "http://127.0.0.1:${runtime_web_port}/readyz" >/dev/null 2>&1; then
+      echo "  PASS web readyz: http://127.0.0.1:${runtime_web_port}/readyz"
+    else
+      echo "  WARN web readyz unreachable: http://127.0.0.1:${runtime_web_port}/readyz"
+    fi
+  else
+    echo "  WARN curl not found; skipping HTTP probes"
+  fi
+  if command -v nc >/dev/null 2>&1; then
+    if nc -z 127.0.0.1 "$runtime_ssh_port" >/dev/null 2>&1; then
+      echo "  PASS ssh port ${runtime_ssh_port} reachable"
+    else
+      echo "  WARN ssh port ${runtime_ssh_port} unreachable"
+    fi
+    if nc -z 127.0.0.1 "$runtime_irc_port" >/dev/null 2>&1; then
+      echo "  PASS irc port ${runtime_irc_port} reachable"
+    else
+      echo "  WARN irc port ${runtime_irc_port} unreachable"
+    fi
+    if nc -z 127.0.0.1 "$runtime_mailin_port" >/dev/null 2>&1; then
+      echo "  PASS mail ingest port ${runtime_mailin_port} reachable"
+    else
+      echo "  WARN mail ingest port ${runtime_mailin_port} unreachable"
+    fi
+  else
+    echo "  WARN nc not found; skipping TCP probes"
   fi
 }
 
@@ -1541,6 +1759,28 @@ parse_args() {
         FORCE=true
         shift
         ;;
+      --bbs-name)
+        require_value "$1" "${2:-}"
+        BBS_NAME="$2"
+        USED_INSTALLER_CONFIG_FLAGS=true
+        shift 2
+        ;;
+      --hostname)
+        require_value "$1" "${2:-}"
+        BBS_HOSTNAME="$2"
+        USED_INSTALLER_CONFIG_FLAGS=true
+        shift 2
+        ;;
+      --setup-profile)
+        require_value "$1" "${2:-}"
+        if ! is_valid_setup_profile "$2"; then
+          echo "Invalid setup profile: $2 (expected basic|critical|expert)"
+          exit 1
+        fi
+        SETUP_PROFILE="$(normalize_setup_profile "$2")"
+        USED_INSTALLER_CONFIG_FLAGS=true
+        shift 2
+        ;;
       --ssh-port)
         require_value "$1" "${2:-}"
         SSH_PORT="$2"
@@ -1666,6 +1906,12 @@ main() {
   check_macos_prereqs
   init_log_file
   print_splash
+
+  if [[ "$USED_INSTALLER_CONFIG_FLAGS" == "true" ]]; then
+    echo "Note: install-time identity/profile flags are supported for automation."
+    echo "Recommended path is to configure WolfBBS in the UI at /admin/setup and /admin/config."
+    echo
+  fi
 
   if [[ "$DOCTOR" == "true" ]]; then
     doctor_report

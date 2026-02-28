@@ -236,17 +236,26 @@ func (a *webApp) handleGatewayFileAction(w http.ResponseWriter, r *http.Request,
 	if action == "" || action == "fetch" {
 		return false
 	}
+	redirectPath := "/gateway?view=files"
 	if a.adminRepo == nil {
-		http.Error(w, "filebase unavailable", http.StatusServiceUnavailable)
+		redirectWithError(w, r, redirectPath, "FileBase is unavailable.")
 		return true
 	}
-	redirectURL := "/gateway?view=files"
+	redirectURL := redirectPath
+	notice := ""
+	errMsg := ""
 	switch action {
 	case "rate_file":
 		fileID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("file_id")), 10, 64)
 		rating := parseInt(r.FormValue("rating"), 0)
 		if fileID > 0 && rating > 0 {
-			_ = a.adminRepo.SetFileRating(user.ID, fileID, rating)
+			if err := a.adminRepo.SetFileRating(user.ID, fileID, rating); err != nil {
+				errMsg = "Could not save rating."
+				break
+			}
+			notice = "Rating saved."
+		} else {
+			errMsg = "Select a file and rating before submitting."
 		}
 	case "save_filter":
 		filter := &domain.FileFilter{
@@ -260,16 +269,36 @@ func (a *webApp) handleGatewayFileAction(w http.ResponseWriter, r *http.Request,
 				filter.Tags = append(filter.Tags, tag)
 			}
 		}
-		_ = a.adminRepo.SaveFileFilter(filter)
+		if strings.TrimSpace(filter.Name) == "" {
+			errMsg = "Filter name is required."
+			break
+		}
+		if err := a.adminRepo.SaveFileFilter(filter); err != nil {
+			errMsg = "Could not save filter."
+			break
+		}
+		notice = "Saved filter '" + filter.Name + "'."
 	case "queue_add":
 		fileID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("file_id")), 10, 64)
 		if fileID > 0 {
-			_ = a.adminRepo.EnqueueDownload(user.ID, fileID)
+			if err := a.adminRepo.EnqueueDownload(user.ID, fileID); err != nil {
+				errMsg = "Could not add file to queue."
+				break
+			}
+			notice = "Added file to download queue."
+		} else {
+			errMsg = "Select a file before queueing."
 		}
 	case "queue_remove":
 		fileID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("file_id")), 10, 64)
 		if fileID > 0 {
-			_ = a.adminRepo.DequeueDownload(user.ID, fileID)
+			if err := a.adminRepo.DequeueDownload(user.ID, fileID); err != nil {
+				errMsg = "Could not remove file from queue."
+				break
+			}
+			notice = "Removed file from queue."
+		} else {
+			errMsg = "Select a file before removing."
 		}
 	case "ticket":
 		fileID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("file_id")), 10, 64)
@@ -281,10 +310,24 @@ func (a *webApp) handleGatewayFileAction(w http.ResponseWriter, r *http.Request,
 			ticket, err := a.createDownloadTicket(user.ID, fileID, time.Duration(ttlMinutes)*time.Minute)
 			if err == nil && ticket != nil {
 				redirectURL += "&issued_token=" + url.QueryEscape(ticket.Token)
+				notice = "Download ticket issued."
+			} else {
+				errMsg = "Could not issue download ticket."
 			}
+		} else {
+			errMsg = "Select a file before issuing a ticket."
 		}
 	default:
-		return false
+		redirectWithError(w, r, redirectPath, "Unsupported file action.")
+		return true
+	}
+	if errMsg != "" {
+		redirectWithError(w, r, redirectPath, errMsg)
+		return true
+	}
+	if notice != "" {
+		redirectWithNotice(w, r, redirectURL, notice)
+		return true
 	}
 	http.Redirect(w, r, redirectURL, http.StatusFound)
 	return true
@@ -321,6 +364,7 @@ func (a *webApp) renderGatewayFiles(w http.ResponseWriter, r *http.Request, user
 	}
 	issuedToken := strings.TrimSpace(r.URL.Query().Get("issued_token"))
 	csrf := a.csrfHiddenInput(r)
+	messageBlock := pageMessageBlock(r)
 
 	fileRows := strings.Builder{}
 	for _, row := range files {
@@ -364,7 +408,9 @@ func (a *webApp) renderGatewayFiles(w http.ResponseWriter, r *http.Request, user
 	page := `<html><body>
 	<h1>Gateway FileBase</h1>
 	<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/gateway">gateway</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>` +
+		messageBlock +
 		issuedBlock +
+		`<p><strong>Tip:</strong> Queue files first, then issue one-time tickets or download the batch ZIP.</p>` +
 		`<form method="GET" action="/gateway">
 			<input type="hidden" name="view" value="files">
 			<label>Area ID <input name="area" value="` + strconv.FormatInt(fileAreaID, 10) + `" size="6"></label>
@@ -395,16 +441,16 @@ func (a *webApp) serveGatewayBatchZip(w http.ResponseWriter, r *http.Request, us
 		return false
 	}
 	if a.adminRepo == nil {
-		http.Error(w, "filebase unavailable", http.StatusServiceUnavailable)
+		redirectWithError(w, r, "/gateway?view=files", "FileBase is unavailable.")
 		return true
 	}
 	queue, err := a.adminRepo.ListDownloadQueue(user.ID, 500)
 	if err != nil {
-		http.Error(w, "queue unavailable", http.StatusInternalServerError)
+		redirectWithError(w, r, "/gateway?view=files", "Download queue is unavailable.")
 		return true
 	}
 	if len(queue) == 0 {
-		http.Error(w, "download queue is empty", http.StatusNotFound)
+		redirectWithError(w, r, "/gateway?view=files", "Download queue is empty.")
 		return true
 	}
 	stamp := time.Now().UTC().Format("20060102-150405")

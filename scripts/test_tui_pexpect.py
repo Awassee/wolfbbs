@@ -138,6 +138,9 @@ def spawn_ssh(port: int) -> pexpect.spawn:
             "any other key to continue",
             "Handle:",
             r"[Pp]assword:",
+            "WolfBBS Welcome",
+            "Login",
+            "Enter selection:",
         ]
     )
     if idx == 2:
@@ -149,10 +152,31 @@ def spawn_ssh(port: int) -> pexpect.spawn:
                 "Press any key to continue",
                 "any other key to continue",
                 "Handle:",
+                "WolfBBS Welcome",
+                "Login",
             ]
         )
         if idx == 2:
             return child
+        if idx in (3, 4):
+            try:
+                child.expect("Handle:")
+                return child
+            except pexpect.TIMEOUT:
+                pass
+    if idx in (4, 5):
+        try:
+            child.expect("Handle:")
+            return child
+        except pexpect.TIMEOUT:
+            pass
+    if idx == 6:
+        child.send("Q")
+        try:
+            child.expect("Handle:")
+            return child
+        except pexpect.TIMEOUT:
+            pass
     child.send("x")
     child.expect("Handle:")
     return child
@@ -294,18 +318,21 @@ def main() -> int:
     tmp_root = Path(tempfile.mkdtemp(prefix="wolfbbs-tui-e2e-"))
     db_path = tmp_root / "wolfbbs-e2e.db"
     log_path = tmp_root / "wolfbbs-e2e.log"
-    port = free_port()
+    first_port = free_port()
+    second_port = free_port()
+    if second_port == first_port:
+        second_port = free_port()
     proc = None
     try:
-        proc = start_bbs_server(db_path, port, log_path)
-        run_regular_user_flow(port)
+        proc = start_bbs_server(db_path, first_port, log_path)
+        run_regular_user_flow(first_port)
         stop_process(proc)
         proc = None
 
         run_oputil_set_role(db_path, "e2eadmin", "sysop")
 
-        proc = start_bbs_server(db_path, port, log_path)
-        run_admin_flow(port)
+        proc = start_bbs_server(db_path, second_port, log_path)
+        run_admin_flow(second_port)
         print("PASS terminal e2e (pexpect)")
         return 0
     except Exception as exc:  # pragma: no cover - integration failure path

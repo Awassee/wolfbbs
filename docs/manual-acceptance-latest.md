@@ -1,8 +1,8 @@
 # WolfBBS Manual Acceptance Report
 
-- Date: 2026-02-27 23:43:10 UTC
+- Date: 2026-02-28 12:44:46 UTC
 - Mode: auto
-- Repo: /Users/seanheiney/Documents/New project
+- Repo: /Users/seanheiney/wolfbbs
 
 | ID | Result | Description | Notes |
 |---|---|---|---|
