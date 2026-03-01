@@ -295,6 +295,79 @@ func TestAdminSystemDashboardRendersWFCMetrics(t *testing.T) {
 	}
 }
 
+func TestAdminSystemDashboardShowsCallerOriginAndAddress(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
+	authSvc := auth.NewService(userRepo)
+	if _, err := authSvc.Register("sysop", "password123"); err != nil {
+		t.Fatalf("register sysop: %v", err)
+	}
+	if err := authSvc.SetRole("sysop", roleAdmin); err != nil {
+		t.Fatalf("set role: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := adminRepo.UpsertNodeSession(&domain.NodeSession{
+		SessionID:    "sess-origin",
+		NodeID:       7,
+		Username:     "sysop",
+		Area:         "Main Menu",
+		RemoteAddr:   "192.168.1.44:2200",
+		LoginAt:      now.Add(-10 * time.Minute),
+		LastActivity: now.Add(-10 * time.Second),
+		UpdatedAt:    now,
+	}); err != nil {
+		t.Fatalf("upsert node session: %v", err)
+	}
+	if err := adminRepo.AddCallerHistory(&domain.CallerHistory{
+		SessionID:       "sess-old",
+		NodeID:          5,
+		Username:        "alpha",
+		Area:            "Boards",
+		RemoteAddr:      "203.0.113.99:2323",
+		LoginAt:         now.Add(-40 * time.Minute),
+		LogoutAt:        now.Add(-30 * time.Minute),
+		DurationSeconds: 600,
+		CreatedAt:       now.Add(-30 * time.Minute),
+	}); err != nil {
+		t.Fatalf("add caller history: %v", err)
+	}
+
+	app := &webApp{
+		authSvc:   authSvc,
+		adminRepo: adminRepo,
+		sessions:  map[string]sessionState{},
+		chatSvc:   chat.NewServiceForTest(),
+		startedAt: time.Now().Add(-2 * time.Minute),
+	}
+	sid, ok := app.createSession("sysop")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+
+	protected := app.mustBeRole(roleAdmin, http.HandlerFunc(app.handleAdminSystem))
+	req := httptest.NewRequest(http.MethodGet, "/admin/system", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	protected.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		"<th>Origin</th>",
+		"<th>From</th>",
+		"Origin loopback/lan/wan",
+		"192.168.1.44",
+		"203.0.113.99",
+		"LAN",
+		"WAN",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected %q in dashboard body: %s", want, body)
+		}
+	}
+}
+
 func TestAdminNodeStateReturnsPersistedSessions(t *testing.T) {
 	userRepo := repository.NewInMemoryUserRepository()
 	adminRepo := repository.NewInMemoryAdminRepository()
@@ -360,6 +433,12 @@ func TestAdminNodeStateReturnsPersistedSessions(t *testing.T) {
 	if !strings.Contains(body, `"node_id":2`) {
 		t.Fatalf("expected node id in payload: %s", body)
 	}
+	if !strings.Contains(body, `"remote_host":"127.0.0.1"`) {
+		t.Fatalf("expected remote host in payload: %s", body)
+	}
+	if !strings.Contains(body, `"remote_origin":"loopback"`) {
+		t.Fatalf("expected remote origin in payload: %s", body)
+	}
 }
 
 func TestAdminSetupConfigAndErrorScreens(t *testing.T) {
@@ -407,6 +486,18 @@ func TestAdminSetupConfigAndErrorScreens(t *testing.T) {
 	app.Unlock()
 
 	protectedSetup := app.mustBeRole(roleAdmin, http.HandlerFunc(app.handleAdminSetup))
+	setupNoticeFromRedirect := func(rr *httptest.ResponseRecorder) string {
+		t.Helper()
+		location := strings.TrimSpace(rr.Header().Get("Location"))
+		if location == "" {
+			t.Fatal("expected redirect location")
+		}
+		redirectURL, err := url.Parse(location)
+		if err != nil {
+			t.Fatalf("parse redirect location %q: %v", location, err)
+		}
+		return strings.TrimSpace(redirectURL.Query().Get("notice"))
+	}
 	req := httptest.NewRequest(http.MethodGet, "/admin/setup", nil)
 	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
 	rr := httptest.NewRecorder()
@@ -425,6 +516,78 @@ func TestAdminSetupConfigAndErrorScreens(t *testing.T) {
 	}
 
 	form := url.Values{}
+	form.Set("action", "seed_default_boards")
+	form.Set("csrf_token", csrf)
+	req = httptest.NewRequest(http.MethodPost, "/admin/setup", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	protectedSetup.ServeHTTP(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("setup seed boards status = %d", rr.Code)
+	}
+	if got := setupNoticeFromRedirect(rr); got != "Seeded 3 default board(s)." {
+		t.Fatalf("expected seed boards notice, got %q", got)
+	}
+	boards, err := boardRepo.List()
+	if err != nil {
+		t.Fatalf("list boards after seed: %v", err)
+	}
+	if len(boards) != 3 {
+		t.Fatalf("expected 3 boards after seed, got %d (%+v)", len(boards), boards)
+	}
+
+	form = url.Values{}
+	form.Set("action", "seed_default_boards")
+	form.Set("csrf_token", csrf)
+	req = httptest.NewRequest(http.MethodPost, "/admin/setup", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	protectedSetup.ServeHTTP(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("setup reseed boards status = %d", rr.Code)
+	}
+	if got := setupNoticeFromRedirect(rr); got != "Default boards already present." {
+		t.Fatalf("expected reseed boards notice, got %q", got)
+	}
+	boards, err = boardRepo.List()
+	if err != nil {
+		t.Fatalf("list boards after reseed: %v", err)
+	}
+	if len(boards) != 3 {
+		t.Fatalf("expected 3 boards after reseed, got %d (%+v)", len(boards), boards)
+	}
+
+	form = url.Values{}
+	form.Set("action", "ensure_mailbot")
+	form.Set("csrf_token", csrf)
+	req = httptest.NewRequest(http.MethodPost, "/admin/setup", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	protectedSetup.ServeHTTP(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("setup ensure mailbot status = %d", rr.Code)
+	}
+	if got := setupNoticeFromRedirect(rr); got != "Mailbot service account checked." {
+		t.Fatalf("expected ensure mailbot notice, got %q", got)
+	}
+	mailbot, err := authSvc.GetUser("mailbot")
+	if err != nil {
+		t.Fatalf("mailbot should exist after ensure action: %v", err)
+	}
+	if mailbot.Enabled {
+		t.Fatalf("mailbot account should be disabled after ensure action: %+v", *mailbot)
+	}
+	if !mailbot.Verified {
+		t.Fatalf("mailbot account should be verified after ensure action: %+v", *mailbot)
+	}
+	if mailbot.Role != roleUser {
+		t.Fatalf("mailbot role should be %q, got %q", roleUser, mailbot.Role)
+	}
+
+	form = url.Values{}
 	form.Set("action", "save_setup_profile")
 	form.Set("site_name", "WolfTest")
 	form.Set("site_hostname", "bbs.test")
@@ -579,6 +742,289 @@ func TestAdminSetupConfigAndErrorScreens(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "sample runtime failure") {
 		t.Fatalf("missing runtime error row: %s", rr.Body.String())
+	}
+}
+
+func TestAdminUsersCreateValidationAndDuplicateErrors(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	if _, err := authSvc.Register("sysop", "password123"); err != nil {
+		t.Fatalf("register sysop: %v", err)
+	}
+	if err := authSvc.SetRole("sysop", roleAdmin); err != nil {
+		t.Fatalf("set sysop role: %v", err)
+	}
+
+	app := &webApp{
+		authSvc:   authSvc,
+		userRepo:  userRepo,
+		boardRepo: repository.NewInMemoryBoardRepository(),
+		msgRepo:   repository.NewInMemoryMessageRepository(),
+		adminRepo: repository.NewInMemoryAdminRepository(),
+		chatSvc:   chat.NewServiceForTest(),
+		sessions:  map[string]sessionState{},
+	}
+	sessionID, ok := app.createSession("sysop")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+	app.Lock()
+	csrf := app.sessions[sessionID].csrf
+	app.Unlock()
+
+	protectedUsers := app.mustBeRole(roleAdmin, http.HandlerFunc(app.handleAdminUsers))
+	postCreate := func(handle, password, role string) *httptest.ResponseRecorder {
+		t.Helper()
+		form := url.Values{}
+		form.Set("action", "create")
+		form.Set("handle", handle)
+		form.Set("password", password)
+		form.Set("role", role)
+		form.Set("csrf_token", csrf)
+		req := httptest.NewRequest(http.MethodPost, "/admin/users", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sessionID})
+		rr := httptest.NewRecorder()
+		protectedUsers.ServeHTTP(rr, req)
+		return rr
+	}
+
+	rr := postCreate("", "password123", "user")
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("empty handle create status = %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "handle is required") {
+		t.Fatalf("expected handle validation error, got %q", rr.Body.String())
+	}
+
+	rr = postCreate("alphauser", "short", "user")
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("short password create status = %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "password must be at least 8 characters") {
+		t.Fatalf("expected password validation error, got %q", rr.Body.String())
+	}
+
+	rr = postCreate("alphauser", "password123", "moderator")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("valid create status = %d body=%q", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "created user alphauser") {
+		t.Fatalf("expected create success message, got %q", rr.Body.String())
+	}
+	created, err := authSvc.GetUser("alphauser")
+	if err != nil {
+		t.Fatalf("get created user: %v", err)
+	}
+	if created.Role != roleModerator {
+		t.Fatalf("expected created user role %q, got %q", roleModerator, created.Role)
+	}
+
+	rr = postCreate("alphauser", "password123", "user")
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("duplicate create status = %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "handle already exists") {
+		t.Fatalf("expected duplicate handle error, got %q", rr.Body.String())
+	}
+}
+
+func TestAdminUsersLifecycleActionsAndAuthEffects(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
+	authSvc := auth.NewService(userRepo)
+	if _, err := authSvc.Register("sysop", "password123"); err != nil {
+		t.Fatalf("register sysop: %v", err)
+	}
+	if err := authSvc.SetRole("sysop", roleAdmin); err != nil {
+		t.Fatalf("set sysop role: %v", err)
+	}
+
+	app := &webApp{
+		authSvc:   authSvc,
+		userRepo:  userRepo,
+		adminRepo: adminRepo,
+		boardRepo: repository.NewInMemoryBoardRepository(),
+		msgRepo:   repository.NewInMemoryMessageRepository(),
+		chatSvc:   chat.NewServiceForTest(),
+		sessions:  map[string]sessionState{},
+	}
+	sessionID, ok := app.createSession("sysop")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+	app.Lock()
+	csrf := app.sessions[sessionID].csrf
+	app.Unlock()
+
+	protectedUsers := app.mustBeRole(roleAdmin, http.HandlerFunc(app.handleAdminUsers))
+	postUsers := func(form url.Values) *httptest.ResponseRecorder {
+		t.Helper()
+		cloned := url.Values{}
+		for key, values := range form {
+			next := make([]string, len(values))
+			copy(next, values)
+			cloned[key] = next
+		}
+		form = cloned
+		form.Set("csrf_token", csrf)
+		req := httptest.NewRequest(http.MethodPost, "/admin/users", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sessionID})
+		rr := httptest.NewRecorder()
+		protectedUsers.ServeHTTP(rr, req)
+		return rr
+	}
+
+	create := url.Values{}
+	create.Set("action", "create")
+	create.Set("handle", "qauser")
+	create.Set("password", "qa123456")
+	create.Set("role", "user")
+	rr := postUsers(create)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("create user status = %d body=%q", rr.Code, rr.Body.String())
+	}
+
+	disable := url.Values{}
+	disable.Set("action", "disable")
+	disable.Set("handle", "qauser")
+	rr = postUsers(disable)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("disable user status = %d", rr.Code)
+	}
+	if _, err := authSvc.Login("qauser", "qa123456"); err == nil {
+		t.Fatal("disabled user login should fail")
+	}
+
+	enable := url.Values{}
+	enable.Set("action", "enable")
+	enable.Set("handle", "qauser")
+	rr = postUsers(enable)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("enable user status = %d", rr.Code)
+	}
+	if _, err := authSvc.Login("qauser", "qa123456"); err != nil {
+		t.Fatalf("enabled user login should succeed: %v", err)
+	}
+
+	ban := url.Values{}
+	ban.Set("action", "ban")
+	ban.Set("handle", "qauser")
+	rr = postUsers(ban)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("ban user status = %d", rr.Code)
+	}
+	if _, err := authSvc.Login("qauser", "qa123456"); err == nil {
+		t.Fatal("banned user login should fail")
+	}
+
+	unban := url.Values{}
+	unban.Set("action", "unban")
+	unban.Set("handle", "qauser")
+	rr = postUsers(unban)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("unban user status = %d", rr.Code)
+	}
+	if _, err := authSvc.Login("qauser", "qa123456"); err != nil {
+		t.Fatalf("unbanned user login should succeed: %v", err)
+	}
+
+	setRole := url.Values{}
+	setRole.Set("action", "set_role")
+	setRole.Set("handle", "qauser")
+	setRole.Set("role", "moderator")
+	rr = postUsers(setRole)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("set role status = %d", rr.Code)
+	}
+	qaUser, err := authSvc.GetUser("qauser")
+	if err != nil {
+		t.Fatalf("get qauser after set role: %v", err)
+	}
+	if qaUser.Role != roleModerator {
+		t.Fatalf("qauser role = %q, want %q", qaUser.Role, roleModerator)
+	}
+
+	verify := url.Values{}
+	verify.Set("action", "verify")
+	verify.Set("handle", "qauser")
+	rr = postUsers(verify)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("verify user status = %d", rr.Code)
+	}
+	qaUser, err = authSvc.GetUser("qauser")
+	if err != nil {
+		t.Fatalf("get qauser after verify: %v", err)
+	}
+	if !qaUser.Verified {
+		t.Fatalf("qauser should be verified after verify action: %+v", *qaUser)
+	}
+
+	unverify := url.Values{}
+	unverify.Set("action", "unverify")
+	unverify.Set("handle", "qauser")
+	rr = postUsers(unverify)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("unverify user status = %d", rr.Code)
+	}
+	qaUser, err = authSvc.GetUser("qauser")
+	if err != nil {
+		t.Fatalf("get qauser after unverify: %v", err)
+	}
+	if qaUser.Verified {
+		t.Fatalf("qauser should not be verified after unverify action: %+v", *qaUser)
+	}
+
+	reset := url.Values{}
+	reset.Set("action", "reset")
+	reset.Set("handle", "qauser")
+	rr = postUsers(reset)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("reset password status = %d body=%q", rr.Code, rr.Body.String())
+	}
+	resetMsg := strings.TrimSpace(rr.Body.String())
+	const resetPrefix = "reset password for qauser to "
+	if !strings.HasPrefix(resetMsg, resetPrefix) {
+		t.Fatalf("unexpected reset response: %q", resetMsg)
+	}
+	newPassword := strings.TrimSpace(strings.TrimPrefix(resetMsg, resetPrefix))
+	if len(newPassword) < 8 {
+		t.Fatalf("expected generated password length >= 8, got %q", newPassword)
+	}
+	if _, err := authSvc.Login("qauser", "qa123456"); err == nil {
+		t.Fatal("old password should fail after reset")
+	}
+	if _, err := authSvc.Login("qauser", newPassword); err != nil {
+		t.Fatalf("new password should work after reset: %v", err)
+	}
+
+	auditRows, err := adminRepo.ListAudit(50)
+	if err != nil {
+		t.Fatalf("list audit rows: %v", err)
+	}
+	expectActions := []string{
+		"create_user",
+		"disable_user",
+		"enable_user",
+		"ban_user",
+		"unban_user",
+		"set_role",
+		"verify_user",
+		"unverify_user",
+		"reset_password",
+	}
+	for _, want := range expectActions {
+		found := false
+		for _, row := range auditRows {
+			if row.Action == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected audit action %q in %+v", want, auditRows)
+		}
 	}
 }
 
@@ -1675,6 +2121,20 @@ func TestConnectAndTourPages(t *testing.T) {
 	if !strings.Contains(body, "WolfBBS Connect") || !strings.Contains(body, "ws://localhost:6080/ws-login") {
 		t.Fatalf("connect page missing expected content: %s", body)
 	}
+	for _, want := range []string{
+		"function sendLine(value)",
+		"pending.push(payload)",
+		"scheduleReconnect(\"socket closed\")",
+		"document.visibilityState === \"visible\"",
+		"echoClient(payload)",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("connect page terminal script missing %q", want)
+		}
+	}
+	if strings.Contains(body, "if (!v) return;") {
+		t.Fatalf("connect page still blocks empty line submit")
+	}
 
 	rr = httptest.NewRecorder()
 	app.handleGuestTour(rr, httptest.NewRequest(http.MethodGet, "/tour", nil))
@@ -1967,6 +2427,55 @@ func TestPasswordResetRequestInvokesNotifierForEmailHandle(t *testing.T) {
 	}
 	if notifiedPath != "/reset/request" {
 		t.Fatalf("unexpected request path %q", notifiedPath)
+	}
+}
+
+func TestSeedDefaultBoardsAddsMissingDefaultsOnly(t *testing.T) {
+	repo := repository.NewInMemoryBoardRepository()
+	if err := repo.Create(&domain.Board{Name: "General", Description: "already there", CreatedBy: 99}); err != nil {
+		t.Fatalf("create pre-existing board: %v", err)
+	}
+
+	created, err := seedDefaultBoards(repo)
+	if err != nil {
+		t.Fatalf("seed default boards: %v", err)
+	}
+	if created != 2 {
+		t.Fatalf("expected 2 boards created when General exists, got %d", created)
+	}
+
+	boards, err := repo.List()
+	if err != nil {
+		t.Fatalf("list boards: %v", err)
+	}
+	if len(boards) != 3 {
+		t.Fatalf("expected 3 total boards after first seed, got %d", len(boards))
+	}
+
+	created, err = seedDefaultBoards(repo)
+	if err != nil {
+		t.Fatalf("seed default boards rerun: %v", err)
+	}
+	if created != 0 {
+		t.Fatalf("expected idempotent rerun to create 0 boards, got %d", created)
+	}
+
+	boards, err = repo.List()
+	if err != nil {
+		t.Fatalf("list boards after rerun: %v", err)
+	}
+	if len(boards) != 3 {
+		t.Fatalf("expected 3 total boards after rerun, got %d", len(boards))
+	}
+}
+
+func TestSeedDefaultBoardsFailsWithNilRepo(t *testing.T) {
+	created, err := seedDefaultBoards(nil)
+	if err == nil {
+		t.Fatal("expected nil repository to return an error")
+	}
+	if created != 0 {
+		t.Fatalf("expected 0 created boards on nil repository, got %d", created)
 	}
 }
 

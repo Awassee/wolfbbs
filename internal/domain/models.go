@@ -6,16 +6,22 @@ type User struct {
 	ID            int64
 	Handle        string
 	PasswordHash  string
+<<<<<<< ours
 	Enabled       bool
 	Banned        bool
 	ForceReset    bool
+=======
+>>>>>>> theirs
 	Theme         string
 	TimeFormat24h bool
 	ANSIEnabled   bool
 	PagingEnabled bool
+<<<<<<< ours
 	Role          string
 	TOTPSecret    string
 	RecoveryCodes []string
+=======
+>>>>>>> theirs
 	Verified      bool
 	LastLoginAt   *time.Time
 	CreatedAt     time.Time
@@ -26,9 +32,12 @@ type Board struct {
 	ID          int64
 	Name        string
 	Description string
+<<<<<<< ours
 	Conference  string
 	ReadACS     string
 	WriteACS    string
+=======
+>>>>>>> theirs
 	CreatedBy   int64
 	CreatedAt   time.Time
 }
@@ -37,13 +46,17 @@ type Message struct {
 	ID        int64
 	BoardID   int64
 	AuthorID  int64
+<<<<<<< ours
 	ParentID  int64
 	ThreadID  int64
+=======
+>>>>>>> theirs
 	Subject   string
 	Body      string
 	CreatedAt time.Time
 }
 
+<<<<<<< ours
 type MessagePointer struct {
 	UserID     int64
 	BoardID    int64
@@ -63,6 +76,8 @@ type MessageReport struct {
 	ResolvedBy string
 }
 
+=======
+>>>>>>> theirs
 type PrivateMail struct {
 	ID         int64
 	FromUserID int64
@@ -73,6 +88,7 @@ type PrivateMail struct {
 	CreatedAt  time.Time
 	ReadAt     *time.Time
 }
+<<<<<<< ours
 
 type FileArea struct {
 	ID          int64
@@ -184,3 +200,5 @@ type CallerHistory struct {
 	DurationSeconds int64
 	CreatedAt       time.Time
 }
+=======
+>>>>>>> theirs

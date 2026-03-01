@@ -2,6 +2,7 @@ package loginserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,16 +15,19 @@ import (
 
 	"github.com/gorilla/websocket"
 	"wolfbbs/internal/auth"
+	"wolfbbs/internal/chat"
 	"wolfbbs/internal/netutil"
+	"wolfbbs/internal/repository"
 	"wolfbbs/internal/session"
 )
 
 type WebSocketServer struct {
-	addr   string
-	path   string
-	logger *slog.Logger
-	auth   *auth.Service
-	nodes  *session.Manager
+	addr     string
+	path     string
+	logger   *slog.Logger
+	auth     *auth.Service
+	nodes    *session.Manager
+	services sessionServices
 
 	resolver *netutil.ProxyResolver
 	upgrader websocket.Upgrader
@@ -52,6 +56,7 @@ func NewWebSocketServer(addr, path string, logger *slog.Logger, authSvc *auth.Se
 		logger:   logger,
 		auth:     authSvc,
 		nodes:    nodes,
+		services: defaultSessionServices(),
 		resolver: resolver,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
@@ -61,6 +66,10 @@ func NewWebSocketServer(addr, path string, logger *slog.Logger, authSvc *auth.Se
 			},
 		},
 	}, nil
+}
+
+func (s *WebSocketServer) SetServices(boards repository.BoardRepository, messages repository.MessageRepository, mail repository.PrivateMailRepository, chatSvc *chat.Service, offlineDir string) {
+	s.services.set(boards, messages, mail, chatSvc, offlineDir)
 }
 
 func (s *WebSocketServer) ListenAndServe() error {
@@ -167,7 +176,7 @@ func (s *WebSocketServer) handleWebSocket(w http.ResponseWriter, r *http.Request
 			conn:       conn,
 			remoteAddr: s.resolver.Resolve(r.RemoteAddr, r.Header),
 		}
-		runLoginSession("websocket", peer, s.auth, s.nodes, s.logger)
+		runLoginSession("websocket", peer, s.auth, s.nodes, s.logger, s.services)
 	}()
 }
 
@@ -199,11 +208,18 @@ func (s *WebSocketServer) Shutdown(ctx context.Context) error {
 type wsPeer struct {
 	conn       *websocket.Conn
 	remoteAddr string
+	lineBuf    []rune
+	pending    []string
 }
 
 func (p *wsPeer) ReadLine() (string, error) {
 	if p.conn == nil {
 		return "", io.EOF
+	}
+	if len(p.pending) > 0 {
+		line := p.pending[0]
+		p.pending = append([]string{}, p.pending[1:]...)
+		return line, nil
 	}
 	for {
 		mt, payload, err := p.conn.ReadMessage()
@@ -211,6 +227,14 @@ func (p *wsPeer) ReadLine() (string, error) {
 			return "", err
 		}
 		if mt != websocket.TextMessage {
+			continue
+		}
+		if p.handleFrame(payload) {
+			if len(p.pending) > 0 {
+				line := p.pending[0]
+				p.pending = append([]string{}, p.pending[1:]...)
+				return line, nil
+			}
 			continue
 		}
 		return strings.TrimSpace(string(payload)), nil
@@ -233,4 +257,43 @@ func (p *wsPeer) Close() error {
 		return nil
 	}
 	return p.conn.Close()
+}
+
+type wsFrame struct {
+	Type string `json:"t"`
+	Data string `json:"d"`
+}
+
+func (p *wsPeer) handleFrame(payload []byte) bool {
+	var frame wsFrame
+	if err := json.Unmarshal(payload, &frame); err != nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(frame.Type)) {
+	case "ping":
+		return true
+	case "key":
+		p.consumeKeyStream(frame.Data)
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *wsPeer) consumeKeyStream(data string) {
+	for _, r := range data {
+		switch r {
+		case '\r':
+			continue
+		case '\n':
+			p.pending = append(p.pending, strings.TrimSpace(string(p.lineBuf)))
+			p.lineBuf = p.lineBuf[:0]
+		case '\b', 0x7f:
+			if len(p.lineBuf) > 0 {
+				p.lineBuf = p.lineBuf[:len(p.lineBuf)-1]
+			}
+		default:
+			p.lineBuf = append(p.lineBuf, r)
+		}
+	}
 }

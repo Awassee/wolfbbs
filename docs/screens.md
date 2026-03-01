@@ -1,3 +1,4 @@
+<<<<<<< ours
 # WolfBBS Screen Language
 
 This document defines the ANSI screen conventions for the SSH UI.  
@@ -302,3 +303,37 @@ Enter selection:
 Notes:
 - Non-printable control bytes should be ignored unless explicitly mapped.
 - Keep reads forgiving with immediate redraw and small buffers for sync-safe clients.
+=======
+# Screen Flow (Step 1)
+
+## Primary Flow
+
+`Welcome -> Login -> (Create Account optional) -> Main Menu`
+
+## Screen Notes
+
+- **Top Status Bar**: board name, user handle, local date/time, node id.
+- **Welcome Splash**: original WolfBBS ANSI-style art (no legacy copy).
+- **Login Form**: handle + password prompts.
+- **Main Menu**:
+  - `[M]essage Boards`
+  - `[P]rivate Mail`
+  - `[F]iles`
+  - `[C]hat`
+  - `[G]ateways`
+  - `[S]ettings`
+  - `[A]dmin`
+  - `[Q]uit`
+
+## Terminal Behavior
+
+- PTY required.
+- Layout assumes 80x25 and keeps compatibility at smaller widths (minimum 40 columns for now).
+- ANSI color + box drawing via unicode equivalents.
+
+
+## Implemented interactions (current)
+
+- Message Boards: list boards, read posts by board id, post new message.
+- Private Mail: inbox view, outbox view, send direct mail by recipient handle.
+>>>>>>> theirs

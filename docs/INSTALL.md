@@ -258,6 +258,8 @@ Single-command build + QA:
 ```bash
 scripts/build.sh --quick
 scripts/build.sh --full
+# focused functional regression matrix (admin/users/settings/chat/irc)
+scripts/qa-functional.sh --with-web-e2e
 ```
 
 macOS Node 25 fallback (preferred for Playwright stability):

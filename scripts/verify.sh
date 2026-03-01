@@ -413,18 +413,28 @@ run_smoke_checks() {
   # Reset smoke project state to avoid stale DB volume credential mismatches.
   run_with_timeout "$COMPOSE_CMD_TIMEOUT_SECONDS" run_compose "$ccmd" -f "$cfile" down -v --remove-orphans >/dev/null 2>&1 || true
 
+  local -a smoke_services=(postgres bbs web irc)
   local compose_build_log=""
   compose_build_log="$(mktemp)"
-  if run_with_timeout "$COMPOSE_UP_TIMEOUT_SECONDS" run_compose "$ccmd" -f "$cfile" up -d --build >"$compose_build_log" 2>&1; then
+  if run_with_timeout "$COMPOSE_UP_TIMEOUT_SECONDS" run_compose "$ccmd" -f "$cfile" up -d --build "${smoke_services[@]}" >"$compose_build_log" 2>&1; then
     pass "C-008" "stack starts with docker compose up -d --build"
   else
+    if grep -Eiq 'port is already allocated|bind.*failed' "$compose_build_log"; then
+      fail_must "C-008" "required smoke ports are already in use (set WOLFBBS_*_PORT env vars to isolated ports and retry)"
+      if [[ -f "$compose_build_log" ]]; then
+        echo "--- compose startup log tail ---"
+        tail -n 12 "$compose_build_log" || true
+      fi
+      rm -f "$compose_build_log"
+      return
+    fi
     if grep -Eiq 'input/output error|meta\.db' "$compose_build_log"; then
       fail_must "C-008" "docker engine storage is unhealthy (input/output error). Free disk space, restart Docker Desktop/Colima, and retry."
       rm -f "$compose_build_log"
       return
     fi
     warn_should "C-008-BUILD" "compose up -d --build failed/timed out; retrying with standard up -d"
-    if run_with_timeout "$COMPOSE_UP_TIMEOUT_SECONDS" run_compose "$ccmd" -f "$cfile" up -d >>"$compose_build_log" 2>&1; then
+    if run_with_timeout "$COMPOSE_UP_TIMEOUT_SECONDS" run_compose "$ccmd" -f "$cfile" up -d "${smoke_services[@]}" >>"$compose_build_log" 2>&1; then
       pass "C-008" "stack starts with docker compose up -d (build fallback)"
     else
       fail_must "C-008" "stack starts with docker compose up -d --build (or fallback up -d)"
@@ -474,7 +484,15 @@ run_smoke_checks() {
     fail_must "BBS-001" "ssh port open"
   fi
 
-  if ssh-keyscan -p "$SSH_PORT" localhost >/dev/null 2>&1; then
+  local ssh_key_ok=false
+  for _ in $(seq 1 5); do
+    if ssh-keyscan -T 5 -p "$SSH_PORT" localhost >/dev/null 2>&1; then
+      ssh_key_ok=true
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$ssh_key_ok" == "true" ]]; then
     pass "BBS-002" "ssh handshake host key presented"
   else
     fail_must "BBS-002" "ssh handshake host key presented"

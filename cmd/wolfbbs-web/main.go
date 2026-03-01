@@ -32,6 +32,7 @@ import (
 	"wolfbbs/internal/logging"
 	"wolfbbs/internal/menu"
 	"wolfbbs/internal/mods"
+	"wolfbbs/internal/netutil"
 	"wolfbbs/internal/network"
 	"wolfbbs/internal/rbac"
 	"wolfbbs/internal/repository"
@@ -325,7 +326,11 @@ func main() {
 	authSvc.SetEventBus(bus)
 	seedWebUsers(authSvc)
 	seedServiceUsers(authSvc)
-	seedDefaultBoards(storage.Boards)
+	if seeded, seedErr := seedDefaultBoards(storage.Boards); seedErr != nil {
+		log.Printf("default board seed failed: %v", seedErr)
+	} else if seeded > 0 {
+		log.Printf("seeded %d default board(s)", seeded)
+	}
 
 	app := &webApp{
 		authSvc:   authSvc,
@@ -1168,37 +1173,187 @@ func (a *webApp) handleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	termBlock := `<p>WebSocket terminal is configured for command-mode login server.</p>`
 	if a.modernOnRamp {
-		termBlock += `<pre id="term" style="height:220px; width:780px; border:1px solid #333; overflow:auto; background:#111; color:#9f9; padding:8px; font-family:monospace;"></pre>
-<form id="termForm">
-<label>Input: <input id="termInput" size="80" autocomplete="off"></label>
-<button type="submit">Send</button>
-</form>
+		termBlock += `<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.5.0/css/xterm.min.css">
+<div id="termHost" style="max-width:820px; margin-top:10px;">
+<div id="xterm" style="height:360px; width:100%; border:1px solid #334; border-radius:8px; overflow:hidden;"></div>
+<div id="termStatus" style="margin-top:8px; color:#666; font-size:12px;">connecting...</div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.5.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.10.0/lib/xterm-addon-fit.min.js"></script>
 <script>
 (function(){
-const out = document.getElementById('term');
-const input = document.getElementById('termInput');
-const form = document.getElementById('termForm');
-let ws;
-function append(line){
-  out.textContent += line + "\n";
-  out.scrollTop = out.scrollHeight;
+const host = document.getElementById('xterm');
+const status = document.getElementById('termStatus');
+const wsURL = ` + fmt.Sprintf("%q", wsURL) + `;
+if (!window.Terminal) {
+  status.textContent = "xterm.js failed to load.";
+  return;
 }
-function connect(){
-  ws = new WebSocket(` + fmt.Sprintf("%q", wsURL) + `);
-  ws.onopen = function(){ append("[connected] " + ` + fmt.Sprintf("%q", wsURL) + `); };
-  ws.onmessage = function(evt){ append(evt.data); };
-  ws.onclose = function(){ append("[disconnected]"); };
-  ws.onerror = function(){ append("[error] websocket failure"); };
-}
-form.addEventListener('submit', function(evt){
-  evt.preventDefault();
-  if (!ws || ws.readyState !== 1) { append("[offline] reconnecting"); connect(); return; }
-  const v = input.value;
-  if (!v) return;
-  ws.send(v);
-  input.value = "";
+const term = new window.Terminal({
+  cursorBlink: true,
+  convertEol: true,
+  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+  fontSize: 14,
+  theme: {
+    background: "#0b0f14",
+    foreground: "#b7f7c1",
+    cursor: "#f4f4f4",
+    selectionBackground: "#334455"
+  },
+  scrollback: 3000
 });
+const fitAddon = window.FitAddon && window.FitAddon.FitAddon ? new window.FitAddon.FitAddon() : null;
+if (fitAddon) {
+  term.loadAddon(fitAddon);
+}
+term.open(host);
+if (fitAddon) {
+  fitAddon.fit();
+}
+term.focus();
+let ws = null;
+let reconnectTimer = null;
+let reconnectMs = 1000;
+let connected = false;
+let passwordMode = false;
+let pendingFrames = [];
+
+function setStatus(text){
+  status.textContent = text;
+}
+
+function setOnlineState(isOnline){
+  connected = isOnline;
+  setStatus(isOnline ? "connected" : "disconnected");
+}
+
+function clearReconnect(){
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+}
+
+function scheduleReconnect(reason){
+  clearReconnect();
+  setOnlineState(false);
+  setStatus("disconnected: " + reason + " (retrying in " + Math.round(reconnectMs / 1000) + "s)");
+  reconnectTimer = setTimeout(connect, reconnectMs);
+  reconnectMs = Math.min(reconnectMs * 2, 10000);
+}
+
+function queueFrame(frame){
+  pendingFrames.push(frame);
+}
+
+function sendFrame(type, data){
+  const frame = JSON.stringify({t: type, d: data || ""});
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    queueFrame(frame);
+    return false;
+  }
+  ws.send(frame);
+  return true;
+}
+
+function flushPendingFrames(){
+  if (!ws || ws.readyState !== WebSocket.OPEN || pendingFrames.length === 0) {
+    return;
+  }
+  const frames = pendingFrames.slice();
+  pendingFrames = [];
+  for (let i = 0; i < frames.length; i++) {
+    ws.send(frames[i]);
+  }
+}
+
+function writeServer(chunk){
+  const text = String(chunk || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    term.writeln(lines[i]);
+  }
+  const tail = lines.length > 0 ? lines[lines.length - 1].toLowerCase() : "";
+  if (tail.includes("password:") || tail.includes("2fa")) {
+    passwordMode = true;
+  }
+  if (tail.includes("enter selection:") || tail.includes("login successful") || tail.includes("login failed")) {
+    if (!tail.includes("password")) {
+      passwordMode = false;
+    }
+  }
+}
+
+function connect(){
+  clearReconnect();
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
+  ws = new WebSocket(wsURL);
+  ws.onopen = function(){
+    reconnectMs = 1000;
+    setOnlineState(true);
+    term.writeln("[connected] " + wsURL);
+    flushPendingFrames();
+    term.focus();
+  };
+  ws.onmessage = function(evt){ writeServer(evt.data); };
+  ws.onclose = function(){ scheduleReconnect("socket closed"); };
+  ws.onerror = function(){ setStatus("socket error"); };
+}
+
+term.onData(function(data){
+  if (!data) return;
+  for (const ch of data) {
+    const code = ch.charCodeAt(0);
+    if (ch === "\r") {
+      term.write("\r\n");
+      if (!sendFrame("key", "\n") && !connected) connect();
+      continue;
+    }
+    if (code === 127 || ch === "\b") {
+      term.write("\b \b");
+      if (!sendFrame("key", "\b") && !connected) connect();
+      continue;
+    }
+    if (code < 32 && ch !== "\t") {
+      continue;
+    }
+    if (passwordMode && code >= 32) {
+      term.write("*");
+    } else {
+      term.write(ch);
+    }
+    if (!sendFrame("key", ch) && !connected) connect();
+  }
+});
+
+host.addEventListener('click', function(){ term.focus(); });
+document.addEventListener('visibilitychange', function(){
+  if (document.visibilityState === "visible") {
+    if (!ws || ws.readyState !== WebSocket.OPEN) connect();
+    term.focus();
+  }
+});
+window.addEventListener('focus', function(){
+  if (!ws || ws.readyState !== WebSocket.OPEN) connect();
+  term.focus();
+});
+
+window.addEventListener('resize', function(){
+  if (fitAddon) {
+    fitAddon.fit();
+  }
+});
+
+setOnlineState(false);
 connect();
+setInterval(function(){
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    sendFrame("ping", "");
+  }
+}, 25000);
+setTimeout(function(){ term.focus(); }, 0);
 })();
 </script>`
 	}
@@ -2570,11 +2725,26 @@ func (a *webApp) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
 		action := strings.ToLower(strings.TrimSpace(r.FormValue("action")))
 		switch action {
 		case "seed_default_boards":
-			seedDefaultBoards(a.boardRepo)
-			a.recordAdminAction(user.Handle, "setup", "seed_default_boards", "ran default board seeding")
+			seeded, err := seedDefaultBoards(a.boardRepo)
+			if err != nil {
+				a.addAppError("admin.setup", fmt.Errorf("seed default boards: %w", err))
+				a.recordAdminAction(user.Handle, "setup", "seed_default_boards", fmt.Sprintf("failed: %v", err))
+				redirectWithNotice(w, r, "/admin/setup", "Default board seeding failed.")
+				return
+			}
+			if seeded > 0 {
+				a.recordAdminAction(user.Handle, "setup", "seed_default_boards", fmt.Sprintf("seeded=%d", seeded))
+				redirectWithNotice(w, r, "/admin/setup", fmt.Sprintf("Seeded %d default board(s).", seeded))
+				return
+			}
+			a.recordAdminAction(user.Handle, "setup", "seed_default_boards", "all defaults already present")
+			redirectWithNotice(w, r, "/admin/setup", "Default boards already present.")
+			return
 		case "ensure_mailbot":
 			seedServiceUsers(a.authSvc)
 			a.recordAdminAction(user.Handle, "setup", "ensure_mailbot", "mailbot service account checked")
+			redirectWithNotice(w, r, "/admin/setup", "Mailbot service account checked.")
+			return
 		case "save_setup_profile":
 			siteName := strings.TrimSpace(r.FormValue("site_name"))
 			siteHost := strings.TrimSpace(r.FormValue("site_hostname"))
@@ -2995,7 +3165,11 @@ func (a *webApp) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		switch action {
 		case "create":
 			password := strings.TrimSpace(r.FormValue("password"))
-			role := strings.TrimSpace(r.FormValue("role"))
+			if target == "" {
+				http.Error(w, "create user failed: handle is required", http.StatusBadRequest)
+				return
+			}
+			role := rbac.NormalizeRole(strings.TrimSpace(r.FormValue("role")))
 			if role == "" {
 				role = roleUser
 			}
@@ -3005,10 +3179,18 @@ func (a *webApp) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 			created, err := a.authSvc.Register(target, password)
 			if err != nil {
 				a.addAppError("admin.users", fmt.Errorf("create user %s: %w", target, err))
-				http.Error(w, "create user failed", http.StatusBadRequest)
+				errText := strings.TrimSpace(err.Error())
+				if errText == "" {
+					errText = "unknown error"
+				}
+				http.Error(w, "create user failed: "+errText, http.StatusBadRequest)
 				return
 			}
-			_ = a.authSvc.SetRole(created.Handle, role)
+			if err := a.authSvc.SetRole(created.Handle, role); err != nil {
+				a.addAppError("admin.users", fmt.Errorf("set role for created user %s: %w", created.Handle, err))
+				http.Error(w, "create user failed: role assignment failed", http.StatusBadRequest)
+				return
+			}
 			a.recordAdminAction(user.Handle, created.Handle, "create_user", "role="+role)
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("created user " + created.Handle + " with password " + password))
@@ -4147,6 +4329,16 @@ func (a *webApp) handleAdminSystem(w http.ResponseWriter, r *http.Request) {
 	if !a.startedAt.IsZero() {
 		uptime = time.Since(a.startedAt).Round(time.Second).String()
 	}
+	originCounts := map[string]int{
+		"loopback": 0,
+		"lan":      0,
+		"wan":      0,
+		"host":     0,
+		"unknown":  0,
+	}
+	for _, row := range nodeSessions {
+		originCounts[netutil.RemoteOrigin(row.RemoteAddr)]++
+	}
 
 	onlineRows := strings.Builder{}
 	if len(nodeSessions) > 0 {
@@ -4156,23 +4348,27 @@ func (a *webApp) handleAdminSystem(w http.ResponseWriter, r *http.Request) {
 			if idle < 0 {
 				idle = 0
 			}
-			onlineRows.WriteString(`<tr><td>` + htmlEscape(row.Username) + `</td><td>Node ` + strconv.Itoa(row.NodeID) + `</td><td>` + htmlEscape(row.Area) + `</td><td>` + row.LoginAt.Format("2006-01-02 15:04:05") + `</td><td>` + strconv.Itoa(int(idle.Seconds())) + `s</td></tr>`)
+			origin := strings.ToUpper(netutil.RemoteOrigin(row.RemoteAddr))
+			from := remoteHostDisplay(row.RemoteAddr)
+			onlineRows.WriteString(`<tr><td>` + htmlEscape(row.Username) + `</td><td>Node ` + strconv.Itoa(row.NodeID) + `</td><td>` + htmlEscape(row.Area) + `</td><td>` + row.LoginAt.Format("2006-01-02 15:04:05") + `</td><td>` + strconv.Itoa(int(idle.Seconds())) + `s</td><td>` + htmlEscape(origin) + `</td><td>` + htmlEscape(from) + `</td></tr>`)
 		}
 	} else {
 		for _, row := range online {
-			onlineRows.WriteString(`<tr><td>` + htmlEscape(row.Nick) + `</td><td>` + htmlEscape(row.Node) + `</td><td>` + htmlEscape(row.Area) + `</td><td>` + row.LoginAt.Format("2006-01-02 15:04:05") + `</td><td>` + strconv.Itoa(row.IdleSec) + `s</td></tr>`)
+			onlineRows.WriteString(`<tr><td>` + htmlEscape(row.Nick) + `</td><td>` + htmlEscape(row.Node) + `</td><td>` + htmlEscape(row.Area) + `</td><td>` + row.LoginAt.Format("2006-01-02 15:04:05") + `</td><td>` + strconv.Itoa(row.IdleSec) + `s</td><td>UNKNOWN</td><td>n/a</td></tr>`)
 		}
 	}
 	if onlineRows.Len() == 0 {
-		onlineRows.WriteString(`<tr><td colspan="5">No users currently online</td></tr>`)
+		onlineRows.WriteString(`<tr><td colspan="7">No users currently online</td></tr>`)
 	}
 
 	callerRows := strings.Builder{}
 	for _, caller := range callerHistory {
-		callerRows.WriteString(`<tr><td>` + caller.LogoutAt.Format("2006-01-02 15:04:05") + `</td><td>Node ` + strconv.Itoa(caller.NodeID) + `</td><td>` + htmlEscape(caller.Username) + `</td><td>` + htmlEscape(caller.Area) + `</td><td>` + strconv.FormatInt(caller.DurationSeconds, 10) + `s</td></tr>`)
+		origin := strings.ToUpper(netutil.RemoteOrigin(caller.RemoteAddr))
+		from := remoteHostDisplay(caller.RemoteAddr)
+		callerRows.WriteString(`<tr><td>` + caller.LogoutAt.Format("2006-01-02 15:04:05") + `</td><td>Node ` + strconv.Itoa(caller.NodeID) + `</td><td>` + htmlEscape(caller.Username) + `</td><td>` + htmlEscape(caller.Area) + `</td><td>` + strconv.FormatInt(caller.DurationSeconds, 10) + `s</td><td>` + htmlEscape(origin) + `</td><td>` + htmlEscape(from) + `</td></tr>`)
 	}
 	if callerRows.Len() == 0 {
-		callerRows.WriteString(`<tr><td colspan="5">No caller history available</td></tr>`)
+		callerRows.WriteString(`<tr><td colspan="7">No caller history available</td></tr>`)
 	}
 
 	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>System / WFC Dashboard</title></head><body><h1>System / WFC Dashboard</h1><p><a href="/admin">back</a> | <a href="/admin/setup">setup</a> | <a href="/admin/config">config</a> | <a href="/admin/errors">errors</a> | <a href="/admin/node-state">node-state json</a> | <a href="/help">help</a></p>` +
@@ -4191,6 +4387,8 @@ func (a *webApp) handleAdminSystem(w http.ResponseWriter, r *http.Request) {
 		`<tr><td>Locked channels</td><td>` + strconv.Itoa(lockedCount) + `</td></tr>` +
 		`<tr><td>Online users</td><td>` + strconv.Itoa(len(online)) + `</td></tr>` +
 		`<tr><td>Node sessions (persisted)</td><td>` + strconv.Itoa(len(nodeSessions)) + `</td></tr>` +
+		`<tr><td>Origin loopback/lan/wan</td><td>` + strconv.Itoa(originCounts["loopback"]) + ` / ` + strconv.Itoa(originCounts["lan"]) + ` / ` + strconv.Itoa(originCounts["wan"]) + `</td></tr>` +
+		`<tr><td>Origin host/unknown</td><td>` + strconv.Itoa(originCounts["host"]) + ` / ` + strconv.Itoa(originCounts["unknown"]) + `</td></tr>` +
 		`<tr><td>Caller history rows</td><td>` + strconv.Itoa(len(callerHistory)) + `</td></tr>` +
 		`<tr><td>Runtime errors</td><td>` + strconv.Itoa(errorCount) + `</td></tr>` +
 		`<tr><td>Mods (running/total)</td><td>` + strconv.Itoa(modRunning) + ` / ` + strconv.Itoa(modCount) + `</td></tr>` +
@@ -4201,8 +4399,8 @@ func (a *webApp) handleAdminSystem(w http.ResponseWriter, r *http.Request) {
 		`<tr><td>MOTD</td><td>` + htmlEscape(cleanOneLiner(a.motd, 80)) + `</td></tr>` +
 		`<tr><td>Announcement</td><td>` + htmlEscape(cleanOneLiner(a.announcement, 80)) + `</td></tr>` +
 		`</table>` +
-		`<h2>Online / Node State</h2><table border="1"><tr><th>User</th><th>Node</th><th>Area</th><th>Login</th><th>Idle</th></tr>` + onlineRows.String() + `</table>` +
-		`<h2>Last Callers</h2><table border="1"><tr><th>Logout</th><th>Node</th><th>User</th><th>Area</th><th>Duration</th></tr>` + callerRows.String() + `</table>` +
+		`<h2>Online / Node State</h2><table border="1"><tr><th>User</th><th>Node</th><th>Area</th><th>Login</th><th>Idle</th><th>Origin</th><th>From</th></tr>` + onlineRows.String() + `</table>` +
+		`<h2>Last Callers</h2><table border="1"><tr><th>Logout</th><th>Node</th><th>User</th><th>Area</th><th>Duration</th><th>Origin</th><th>From</th></tr>` + callerRows.String() + `</table>` +
 		`<p>Health endpoints: <a href="/healthz">/healthz</a> | <a href="/readyz">/readyz</a> | <a href="/metrics">/metrics</a></p>` +
 		`</body></html>`
 	w.WriteHeader(http.StatusOK)
@@ -4236,6 +4434,8 @@ func (a *webApp) handleAdminNodeState(w http.ResponseWriter, r *http.Request) {
 		Username     string `json:"username"`
 		Area         string `json:"area"`
 		RemoteAddr   string `json:"remote_addr"`
+		RemoteHost   string `json:"remote_host"`
+		RemoteOrigin string `json:"remote_origin"`
 		LoginAt      string `json:"login_at"`
 		LastActivity string `json:"last_activity"`
 		IdleSeconds  int64  `json:"idle_seconds"`
@@ -4252,6 +4452,8 @@ func (a *webApp) handleAdminNodeState(w http.ResponseWriter, r *http.Request) {
 			Username:     row.Username,
 			Area:         row.Area,
 			RemoteAddr:   row.RemoteAddr,
+			RemoteHost:   remoteHostDisplay(row.RemoteAddr),
+			RemoteOrigin: netutil.RemoteOrigin(row.RemoteAddr),
 			LoginAt:      row.LoginAt.UTC().Format(time.RFC3339),
 			LastActivity: row.LastActivity.UTC().Format(time.RFC3339),
 			IdleSeconds:  int64(idle.Seconds()),
@@ -4765,6 +4967,14 @@ func boolToText(v bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+func remoteHostDisplay(remoteAddr string) string {
+	host := strings.TrimSpace(netutil.RemoteHost(remoteAddr))
+	if host == "" {
+		return "unknown"
+	}
+	return host
 }
 
 func (a *webApp) siteDisplayName() string {
@@ -5793,22 +6003,40 @@ func quoteBody(body string) string {
 	return strings.Join(out, "\n")
 }
 
-func seedDefaultBoards(repo repository.BoardRepository) {
+func seedDefaultBoards(repo repository.BoardRepository) (int, error) {
 	if repo == nil {
-		return
+		return 0, fmt.Errorf("board repository is required")
 	}
 	boards, err := repo.List()
-	if err != nil || len(boards) > 0 {
-		return
+	if err != nil {
+		return 0, err
+	}
+	existing := make(map[string]struct{}, len(boards))
+	for _, board := range boards {
+		name := strings.ToLower(strings.TrimSpace(board.Name))
+		if name == "" {
+			continue
+		}
+		existing[name] = struct{}{}
 	}
 	seed := []domain.Board{
 		{Name: "General", Description: "General system discussion", CreatedBy: 1},
 		{Name: "Node Talk", Description: "Node status and operator chat", CreatedBy: 1},
 		{Name: "Tooling", Description: "Build scripts and deployment", CreatedBy: 1},
 	}
+	created := 0
 	for i := range seed {
-		_ = repo.Create(&seed[i])
+		name := strings.ToLower(strings.TrimSpace(seed[i].Name))
+		if _, ok := existing[name]; ok {
+			continue
+		}
+		if err := repo.Create(&seed[i]); err != nil {
+			return created, err
+		}
+		existing[name] = struct{}{}
+		created++
 	}
+	return created, nil
 }
 
 func parseInt(raw string, fallback int) int {

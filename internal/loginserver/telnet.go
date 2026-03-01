@@ -11,14 +11,17 @@ import (
 	"sync"
 
 	"wolfbbs/internal/auth"
+	"wolfbbs/internal/chat"
+	"wolfbbs/internal/repository"
 	"wolfbbs/internal/session"
 )
 
 type TelnetServer struct {
-	addr   string
-	logger *slog.Logger
-	auth   *auth.Service
-	nodes  *session.Manager
+	addr     string
+	logger   *slog.Logger
+	auth     *auth.Service
+	nodes    *session.Manager
+	services sessionServices
 
 	mu sync.Mutex
 	ln net.Listener
@@ -27,11 +30,16 @@ type TelnetServer struct {
 
 func NewTelnetServer(addr string, logger *slog.Logger, authSvc *auth.Service, nodes *session.Manager) *TelnetServer {
 	return &TelnetServer{
-		addr:   strings.TrimSpace(addr),
-		logger: logger,
-		auth:   authSvc,
-		nodes:  nodes,
+		addr:     strings.TrimSpace(addr),
+		logger:   logger,
+		auth:     authSvc,
+		nodes:    nodes,
+		services: defaultSessionServices(),
 	}
+}
+
+func (s *TelnetServer) SetServices(boards repository.BoardRepository, messages repository.MessageRepository, mail repository.PrivateMailRepository, chatSvc *chat.Service, offlineDir string) {
+	s.services.set(boards, messages, mail, chatSvc, offlineDir)
 }
 
 func (s *TelnetServer) ListenAndServe() error {
@@ -68,7 +76,7 @@ func (s *TelnetServer) Serve(listener net.Listener) error {
 		s.wg.Add(1)
 		go func(c net.Conn) {
 			defer s.wg.Done()
-			runLoginSession("telnet", newTelnetPeer(c), s.auth, s.nodes, s.logger)
+			runLoginSession("telnet", newTelnetPeer(c), s.auth, s.nodes, s.logger, s.services)
 		}(conn)
 	}
 }

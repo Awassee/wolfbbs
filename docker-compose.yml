@@ -1,3 +1,4 @@
+<<<<<<< ours
 services:
   bbs:
     build: .
@@ -136,8 +137,6 @@ services:
       POSTGRES_USER: "${POSTGRES_USER:-wolfbbs}"
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-wolfbbs}"
       POSTGRES_DB: "${POSTGRES_DB:-wolfbbs}"
-    ports:
-      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -145,5 +144,25 @@ services:
       interval: 2s
       timeout: 2s
       retries: 12
+=======
+version: '3.9'
+services:
+  bbs:
+    build: .
+    ports:
+      - "2222:2222"
+    depends_on:
+      - postgres
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: wolfbbs
+      POSTGRES_PASSWORD: wolfbbs
+      POSTGRES_DB: wolfbbs
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+>>>>>>> theirs
 volumes:
   pgdata:

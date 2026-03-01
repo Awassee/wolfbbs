@@ -140,3 +140,19 @@ func TestRenderWelcomeShowsWolfAndCopyright(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderCallerPanelsIncludeOriginColumns(t *testing.T) {
+	online := RenderWhoOnline(80, []string{"01  sysop        02-28 19:30      LAN   192.168.1.20    Main Menu    00:00:08"})
+	for _, want := range []string{"Who's Online", "Orig", "From", "192.168.1.20"} {
+		if !strings.Contains(online, want) {
+			t.Fatalf("who online missing %q", want)
+		}
+	}
+
+	last := RenderLastCallers(80, []string{"01  sysop        02-28 19:28      WAN   203.0.113.5     Boards       00:12:11"})
+	for _, want := range []string{"Last Callers", "Orig", "From", "203.0.113.5"} {
+		if !strings.Contains(last, want) {
+			t.Fatalf("last callers missing %q", want)
+		}
+	}
+}

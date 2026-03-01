@@ -269,6 +269,29 @@ prepare_web_e2e_dir() {
   echo "Using mirrored web e2e workspace: $web_e2e_dir"
 }
 
+load_env_file_if_present() {
+  local env_file="$1"
+  if [[ ! -f "$env_file" ]]; then
+    return 0
+  fi
+  set -a
+  # shellcheck disable=SC1090
+  . "$env_file"
+  set +a
+}
+
+load_e2e_env_defaults() {
+  local installer_env_file="${WOLFBBS_INSTALLER_ENV_FILE:-$HOME/.local/share/wolfbbs/.env}"
+  if [[ -f "$installer_env_file" ]]; then
+    load_env_file_if_present "$installer_env_file"
+    echo "Loaded installer env defaults: $installer_env_file"
+  fi
+  if [[ -f "$ROOT_DIR/.env" ]]; then
+    load_env_file_if_present "$ROOT_DIR/.env"
+    echo "Loaded repo env defaults: $ROOT_DIR/.env"
+  fi
+}
+
 playwright_cache_dir() {
   if [[ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" && "${PLAYWRIGHT_BROWSERS_PATH}" != "0" ]]; then
     echo "${PLAYWRIGHT_BROWSERS_PATH}"
@@ -310,7 +333,8 @@ ensure_base_url_for_mirror() {
   if [[ -n "${WOLFBBS_E2E_BASE_URL:-}" ]]; then
     return 0
   fi
-  local candidate="${WOLFBBS_WEB_E2E_BASE_URL_DEFAULT:-http://127.0.0.1:8080}"
+  local web_port="${WOLFBBS_WEB_PORT:-8080}"
+  local candidate="${WOLFBBS_WEB_E2E_BASE_URL_DEFAULT:-http://127.0.0.1:${web_port}}"
   if has_cmd curl && curl -fsS --max-time 3 "${candidate}/healthz" >/dev/null 2>&1; then
     export WOLFBBS_E2E_BASE_URL="$candidate"
     echo "Detected running web service; using WOLFBBS_E2E_BASE_URL=${WOLFBBS_E2E_BASE_URL}"
@@ -331,6 +355,7 @@ seed_web_e2e_credentials() {
   export WOLFBBS_E2E_USER_PASSWORD="${WOLFBBS_E2E_USER_PASSWORD:-$WOLFBBS_E2E_ADMIN_PASSWORD}"
   export WOLFBBS_E2E_IRC_NICK="${WOLFBBS_E2E_IRC_NICK:-$WOLFBBS_E2E_ADMIN_HANDLE}"
   export WOLFBBS_E2E_IRC_PASS="${WOLFBBS_E2E_IRC_PASS:-$WOLFBBS_E2E_ADMIN_PASSWORD}"
+  export WOLFBBS_E2E_IRC_PORT="${WOLFBBS_E2E_IRC_PORT:-${WOLFBBS_IRC_PORT:-6667}}"
   echo "Web e2e auth defaults: admin=${WOLFBBS_E2E_ADMIN_HANDLE} user=${WOLFBBS_E2E_USER_HANDLE}"
 }
 
@@ -413,6 +438,8 @@ if ! [[ "$web_timeout_seconds" =~ ^[0-9]+$ ]] || [[ "$web_timeout_seconds" -le 0
   echo "--web-timeout must be a positive integer; got: $web_timeout_seconds" >&2
   exit 2
 fi
+
+load_e2e_env_defaults
 
 if [[ "$run_go_tests" == "true" ]]; then
   echo "[1/3] go test ./..."

@@ -4,13 +4,17 @@ go 1.22
 
 require (
 	github.com/gliderlabs/ssh v0.3.8
+<<<<<<< ours
 	github.com/hjson/hjson-go/v4 v4.6.0
 	github.com/lib/pq v1.10.9
+=======
+>>>>>>> theirs
 	golang.org/x/crypto v0.31.0
 )
 
 require (
 	github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be // indirect
+<<<<<<< ours
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
@@ -26,4 +30,7 @@ require (
 	modernc.org/sqlite v1.32.0 // indirect
 	modernc.org/strutil v1.2.0 // indirect
 	modernc.org/token v1.1.0 // indirect
+=======
+	golang.org/x/sys v0.28.0 // indirect
+>>>>>>> theirs
 )

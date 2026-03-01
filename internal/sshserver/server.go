@@ -3,22 +3,29 @@ package sshserver
 import (
 	"bufio"
 	"context"
+<<<<<<< ours
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+=======
+>>>>>>> theirs
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
+<<<<<<< ours
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+=======
+>>>>>>> theirs
 	"strconv"
 	"strings"
 	"time"
 
 	gssh "github.com/gliderlabs/ssh"
+<<<<<<< ours
 	"wolfbbs/internal/acs"
 	"wolfbbs/internal/auth"
 	"wolfbbs/internal/chat"
@@ -30,9 +37,16 @@ import (
 	"wolfbbs/internal/gateway"
 	"wolfbbs/internal/mci"
 	"wolfbbs/internal/menu"
+	"wolfbbs/internal/netutil"
 	"wolfbbs/internal/repository"
 	"wolfbbs/internal/session"
 	"wolfbbs/internal/term"
+=======
+	"wolfbbs/internal/auth"
+	"wolfbbs/internal/bbs"
+	"wolfbbs/internal/domain"
+	"wolfbbs/internal/mail"
+>>>>>>> theirs
 	"wolfbbs/internal/ui"
 )
 
@@ -40,6 +54,7 @@ type Server struct {
 	address string
 	logger  *slog.Logger
 	auth    *auth.Service
+<<<<<<< ours
 	users   repository.UserRepository
 	boards  repository.BoardRepository
 	msgs    repository.MessageRepository
@@ -99,10 +114,31 @@ func New(address string, logger *slog.Logger, authSvc *auth.Service) *Server {
 		Handler:     s.handleSession,
 		IdleTimeout: 10 * time.Minute,
 		MaxTimeout:  30 * time.Minute,
+=======
+	bbs     *bbs.Service
+	mail    *mail.Service
+	server  *gssh.Server
+}
+
+func New(address string, logger *slog.Logger, authSvc *auth.Service, bbsSvc *bbs.Service, mailSvc *mail.Service) *Server {
+	s := &Server{address: address, logger: logger, auth: authSvc, bbs: bbsSvc, mail: mailSvc}
+	s.server = &gssh.Server{
+		Addr:    address,
+		Handler: s.handleSession,
+		PasswordHandler: func(_ gssh.Context, _ string) bool {
+			return true
+		},
+		IdleTimeout: 10 * time.Minute,
+		MaxTimeout:  30 * time.Minute,
+		PublicKeyHandler: func(_ gssh.Context, _ gssh.PublicKey) bool {
+			return false
+		},
+>>>>>>> theirs
 	}
 	return s
 }
 
+<<<<<<< ours
 func (s *Server) SetSessionManager(mgr *session.Manager) {
 	if mgr == nil {
 		return
@@ -134,6 +170,8 @@ func (s *Server) SetMenuRegistry(registry *menu.Registry) {
 	s.menuMod = registry
 }
 
+=======
+>>>>>>> theirs
 func (s *Server) ListenAndServe() error {
 	s.logger.Info("starting ssh server", "addr", s.address)
 	return s.server.ListenAndServe()
@@ -154,6 +192,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 		io.WriteString(sess, "PTY required. Reconnect with a terminal.\n")
 		return
 	}
+<<<<<<< ours
 	termWidth := pty.Window.Width
 	h := pty.Window.Height
 	if termWidth < 40 {
@@ -199,6 +238,9 @@ func (s *Server) handleSession(sess gssh.Session) {
 	if ra := sess.RemoteAddr(); ra != nil {
 		remoteAddr = ra.String()
 	}
+	remoteHost := normalizeRemoteHost(remoteAddr)
+	remoteOrigin := netutil.RemoteOrigin(remoteAddr)
+	s.logger.Info("session connected", "session_id", sessionID, "remote_addr", remoteAddr, "remote_host", remoteHost, "remote_origin", remoteOrigin)
 	if s.nodes == nil {
 		s.nodes = session.NewManager(255, 256)
 	}
@@ -222,6 +264,11 @@ func (s *Server) handleSession(sess gssh.Session) {
 		if duration < 0 {
 			duration = 0
 		}
+		logoutHost := normalizeRemoteHost(snapshot.RemoteAddr)
+		logoutOrigin := netutil.RemoteOrigin(snapshot.RemoteAddr)
+		s.logger.Info("session disconnected", "session_id", sessionID, "node", snapshot.NodeID, "user", snapshot.Username, "remote_host", logoutHost, "remote_origin", logoutOrigin, "duration_seconds", int64(duration.Seconds()))
+		recordAudit(s.admin, snapshot.Username, fmt.Sprintf("Node %d", snapshot.NodeID), "session_logout",
+			fmt.Sprintf("origin=%s host=%s area=%s duration=%s", strings.ToUpper(logoutOrigin), logoutHost, snapshot.Area, formatDuration(duration)))
 		_ = s.admin.AddCallerHistory(&domain.CallerHistory{
 			SessionID:       sessionID,
 			NodeID:          snapshot.NodeID,
@@ -444,7 +491,9 @@ func (s *Server) handleSession(sess gssh.Session) {
 			} else {
 				sessionEncoding = string(termProfile.Encoding)
 			}
-			s.logger.Info("user authenticated", "user", currentUser)
+			s.logger.Info("user authenticated", "user", currentUser, "session_id", sessionID, "node", nodeID, "remote_host", remoteHost, "remote_origin", remoteOrigin)
+			recordAudit(s.admin, currentUser, nodeLabel, "session_login",
+				fmt.Sprintf("origin=%s host=%s transport=ssh", strings.ToUpper(remoteOrigin), remoteHost))
 			state = stateBulletins
 		case stateBulletins:
 			setArea("Bulletins")
@@ -1019,10 +1068,12 @@ func (s *Server) handleSession(sess gssh.Session) {
 				if callers, err := s.admin.ListCallerHistory(25); err == nil {
 					for _, caller := range callers {
 						duration := time.Duration(caller.DurationSeconds) * time.Second
-						last = append(last, fmt.Sprintf("%02d  %-12s %-16s %-12s %s",
+						last = append(last, fmt.Sprintf("%02d  %-12s %-16s %-5s %-15s %-12s %s",
 							caller.NodeID,
 							clampForTTY(caller.Username, 12),
-							formatClock(caller.LoginAt.Local(), sessionTime24h),
+							clampForTTY(formatClock(caller.LoginAt.Local(), sessionTime24h), 16),
+							formatOriginTag(caller.RemoteAddr),
+							clampForTTY(normalizeRemoteHost(caller.RemoteAddr), 15),
 							clampForTTY(caller.Area, 12),
 							formatDuration(duration)))
 					}
@@ -1030,10 +1081,12 @@ func (s *Server) handleSession(sess gssh.Session) {
 			}
 			if len(last) == 0 && s.nodes != nil {
 				for _, caller := range s.nodes.LastCallers(25) {
-					last = append(last, fmt.Sprintf("%02d  %-12s %-16s %-12s %s",
+					last = append(last, fmt.Sprintf("%02d  %-12s %-16s %-5s %-15s %-12s %s",
 						caller.NodeID,
 						clampForTTY(caller.Username, 12),
-						formatClock(caller.LoginAt.Local(), sessionTime24h),
+						clampForTTY(formatClock(caller.LoginAt.Local(), sessionTime24h), 16),
+						formatOriginTag(caller.RemoteAddr),
+						clampForTTY(normalizeRemoteHost(caller.RemoteAddr), 15),
 						clampForTTY(caller.Area, 12),
 						formatDuration(caller.Duration)))
 				}
@@ -1056,10 +1109,12 @@ func (s *Server) handleSession(sess gssh.Session) {
 						if idle < 0 {
 							idle = 0
 						}
-						onlineRows = append(onlineRows, fmt.Sprintf("%02d  %-12s %-16s %-12s %s",
+						onlineRows = append(onlineRows, fmt.Sprintf("%02d  %-12s %-16s %-5s %-15s %-12s %s",
 							online.NodeID,
 							clampForTTY(online.Username, 12),
-							formatClock(online.LoginAt.Local(), sessionTime24h),
+							clampForTTY(formatClock(online.LoginAt.Local(), sessionTime24h), 16),
+							formatOriginTag(online.RemoteAddr),
+							clampForTTY(normalizeRemoteHost(online.RemoteAddr), 15),
 							clampForTTY(online.Area, 12),
 							formatDuration(idle)))
 					}
@@ -1067,10 +1122,12 @@ func (s *Server) handleSession(sess gssh.Session) {
 			}
 			if len(onlineRows) == 0 && s.nodes != nil {
 				for _, online := range s.nodes.Online() {
-					onlineRows = append(onlineRows, fmt.Sprintf("%02d  %-12s %-16s %-12s %s",
+					onlineRows = append(onlineRows, fmt.Sprintf("%02d  %-12s %-16s %-5s %-15s %-12s %s",
 						online.NodeID,
 						clampForTTY(online.Username, 12),
-						formatClock(online.LoginAt.Local(), sessionTime24h),
+						clampForTTY(formatClock(online.LoginAt.Local(), sessionTime24h), 16),
+						formatOriginTag(online.RemoteAddr),
+						clampForTTY(normalizeRemoteHost(online.RemoteAddr), 15),
 						clampForTTY(online.Area, 12),
 						formatDuration(time.Duration(online.IdleSeconds)*time.Second)))
 				}
@@ -1122,6 +1179,8 @@ func (s *Server) handleSession(sess gssh.Session) {
 			statusLines := []string{
 				fmt.Sprintf("Node: %s", nodeLabel),
 				fmt.Sprintf("Session: %s", clampForTTY(sessionID, 18)),
+				fmt.Sprintf("Remote origin: %s", strings.ToUpper(remoteOrigin)),
+				fmt.Sprintf("Remote host: %s", remoteHost),
 				fmt.Sprintf("Role: %s", currentAccount.Role),
 				fmt.Sprintf("Current area: %s", currentArea),
 				fmt.Sprintf("Boards backend ready: %s", boolText(s.boards != nil && s.msgs != nil)),
@@ -1224,10 +1283,131 @@ func pagerWrite(out io.Writer, reader *bufio.Reader, text string) {
 		key, err := readKey(reader)
 		if err != nil || key == "Q" || key == "ESC" {
 			return
+=======
+	w := pty.Window.Width
+	if w < 40 {
+		w = 40
+	}
+
+	reader := bufio.NewReader(sess)
+	th := ui.DefaultTheme()
+	io.WriteString(sess, ui.ClearScreen())
+	io.WriteString(sess, ui.RenderTopBar(w, "WolfBBS", "Guest", time.Now(), "Node 1", th)+"\r\n")
+	io.WriteString(sess, ui.RenderWelcome(w))
+	io.WriteString(sess, "\r\nHandle: ")
+	handle, _ := reader.ReadString('\n')
+	handle = strings.TrimSpace(handle)
+	io.WriteString(sess, "Password: ")
+	pass, _ := reader.ReadString('\n')
+	pass = strings.TrimSpace(pass)
+
+	user, err := s.auth.Login(handle, pass)
+	if err != nil {
+		io.WriteString(sess, "\r\nInvalid login. Create account? (Y/N): ")
+		choice, _ := reader.ReadString('\n')
+		choice = strings.TrimSpace(strings.ToUpper(choice))
+		if choice == "Y" {
+			io.WriteString(sess, "New password (min 8): ")
+			newPass, _ := reader.ReadString('\n')
+			newPass = strings.TrimSpace(newPass)
+			created, createErr := s.auth.Register(handle, newPass)
+			if createErr != nil {
+				io.WriteString(sess, fmt.Sprintf("\r\nCould not create account: %v\r\n", createErr))
+				return
+			}
+			user = created
+		} else {
+			io.WriteString(sess, "\r\nGoodbye.\r\n")
+			return
+		}
+	}
+
+	s.mainMenu(sess, reader, th, w, user)
+}
+
+func (s *Server) mainMenu(sess gssh.Session, reader *bufio.Reader, th ui.Theme, width int, user *domain.User) {
+	for {
+		io.WriteString(sess, ui.ClearScreen())
+		io.WriteString(sess, ui.RenderTopBar(width, "WolfBBS", user.Handle, time.Now(), "Node 1", th)+"\r\n\r\n")
+		io.WriteString(sess, ui.RenderMainMenu())
+		io.WriteString(sess, "> ")
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			return
+		}
+		cmd := strings.ToUpper(strings.TrimSpace(input))
+		s.logger.Info("menu selection", "user", user.Handle, "selection", cmd)
+		switch cmd {
+		case "Q", "QUIT", "X":
+			io.WriteString(sess, "Signing off WolfBBS...\r\n")
+			return
+		case "M":
+			s.handleMessageBoards(sess, reader, user)
+		case "P":
+			s.handlePrivateMail(sess, reader, user)
+		case "F", "C", "G", "S", "A":
+			io.WriteString(sess, "Section scaffolded; implementation in next step.\r\nPress ENTER to continue...")
+			_, _ = reader.ReadString('\n')
+		default:
+			io.WriteString(sess, "Unknown command. Use hotkeys from the menu.\r\nPress ENTER to continue...")
+			_, _ = reader.ReadString('\n')
 		}
 	}
 }
 
+func (s *Server) handleMessageBoards(sess gssh.Session, reader *bufio.Reader, user *domain.User) {
+	for {
+		boards, _ := s.bbs.ListBoards()
+		io.WriteString(sess, ui.ClearScreen()+"\r\nMessage Boards\r\n")
+		for _, b := range boards {
+			io.WriteString(sess, fmt.Sprintf("[%d] %s - %s\r\n", b.ID, b.Name, b.Description))
+		}
+		io.WriteString(sess, "\r\nCommands: [R]ead board  [P]ost message  [B]ack\r\n> ")
+		in, _ := reader.ReadString('\n')
+		switch strings.ToUpper(strings.TrimSpace(in)) {
+		case "B":
+			return
+		case "R":
+			io.WriteString(sess, "Board number: ")
+			line, _ := reader.ReadString('\n')
+			id, _ := strconv.ParseInt(strings.TrimSpace(line), 10, 64)
+			msgs, err := s.bbs.ListMessages(id)
+			if err != nil {
+				io.WriteString(sess, "Board not found.\r\nPress ENTER...")
+				_, _ = reader.ReadString('\n')
+				continue
+			}
+			if len(msgs) == 0 {
+				io.WriteString(sess, "No posts yet.\r\nPress ENTER...")
+				_, _ = reader.ReadString('\n')
+				continue
+			}
+			for _, m := range msgs {
+				io.WriteString(sess, fmt.Sprintf("\r\n#%d %s\r\n%s\r\n", m.ID, m.Subject, m.Body))
+			}
+			io.WriteString(sess, "\r\nPress ENTER...")
+			_, _ = reader.ReadString('\n')
+		case "P":
+			io.WriteString(sess, "Board number: ")
+			bline, _ := reader.ReadString('\n')
+			boardID, _ := strconv.ParseInt(strings.TrimSpace(bline), 10, 64)
+			io.WriteString(sess, "Subject: ")
+			sub, _ := reader.ReadString('\n')
+			io.WriteString(sess, "Body: ")
+			body, _ := reader.ReadString('\n')
+			if err := s.bbs.Post(boardID, user.ID, strings.TrimSpace(sub), strings.TrimSpace(body)); err != nil {
+				io.WriteString(sess, fmt.Sprintf("Could not post: %v\r\n", err))
+			} else {
+				io.WriteString(sess, "Posted.\r\n")
+			}
+			io.WriteString(sess, "Press ENTER...")
+			_, _ = reader.ReadString('\n')
+>>>>>>> theirs
+		}
+	}
+}
+
+<<<<<<< ours
 func readLine(reader *bufio.Reader, max int) (string, error) {
 	if max <= 0 {
 		max = 80
@@ -3491,6 +3671,29 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%02d:%02d:%02d", hours, minutes, seconds)
 }
 
+func normalizeRemoteHost(remoteAddr string) string {
+	host := strings.TrimSpace(netutil.RemoteHost(remoteAddr))
+	if host == "" {
+		return "unknown"
+	}
+	return host
+}
+
+func formatOriginTag(remoteAddr string) string {
+	switch netutil.RemoteOrigin(remoteAddr) {
+	case "loopback":
+		return "LOOP"
+	case "lan":
+		return "LAN"
+	case "wan":
+		return "WAN"
+	case "host":
+		return "HOST"
+	default:
+		return "UNK"
+	}
+}
+
 func recordAudit(admin repository.AdminRepository, actor, target, action, details string) {
 	if admin == nil {
 		return
@@ -3533,4 +3736,51 @@ func boardWriteRule(board domain.Board) string {
 		return rule
 	}
 	return strings.TrimSpace(os.Getenv("WOLFBBS_ACS_BOARDS_POST"))
+=======
+func (s *Server) handlePrivateMail(sess gssh.Session, reader *bufio.Reader, user *domain.User) {
+	for {
+		io.WriteString(sess, ui.ClearScreen()+"\r\nPrivate Mail\r\nCommands: [I]nbox [O]utbox [S]end [B]ack\r\n> ")
+		in, _ := reader.ReadString('\n')
+		switch strings.ToUpper(strings.TrimSpace(in)) {
+		case "B":
+			return
+		case "I":
+			mails, _ := s.mail.Inbox(user.ID)
+			if len(mails) == 0 {
+				io.WriteString(sess, "Inbox empty.\r\n")
+			} else {
+				for _, m := range mails {
+					io.WriteString(sess, fmt.Sprintf("\r\nFrom User#%d - %s\r\n%s\r\n", m.FromUserID, m.Subject, m.Body))
+				}
+			}
+			io.WriteString(sess, "\r\nPress ENTER...")
+			_, _ = reader.ReadString('\n')
+		case "O":
+			mails, _ := s.mail.Outbox(user.ID)
+			if len(mails) == 0 {
+				io.WriteString(sess, "Outbox empty.\r\n")
+			} else {
+				for _, m := range mails {
+					io.WriteString(sess, fmt.Sprintf("\r\nTo User#%d - %s\r\n%s\r\n", m.ToUserID, m.Subject, m.Body))
+				}
+			}
+			io.WriteString(sess, "\r\nPress ENTER...")
+			_, _ = reader.ReadString('\n')
+		case "S":
+			io.WriteString(sess, "To Handle: ")
+			to, _ := reader.ReadString('\n')
+			io.WriteString(sess, "Subject: ")
+			sub, _ := reader.ReadString('\n')
+			io.WriteString(sess, "Body: ")
+			body, _ := reader.ReadString('\n')
+			if err := s.mail.Send(user.ID, strings.TrimSpace(to), strings.TrimSpace(sub), strings.TrimSpace(body)); err != nil {
+				io.WriteString(sess, fmt.Sprintf("Could not send: %v\r\n", err))
+			} else {
+				io.WriteString(sess, "Sent.\r\n")
+			}
+			io.WriteString(sess, "Press ENTER...")
+			_, _ = reader.ReadString('\n')
+		}
+	}
+>>>>>>> theirs
 }

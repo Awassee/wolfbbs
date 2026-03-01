@@ -1,9 +1,13 @@
 package auth_test
 
 import (
+<<<<<<< ours
 	"strings"
 	"testing"
 	"time"
+=======
+	"testing"
+>>>>>>> theirs
 
 	"wolfbbs/internal/auth"
 	"wolfbbs/internal/repository"
@@ -26,6 +30,7 @@ func TestRegisterAndLogin(t *testing.T) {
 		t.Fatalf("unexpected handle: %s", user.Handle)
 	}
 }
+<<<<<<< ours
 
 func TestAuthenticateReturnsPreviousLastLoginForSessionDigest(t *testing.T) {
 	repo := repository.NewInMemoryUserRepository()
@@ -195,3 +200,5 @@ func TestPasswordResetTokenFlow(t *testing.T) {
 		t.Fatal("expected token reuse to fail")
 	}
 }
+=======
+>>>>>>> theirs
