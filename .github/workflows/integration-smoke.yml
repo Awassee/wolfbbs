@@ -1,0 +1,14 @@
+name: integration-smoke
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  compose-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Run acceptance smoke verifier
+        run: scripts/verify.sh --smoke

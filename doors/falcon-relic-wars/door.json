@@ -1,0 +1,37 @@
+{
+  "id": "falcon-relic-wars",
+  "display_name": "Falcon Relic Wars",
+  "short_description": "Contested relic ownership with ladder progression.",
+  "category": "strategy",
+  "version": "1.0.0",
+  "entry_type": "native",
+  "entrypoint": "native:falcon-relic-wars",
+  "hotkey": "I",
+  "concurrency_mode": "shared",
+  "requires": {
+    "ansi": true,
+    "min_cols": 80,
+    "min_rows": 25
+  },
+  "capabilities": {
+    "needs_network": false,
+    "needs_filesystem_write": false,
+    "needs_sound": false
+  },
+  "data_retention": {
+    "messages_days": 30,
+    "logs_days": 90
+  },
+  "admin_defaults": {
+    "enabled": true,
+    "daily_turns": 35,
+    "time_bank_max": 180,
+    "reset_hour": 0,
+    "max_run_seconds": 180,
+    "max_output_rate": 4096
+  },
+  "required_role": "user",
+  "help_text": "Falcon Relic Wars: compete for relic control and ranking boosts.",
+  "rules_text": "Relic contests are turn-paced; flooding actions is not allowed.",
+  "args": []
+}

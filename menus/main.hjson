@@ -1,0 +1,23 @@
+{
+  id: "main"
+  title: "WolfBBS Main Menu"
+  help: "Single-letter hotkeys. Esc=Back. ?=Help."
+  footer: "Enter selection"
+  entries: [
+    { hotkey: "M", label: "Message Boards", action: "boards.open", target: "list" }
+    { hotkey: "P", label: "Private Mail", action: "mail.open", target: "inbox" }
+    { hotkey: "F", label: "Files", action: "files.open", target: "areas" }
+    { hotkey: "C", label: "Chat", action: "chat.open", target: "#lobby" }
+    { hotkey: "G", label: "Gateways", action: "gateway.open", target: "menu" }
+    { hotkey: "D", label: "Doors", action: "doors.open", target: "hub" }
+    { hotkey: "N", label: "Newscan", action: "system.newscan", target: "digest" }
+    { hotkey: "S", label: "Settings", action: "settings.open", target: "preferences" }
+    { hotkey: "A", label: "Admin", action: "admin.open", target: "sysop", acs: "role=admin" }
+    { hotkey: "L", label: "Last Callers", action: "system.last_callers" }
+    { hotkey: "W", label: "Who's Online", action: "system.who_online" }
+    { hotkey: "X", label: "Config Center", action: "system.config_center" }
+    { hotkey: "Y", label: "Status Center", action: "system.status_center" }
+    { hotkey: "/", label: "Quick Jump", action: "system.quick_jump", target: "prompt" }
+    { hotkey: "Q", label: "Quit", action: "session.quit" }
+  ]
+}
