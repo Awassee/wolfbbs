@@ -27,6 +27,7 @@ type ircState struct {
 	nick        string
 	user        string
 	realName    string
+	away        string
 	pass        string
 	saslReq     bool
 	awaitSASL   bool
@@ -499,8 +500,22 @@ func handleIRCConn(conn net.Conn, svc *chat.Service, authSvc *auth.Service, ip s
 				continue
 			}
 			if !strings.HasPrefix(target, "#") {
-				if !sendDirectMessage(target, ircMessageLine(cmd, state.nick, target, message), client) && cmd == "PRIVMSG" {
+				targetClient, ok := clientByNick(target)
+				if !ok {
+					if cmd == "PRIVMSG" {
+						_ = replyfConn(client, ":%s 401 %s %s :No such nick", serverName, nickOrStar(state.nick), target)
+					}
+					continue
+				}
+				if !sendDirectMessage(targetClient, ircMessageLine(cmd, state.nick, target, message), client) && cmd == "PRIVMSG" {
 					_ = replyfConn(client, ":%s 401 %s %s :No such nick", serverName, nickOrStar(state.nick), target)
+					continue
+				}
+				if cmd == "PRIVMSG" {
+					away := strings.TrimSpace(targetClient.state.away)
+					if away != "" {
+						_ = replyfConn(client, ":%s 301 %s %s :%s", serverName, nickOrStar(state.nick), targetClient.state.nick, away)
+					}
 				}
 				continue
 			}
@@ -560,6 +575,14 @@ func handleIRCConn(conn net.Conn, svc *chat.Service, authSvc *auth.Service, ip s
 			if !writeWhois(client, target) {
 				_ = replyfConn(client, ":%s 401 %s %s :No such nick", serverName, nickOrStar(state.nick), target)
 				_ = replyfConn(client, ":%s 318 %s %s :End of WHOIS list", serverName, nickOrStar(state.nick), target)
+			}
+		case "AWAY":
+			message := strings.TrimSpace(strings.TrimPrefix(raw, ":"))
+			state.away = message
+			if message == "" {
+				_ = replyfConn(client, ":%s 305 %s :You are no longer marked as being away", serverName, nickOrStar(state.nick))
+			} else {
+				_ = replyfConn(client, ":%s 306 %s :You have been marked as being away", serverName, nickOrStar(state.nick))
 			}
 		case "TOPIC":
 			channel := strings.TrimPrefix(raw, ":")
@@ -779,10 +802,17 @@ func broadcastToChannel(channel, line string) bool {
 	return true
 }
 
-func sendDirectMessage(target, line string, from *ircClient) bool {
+func clientByNick(target string) (*ircClient, bool) {
 	clientsMu.Lock()
-	targetClient := clientsByNick[strings.ToLower(target)]
-	clientsMu.Unlock()
+	defer clientsMu.Unlock()
+	targetClient := clientsByNick[strings.ToLower(strings.TrimSpace(target))]
+	if targetClient == nil {
+		return nil, false
+	}
+	return targetClient, true
+}
+
+func sendDirectMessage(targetClient *ircClient, line string, from *ircClient) bool {
 	if targetClient == nil {
 		return false
 	}
@@ -806,6 +836,7 @@ type whoisSnapshot struct {
 	user        string
 	realName    string
 	host        string
+	away        string
 	channels    []string
 	idleSeconds int64
 	signon      int64
@@ -830,6 +861,9 @@ func writeWhois(client *ircClient, target string) bool {
 		host = "localhost"
 	}
 	_ = replyfConn(client, ":%s 311 %s %s %s %s * :%s", serverName, requester, snapshot.nick, username, host, realName)
+	if strings.TrimSpace(snapshot.away) != "" {
+		_ = replyfConn(client, ":%s 301 %s %s :%s", serverName, requester, snapshot.nick, snapshot.away)
+	}
 	if len(snapshot.channels) > 0 {
 		_ = replyfConn(client, ":%s 319 %s %s :%s", serverName, requester, snapshot.nick, strings.Join(snapshot.channels, " "))
 	}
@@ -857,6 +891,7 @@ func snapshotWhois(target string) (whoisSnapshot, bool) {
 		user:        strings.TrimSpace(targetClient.state.user),
 		realName:    strings.TrimSpace(targetClient.state.realName),
 		host:        strings.TrimSpace(targetClient.state.remoteHost),
+		away:        strings.TrimSpace(targetClient.state.away),
 		idleSeconds: idleSeconds,
 		signon:      targetClient.state.connectedAt.Unix(),
 	}

@@ -11,7 +11,7 @@ This document maps product features to concrete runtime surfaces (binaries, rout
   - web companion (boards, mail, settings, discover, gateway)
   - sysop admin panel
   - health/readiness/metrics endpoints
-  - optional gopher/nntp/nntps/activitypub read-only surfaces
+  - optional gopher/nntp/nntps surfaces plus experimental ActivityPub federation ingress/egress baseline
 - `cmd/wolfbbs-irc`
   - IRC endpoint bridged to shared chat backend
 - `cmd/wolfbbs-mailin`
@@ -229,7 +229,7 @@ Reference: `docs/doors.md`.
 ## Content Servers and Federation
 
 - Optional gopher, nntp, nntps read-only exports
-- Optional read-only ActivityPub actor/outbox baseline
+- Optional experimental ActivityPub webfinger/actor/outbox plus bounded inbox ingress
 
 Reference: `docs/content-servers.md`, `docs/activitypub.md`.
 

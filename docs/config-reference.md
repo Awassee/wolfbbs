@@ -236,7 +236,7 @@ Runtime-only env exported by WolfBBS when executing external hook commands:
 - `WOLFBBS_NNTPS_LISTEN`: optional NNTPS listener address.
 - `WOLFBBS_NNTPS_CERT`
 - `WOLFBBS_NNTPS_KEY`
-- `WOLFBBS_ACTIVITYPUB_ENABLE` (default `false`): enable read-only ActivityPub actor endpoints.
+- `WOLFBBS_ACTIVITYPUB_ENABLE` (default `false`): enable experimental ActivityPub webfinger/actor/outbox/inbox endpoints.
 - `WOLFBBS_ACTIVITYPUB_BASE_URL`: canonical ActivityPub base URL.
 
 ## Runtime Config Loader

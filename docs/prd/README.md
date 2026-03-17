@@ -10,7 +10,7 @@ Execution model:
 Current status summary:
 - PRD-01: Done (multi-node manager + DB-backed node/caller persistence + web node diagnostics shipped).
 - PRD-02: In progress (themes/HJSON menus/MCI/ACS baseline shipped; deeper runtime adoption ongoing).
-- PRD-03: Done (sqlite+fts backend path, auth hash policy/reset-token+delivery flow, optional telnet/ws login transports, and optional read-only content servers are implemented).
+- PRD-03: Done (sqlite+fts backend path, auth hash policy/reset-token+delivery flow, optional telnet/ws login transports, and optional content/federation servers are implemented).
 - PRD-04: In progress (message ACS+pointers plus file indexing/tag/ratings/queue/ticket baseline shipped; message networking baseline and built-in mods lifecycle are now shipped; external tosser parity and final download manager parity remain).
 
 ## PRD index

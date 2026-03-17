@@ -50,7 +50,7 @@ Behavior:
 - TLS 1.2+ enforced.
 - Disabled by default.
 
-## ActivityPub (Experimental, Read-Only)
+## ActivityPub (Experimental)
 
 Enable with:
 - `WOLFBBS_ACTIVITYPUB_ENABLE=true`
@@ -60,11 +60,13 @@ Routes:
 - `GET /.well-known/webfinger?resource=acct:<handle>@<host>`
 - `GET /ap/users/<handle>`
 - `GET /ap/users/<handle>/outbox`
+- `POST /ap/users/<handle>/inbox`
 
 Notes:
 - Off by default.
-- Read-only baseline for federation compatibility.
-- Inbox/posting is intentionally disabled in this slice.
+- Public actor/outbox baseline for federation compatibility.
+- Inbox accepts a bounded allowlist of inbound activities and logs them to admin audit.
+- No remote delivery, signature verification, or follower-state sync in the current baseline.
 
 ## Security Notes
 

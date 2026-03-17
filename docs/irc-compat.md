@@ -7,6 +7,7 @@
 - `CAP` / `AUTHENTICATE` (SASL PLAIN)
 - `JOIN`, `PART`
 - `PRIVMSG`, `NOTICE`
+- `AWAY`
 - `QUIT`
 - `PING`, `PONG`
 - `TOPIC`
@@ -29,7 +30,7 @@ NICK changes are guarded by collision checks.
 
 ## Known limitations
 - CTCP is pass-through only; client-to-client requests/replies and `ACTION` relay, but the server does not synthesize CTCP responses.
-- Away messages and channel operators are minimal.
+- Channel operators are minimal.
 
 ## Security
 - Connection limits and per-user flood caps

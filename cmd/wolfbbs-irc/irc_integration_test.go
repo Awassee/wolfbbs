@@ -302,6 +302,77 @@ func TestIRCGatewayNoticeAndCTCPRelay(t *testing.T) {
 	assertContainsLine(t, actionLines, "\u0001ACTION waves\u0001")
 }
 
+func TestIRCGatewayAwayReportsOnPrivmsgAndWhois(t *testing.T) {
+	resetIRCStateForTest()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	svc := chat.NewServiceForTest()
+	repo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(repo)
+	_, _ = authSvc.Register("alice", "alicepass1")
+	_, _ = authSvc.Register("bob", "bobpass12")
+
+	go func() {
+		for i := 0; i < 2; i++ {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go handleIRCConn(conn, svc, authSvc, "127.0.0.1")
+		}
+	}()
+
+	alice, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("dial alice: %v", err)
+	}
+	defer alice.Close()
+	bob, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("dial bob: %v", err)
+	}
+	defer bob.Close()
+
+	aliceReader := bufio.NewReader(alice)
+	bobReader := bufio.NewReader(bob)
+
+	if !waitForReaderLineContains(alice, aliceReader, "Welcome", 3*time.Second) {
+		t.Fatal("alice did not receive IRC welcome")
+	}
+	if !waitForReaderLineContains(bob, bobReader, "Welcome", 3*time.Second) {
+		t.Fatal("bob did not receive IRC welcome")
+	}
+
+	_, _ = alice.Write([]byte("PASS alicepass1\r\n"))
+	_, _ = alice.Write([]byte("NICK alice\r\n"))
+	_, _ = alice.Write([]byte("USER alice 0 * :Alice\r\n"))
+
+	_, _ = bob.Write([]byte("PASS bobpass12\r\n"))
+	_, _ = bob.Write([]byte("NICK bob\r\n"))
+	_, _ = bob.Write([]byte("USER bob 0 * :Bob\r\n"))
+
+	_, _ = bob.Write([]byte("AWAY :back after lunch\r\n"))
+	awaySetLines := collectReaderLinesUntil(bob, bobReader, " 306 ", 3*time.Second)
+	assertContainsLine(t, awaySetLines, " 306 ")
+
+	_, _ = alice.Write([]byte("PRIVMSG bob :ping while away\r\n"))
+	awayNoticeLines := collectReaderLinesUntil(alice, aliceReader, " 301 ", 3*time.Second)
+	assertContainsLine(t, awayNoticeLines, " 301 ")
+	assertContainsLine(t, awayNoticeLines, "back after lunch")
+
+	_, _ = alice.Write([]byte("WHOIS bob\r\n"))
+	whoisLines := collectReaderLinesUntil(alice, aliceReader, " 318 ", 3*time.Second)
+	assertContainsLine(t, whoisLines, " 301 ")
+
+	_, _ = bob.Write([]byte("AWAY\r\n"))
+	awayClearLines := collectReaderLinesUntil(bob, bobReader, " 305 ", 3*time.Second)
+	assertContainsLine(t, awayClearLines, " 305 ")
+}
+
 func waitForLineContains(conn net.Conn, needle string, timeout time.Duration) bool {
 	r := bufio.NewReader(conn)
 	return waitForReaderLineContains(conn, r, needle, timeout)

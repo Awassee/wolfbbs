@@ -13,7 +13,7 @@ Go was selected for this implementation because it gives fast, concurrency-frien
 - optional content servers in web process:
   - Gopher (read-only board/message browsing)
   - NNTP/NNTPS (read-only board/message browsing)
-  - ActivityPub read-only actor/outbox endpoints (experimental, opt-in)
+  - ActivityPub webfinger/actor/outbox plus bounded inbox ingress (experimental, opt-in)
 - `internal/ui`: ANSI rendering primitives and screen templates.
 - `internal/term`: terminal capability/encoding profile detection.
 - `internal/acs`: access control expression evaluator for menus and content actions.

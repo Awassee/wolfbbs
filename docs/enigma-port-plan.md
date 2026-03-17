@@ -20,7 +20,7 @@ Scope note:
 | Local door runner + dropfile compatibility | docs: `docs/_docs/modding/local-doors.md`; code: `core/abracadabra.js`, `core/dropfile.js`, `core/door.js` | Native/external door runtime + sandbox controls implemented | Add optional dropfile generation (`DOOR.SYS`, `DOOR32`, `DORINFO`) behind config flags | P0, medium |
 | Door server connectors (BBSLink / DoorParty) | docs: `docs/_docs/modding/door-servers.md`; code: `core/bbs_link.js`, `core/door_party.js` | Connectors exist as manifests with template flow | Implement real connector adapters + audit and policy controls | P1, medium |
 | Message/file base depth (index/search/metadata) | menu templates + file modules (`core/file_base_*`) | Basic board/mail and FileBase Pro metadata pattern | Expand file indexing/search + richer moderation queue + newscan state per area | P1, medium |
-| Optional federation/content servers (ActivityPub, NNTP/Gopher patterns) | docs/activitypub + server docs | Optional read-only Gopher/NNTP/NNTPS listeners and ActivityPub actor/outbox/webfinger baseline are available behind env flags | Keep off by default and treat as experimental interfaces | P2, high |
+| Optional federation/content servers (ActivityPub, NNTP/Gopher patterns) | docs/activitypub + server docs | Optional read-only Gopher/NNTP/NNTPS listeners and experimental ActivityPub webfinger/actor/outbox plus bounded inbox ingress are available behind env flags | Keep off by default and treat as experimental interfaces | P2, high |
 
 ## Incremental PR Plan
 
@@ -91,7 +91,7 @@ Acceptance:
   - Optional read-only Gopher listener via `WOLFBBS_GOPHER_LISTEN`.
   - Optional read-only NNTP listener via `WOLFBBS_NNTP_LISTEN`.
   - Optional NNTPS listener via `WOLFBBS_NNTPS_LISTEN` + cert/key envs.
-  - Optional ActivityPub read-only endpoints (`webfinger`, actor, outbox) via `WOLFBBS_ACTIVITYPUB_ENABLE`.
+  - Optional ActivityPub experimental endpoints (`webfinger`, actor, `outbox`, bounded inbox ingress) via `WOLFBBS_ACTIVITYPUB_ENABLE`.
   - All are disabled by default and documented in `docs/content-servers.md`.
   - This closes the current P2 item for optional content/federation baseline patterns.
 - P1 follow-ups implemented in this pass:
