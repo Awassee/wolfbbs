@@ -2,6 +2,8 @@
 
 `install.sh` is the primary installation path and supports local checkout usage and curl-pipe bootstrap.
 
+If you want the shortest route, start with [QUICKSTART.md](QUICKSTART.md). If you want the product overview first, read [PRODUCT_GUIDE.md](PRODUCT_GUIDE.md) and [DATASHEET.md](DATASHEET.md).
+
 ## Supported Targets
 
 - Linux
@@ -15,6 +17,16 @@
 
 - Docker-based install: supported and default.
 - Native mode: not currently supported.
+
+## Recommended Consumer Path
+
+For most users, the right path is:
+
+1. run the bootstrap command
+2. let the guided installer complete
+3. finish setup in `/admin/setup`
+4. tune behavior in `/admin/config`
+5. connect over SSH and web to verify the caller experience
 
 ## Quick Install (turnkey paste-and-go)
 
@@ -46,6 +58,13 @@ What the bootstrap does:
 4. Clones or updates a managed WolfBBS checkout under `<prefix>/app`.
 5. Writes runtime config into `<prefix>/.env`.
 6. Starts the stack and prints first-login steps.
+
+What you have at the end:
+
+- running WolfBBS services
+- a bootstrap sysop account
+- printed connection URLs and ports
+- a managed install prefix with runtime config and upgrade commands
 
 ## Install From GitHub Release Bundle
 
@@ -106,6 +125,17 @@ UI-first setup (recommended): complete identity/profile/runtime config in the pr
 http://localhost:8080/admin/setup
 http://localhost:8080/admin/config
 ```
+
+## First 10 Minutes After Install
+
+Use this sequence:
+
+1. sign in as the bootstrap sysop
+2. finish `/admin/setup`
+3. review `/admin/config`
+4. open `/boards`, `/chat`, `/doors`, and `/scores`
+5. connect via SSH and verify the ANSI menus
+6. run `bash install.sh --doctor`
 
 ## What the Installer Does
 
@@ -214,6 +244,14 @@ scripts/package-dist.sh --platform linux/amd64 --platform linux/arm64
 ```
 
 Artifacts are written to `dist/<version>/`.
+
+Current product-facing docs included in release bundles:
+
+- `docs/QUICKSTART.md`
+- `docs/INSTALL.md`
+- `docs/PRODUCT_GUIDE.md`
+- `docs/DATASHEET.md`
+- `docs/feature-reference.md`
 
 Dependencies/runtime bootstrap only:
 

@@ -1,10 +1,20 @@
 # WolfBBS Quickstart
 
-Use this if you want the shortest path from download to a working board.
+Use this if you want the shortest path from zero to a working board.
 
-## 1. Get WolfBBS
+## Outcome
 
-Paste this:
+At the end of this quickstart you will have:
+
+- a running WolfBBS install
+- a bootstrap sysop account
+- web admin access
+- SSH caller access
+- optional IRC access ready to test
+
+## 1. Install WolfBBS
+
+Linux:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh | bash
@@ -16,20 +26,12 @@ macOS:
 curl -fsSL https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh | bash -s -- --install-brew
 ```
 
-Or download a release bundle or clone the repo from:
+Alternative paths:
 
 - [GitHub Releases](https://github.com/Awassee/wolfbbs/releases)
 - [Public repo](https://github.com/Awassee/wolfbbs)
 
-## 2. Run the installer
-
-Guided menu mode:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh | bash
-```
-
-Clone + local installer:
+If you prefer to clone first:
 
 ```bash
 git clone https://github.com/Awassee/wolfbbs.git wolfbbs
@@ -37,34 +39,52 @@ cd wolfbbs
 bash install.sh
 ```
 
-One-shot install:
+## 2. Let the installer finish
+
+The installer:
+
+1. checks your platform
+2. installs supported dependencies when needed
+3. prepares Docker runtime
+4. clones or updates the app
+5. writes the runtime `.env`
+6. starts the stack
+7. prints connection details and bootstrap credentials
+
+Non-interactive install:
 
 ```bash
 bash install.sh --yes
 ```
 
-macOS with Homebrew bootstrap allowed:
+## 3. Complete first-run setup
 
-```bash
-bash install.sh --yes --install-brew
-```
+After install, open the printed admin URL and do this in order:
 
-## 3. Log in
+1. Visit `/admin/setup`
+2. Visit `/admin/config`
+3. Review the board name, hostname, and runtime flags
+4. Create any extra users or moderators in `/admin/users`
 
-After install, the script prints:
+The installer prints:
 
 - SSH connect command
-- Web admin URL
-- Web chat URL
-- IRC host/port
-- bootstrap SYSOP credentials
+- web admin URL
+- web chat URL
+- IRC host and port
+- bootstrap sysop credentials
 
-Finish setup in:
+## 4. Test the product like a real operator
 
-- `/admin/setup`
-- `/admin/config`
+Use these checks immediately after setup:
 
-## 4. Daily management
+1. Connect over SSH and verify the ANSI menu flow.
+2. Open `/boards` and create a starter post.
+3. Open `/chat` and send a message in `#lobby`.
+4. Open `/doors` and launch a built-in door.
+5. Open `/scores` to confirm score surfaces render.
+
+## 5. Daily management
 
 ```bash
 bash install.sh --status
@@ -73,7 +93,13 @@ bash install.sh --repair
 bash install.sh --upgrade
 ```
 
-## 5. Clean uninstall
+Fast local rebuild while iterating:
+
+```bash
+bash install.sh --rapid-upgrade
+```
+
+## 6. Uninstall
 
 Keep data:
 
@@ -86,3 +112,9 @@ Remove data too:
 ```bash
 bash install.sh --uninstall --purge --yes
 ```
+
+## 7. Read next
+
+- [Install Guide](INSTALL.md)
+- [Product Guide](PRODUCT_GUIDE.md)
+- [Datasheet](DATASHEET.md)

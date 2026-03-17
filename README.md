@@ -1,6 +1,37 @@
 # WolfBBS
 
-WolfBBS is an SSH-first BBS with a Wildcat-inspired ANSI/TUI flow, web admin/chat surfaces, and IRC bridge support.
+WolfBBS is a self-hosted, SSH-first bulletin board system with a Wildcat-style ANSI experience, modern web companion, IRC bridge, doors, file areas, and turnkey installation.
+
+The canonical public repo is [Awassee/wolfbbs](https://github.com/Awassee/wolfbbs).
+
+## Why WolfBBS
+
+WolfBBS is built for operators who want the feel of a classic board without the usual setup pain.
+
+- `Retro caller experience`: ANSI/TUI menus, message boards, private mail, doors, newscan, and classic operator views.
+- `Modern access layer`: web companion, admin console, live chat, IRC bridge, password reset, health checks, and packaging.
+- `Low-friction operations`: paste-and-run bootstrap, guided installer menu, upgrade and repair commands, Docker-first deployment.
+- `Community-ready`: callers, moderators, sysops, guest tours, directory, bulletins, one-liners, scores, and public-facing discovery surfaces.
+
+## What You Get
+
+| Capability | What it does | Why it matters |
+| --- | --- | --- |
+| ANSI BBS | SSH-first caller experience with message boards, files, chat, doors, newscan, and classic menus | Delivers the nostalgic interaction model people actually want |
+| Web companion | Browser-based boards, mail, chat, admin, setup, status, and discovery routes | Makes the board usable for modern users and operators |
+| IRC bridge | Shared channel state between web chat and IRC clients | Lets existing IRC users join the same community without a custom client |
+| Sysop control center | Setup wizard, config center, audit views, diagnostics, and door/file/chat administration | Reduces day-two operational burden |
+| File base and doors | Uploads, indexing, queue management, scores, trophies, and integrated games | Gives the board depth beyond message threads |
+| Packaging and lifecycle | Bootstrap installer, release tarballs, repair, doctor, upgrade, uninstall | Makes the product practical to deploy and maintain |
+
+## Best Fit
+
+WolfBBS is a good fit if you want to:
+
+- host a hobbyist retro board with modern onboarding
+- run an internal community hub with SSH, web, and IRC access
+- launch a retro-gaming or door-game focused community
+- experiment with BBS-style interaction without building a stack from scratch
 
 ## Quick install (Linux)
 
@@ -14,23 +45,17 @@ curl -fsSL https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh |
 curl -fsSL https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh | bash -s -- --install-brew
 ```
 
-## Easiest local flow (interactive menu)
+## Install In Minutes
+
+Interactive local flow:
 
 ```bash
-git clone https://github.com/Awassee/wolfbbs.git wolfbbs && cd wolfbbs && bash install.sh
+git clone https://github.com/Awassee/wolfbbs.git wolfbbs
+cd wolfbbs
+bash install.sh
 ```
 
-The canonical public repo is:
-
-- [Awassee/wolfbbs](https://github.com/Awassee/wolfbbs)
-
-## GitHub release bundles
-
-If you want a packaged download instead of cloning source, use the platform tarballs on the GitHub Releases page:
-
-- [GitHub Releases](https://github.com/Awassee/wolfbbs/releases)
-
-After downloading the matching archive for your platform:
+If you want packaged downloads instead of cloning source, use [GitHub Releases](https://github.com/Awassee/wolfbbs/releases):
 
 ```bash
 tar -xzf wolfbbs_<version>_<os>_<arch>.tar.gz
@@ -38,96 +63,89 @@ cd wolfbbs_<version>_<os>_<arch>
 bash install.sh --yes
 ```
 
-Turnkey bootstrap with extra flags:
+## First Launch Checklist
 
-```bash
-curl -fsSL "https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh" | bash -s -- --yes
-```
+After install, WolfBBS prints the connection summary and bootstrap sysop credentials. The recommended first-run flow is:
 
-Easy-button self-heal / manage commands:
+1. Open `/admin/setup` to complete identity, safety, and bootstrap checks.
+2. Open `/admin/config` to tune site text, runtime flags, services, and operator preferences.
+3. Connect over SSH and verify the caller-facing ANSI flow.
+4. Open `/chat`, `/boards`, `/doors`, and `/scores` to confirm the public experience.
+5. Create additional users or moderators from `/admin/users`.
 
-```bash
-bash install.sh --doctor      # non-mutating diagnostics
-bash install.sh --repair      # ensure deps/env, rebuild, verify
-bash install.sh --start       # start services
-bash install.sh --stop        # stop services
-bash install.sh --restart     # restart services
-bash install.sh --logs        # tail recent logs
-bash install.sh --deps-only   # only install/check prerequisites
-bash install.sh --upgrade     # pull latest images and restart
-bash install.sh --rapid-upgrade # rebuild/restart local code changes
-bash install.sh --uninstall --purge --yes # clean uninstall for test cycles
-# optional: in SSH main menu use / then "/app upgrade" after setting WOLFBBS_APP_UPGRADE_COMMAND
-```
-
-## Install from local clone
-
-```bash
-bash install.sh --with-docker
-```
-
-After install, do all board setup/config in the UI:
-- `/admin/setup` for basic/critical/expert setup profile
-- `/admin/config` for identity, text, safety, and runtime flags
-
-## Preflight doctor (no changes)
-
-```bash
-bash install.sh --doctor
-```
-
-## Connect
-
-The installer prints connect commands using your configured `WOLFBBS_HOSTNAME`.
+Default local endpoints:
 
 - SSH: `ssh localhost -p 2222`
-- Web Admin: `http://localhost:8080/admin`
-- Web Chat: `http://localhost:8080/chat`
-- IRC: `localhost:6667` (TLS: `localhost:6697` if configured)
+- Web admin: `http://localhost:8080/admin`
+- Web chat: `http://localhost:8080/chat`
+- IRC: `localhost:6667`
+- IRC TLS: `localhost:6697` when enabled
 
-## Run locally
+## Daily Operator Commands
 
 ```bash
-docker compose up -d --build
+bash install.sh --status
+bash install.sh --doctor
+bash install.sh --repair
+bash install.sh --start
+bash install.sh --stop
+bash install.sh --restart
+bash install.sh --logs
+bash install.sh --upgrade
+bash install.sh --rapid-upgrade
+bash install.sh --uninstall --purge --yes
 ```
 
-## Validate
+Optional in-BBS upgrade hook:
+
+```bash
+export WOLFBBS_APP_UPGRADE_COMMAND="bash install.sh --rapid-upgrade --yes"
+export WOLFBBS_APP_UPGRADE_WORKDIR="/path/to/wolfbbs"
+```
+
+Then in the SSH main menu press `/` and enter `/app upgrade`.
+
+## Product Guides
+
+- [Quickstart](docs/QUICKSTART.md): fastest path from download to first login
+- [Install Guide](docs/INSTALL.md): install modes, flags, lifecycle, and packaging
+- [Product Guide](docs/PRODUCT_GUIDE.md): what WolfBBS includes and how to use it
+- [Datasheet](docs/DATASHEET.md): deployment summary, capabilities, ports, and operator facts
+- [Feature Reference](docs/feature-reference.md): route, binary, and surface inventory
+
+## Core Product Areas
+
+- `Callers`: ANSI login, guest tour, boards, private mail, bulletins, who’s online, last callers, files, doors, chat
+- `Community`: IRC bridge, one-liners, clubhouse, directory, discovery queue, scoreboards, file picks
+- `Operators`: admin setup wizard, config center, users, boards, files, doors, gateways, audit, health, diagnostics
+- `Distribution`: release bundles, bootstrap installer, upgrade flows, smoke verification, packaging checksums
+
+## Build, Test, And Package
 
 ```bash
 go test ./...
 go build ./...
 scripts/verify.sh --fast
-scripts/qa-functional.sh          # targeted admin/settings/chat/irc functional regression suite
+scripts/qa-functional.sh
 scripts/run-e2e.sh
+scripts/package-dist.sh
 ```
 
-If disk is tight or browsers are already installed:
+Warm-environment shortcuts:
 
 ```bash
-# skip npm/browser setup when already warm
 WOLFBBS_SKIP_NPM_INSTALL=true WOLFBBS_SKIP_BROWSER_INSTALL=true scripts/run-e2e.sh --no-go --no-tui
-
-# or run web checks with a larger preflight threshold override (MB)
 WOLFBBS_WEB_E2E_MIN_FREE_MB=800 scripts/run-e2e.sh --no-go --no-tui
 ```
 
-One-command build/QA runner:
+One-command QA runner:
 
 ```bash
-scripts/build.sh --quick   # fast local check
-scripts/build.sh --full    # full smoke + e2e
+scripts/build.sh --quick
+scripts/build.sh --full
 ```
 
-Distribution bundle builder:
-
-```bash
-scripts/package-dist.sh
-scripts/package-dist.sh --platform linux/amd64 --platform linux/arm64
-```
-
-This writes versioned tarballs plus checksums under `dist/`.
-
-If local Node is 25+, install/use Node 24 on macOS:
+If local Node is 25+, use Node 24 on macOS:
 
 ```bash
 brew install node@24
@@ -135,24 +153,22 @@ export PATH="$(brew --prefix node@24)/bin:$PATH"
 scripts/run-e2e.sh
 ```
 
-## Manual acceptance checklist
+## Manual Acceptance
 
 ```bash
 scripts/manual-acceptance.sh --guided
 ```
 
-This writes `docs/manual-acceptance-latest.md` with PASS/FAIL/SKIPPED per MANUAL spec ID.
+This writes `docs/manual-acceptance-latest.md` with PASS, FAIL, and SKIPPED results by manual spec ID.
 
-## Documentation
+## Technical Documentation
 
-- `/docs/QUICKSTART.md`
-- `/docs/INSTALL.md`
-- `/docs/ACCEPTANCE_SPEC.md`
-- `/docs/manual-acceptance.md`
-- `/docs/screens.md`
-- `/docs/admin.md`
-- `/docs/chat.md`
-- `/docs/irc-compat.md`
-- `/docs/doors.md`
-- `/docs/message-network.md`
-- `/docs/mods.md`
+- `docs/ACCEPTANCE_SPEC.md`
+- `docs/manual-acceptance.md`
+- `docs/screens.md`
+- `docs/admin.md`
+- `docs/chat.md`
+- `docs/irc-compat.md`
+- `docs/doors.md`
+- `docs/message-network.md`
+- `docs/mods.md`
