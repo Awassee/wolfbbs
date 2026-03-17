@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/mail"
@@ -182,6 +183,7 @@ const (
 	sysSettingConnectorTelnetCmd     = "runtime.connector.telnet_bridge.command"
 	sysSettingConnectorTelnetArgs    = "runtime.connector.telnet_bridge.args"
 	maxAdminErrorEntries             = 300
+	maxActivityPubInboxBytes         = 1 << 20
 )
 
 type webApp struct {
@@ -645,10 +647,6 @@ func (a *webApp) handleActivityPubUsers(w http.ResponseWriter, r *http.Request) 
 		http.NotFound(w, r)
 		return
 	}
-	if r.Method != http.MethodGet {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
 	path := strings.TrimPrefix(r.URL.Path, "/ap/users/")
 	path = strings.Trim(path, "/")
 	if path == "" {
@@ -667,14 +665,26 @@ func (a *webApp) handleActivityPubUsers(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if len(parts) == 1 {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
 		a.handleActivityPubActor(w, r, user)
 		return
 	}
 	switch strings.ToLower(strings.TrimSpace(parts[1])) {
 	case "outbox":
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
 		a.handleActivityPubOutbox(w, r, user)
 	case "inbox":
-		http.Error(w, "activitypub inbox is disabled", http.StatusNotImplemented)
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		a.handleActivityPubInbox(w, r, user)
 	default:
 		http.NotFound(w, r)
 	}
@@ -749,6 +759,107 @@ func (a *webApp) handleActivityPubOutbox(w http.ResponseWriter, r *http.Request,
 		"totalItems":   len(items),
 		"orderedItems": items,
 	})
+}
+
+func (a *webApp) handleActivityPubInbox(w http.ResponseWriter, r *http.Request, user *domain.User) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxActivityPubInboxBytes)
+	defer r.Body.Close()
+
+	dec := json.NewDecoder(r.Body)
+	dec.UseNumber()
+
+	var payload map[string]interface{}
+	if err := dec.Decode(&payload); err != nil {
+		http.Error(w, "invalid activity payload", http.StatusBadRequest)
+		return
+	}
+	var extra interface{}
+	if err := dec.Decode(&extra); err != io.EOF {
+		http.Error(w, "invalid activity payload", http.StatusBadRequest)
+		return
+	}
+
+	activityType := activityPubPrimaryType(payload["type"])
+	if activityType == "" {
+		http.Error(w, "activity type is required", http.StatusBadRequest)
+		return
+	}
+	switch activityType {
+	case "Accept", "Announce", "Create", "Delete", "Follow", "Like", "Undo", "Update":
+	default:
+		http.Error(w, "unsupported activity type", http.StatusBadRequest)
+		return
+	}
+
+	actor := activityPubReference(payload["actor"])
+	if actor == "" {
+		http.Error(w, "actor is required", http.StatusBadRequest)
+		return
+	}
+	objectRef := activityPubReference(payload["object"])
+	activityID := activityPubReference(payload["id"])
+
+	details := []string{
+		"type=" + activityType,
+		"actor=" + actor,
+	}
+	if objectRef != "" {
+		details = append(details, "object="+objectRef)
+	}
+	if activityID != "" {
+		details = append(details, "id="+activityID)
+	}
+	a.recordAdminAction("activitypub", user.Handle, "activitypub_inbox_"+strings.ToLower(activityType), strings.Join(details, " "))
+
+	_ = writeJSON(w, http.StatusAccepted, map[string]string{
+		"status":    "accepted",
+		"type":      activityType,
+		"recipient": user.Handle,
+	})
+}
+
+func activityPubPrimaryType(raw interface{}) string {
+	switch value := raw.(type) {
+	case string:
+		return strings.TrimSpace(value)
+	case []interface{}:
+		for _, item := range value {
+			if kind := activityPubPrimaryType(item); kind != "" {
+				return kind
+			}
+		}
+	case []string:
+		for _, item := range value {
+			if kind := strings.TrimSpace(item); kind != "" {
+				return kind
+			}
+		}
+	}
+	return ""
+}
+
+func activityPubReference(raw interface{}) string {
+	switch value := raw.(type) {
+	case string:
+		return strings.TrimSpace(value)
+	case []interface{}:
+		for _, item := range value {
+			if ref := activityPubReference(item); ref != "" {
+				return ref
+			}
+		}
+	case map[string]interface{}:
+		if id := activityPubReference(value["id"]); id != "" {
+			return id
+		}
+		if href := activityPubReference(value["url"]); href != "" {
+			return href
+		}
+		if kind := activityPubPrimaryType(value["type"]); kind != "" {
+			return kind
+		}
+	}
+	return ""
 }
 
 func (a *webApp) listMessagesByAuthor(userID int64) []domain.Message {
@@ -1172,8 +1283,7 @@ func (a *webApp) handleConnect(w http.ResponseWriter, r *http.Request) {
 		wsURL = "ws://localhost:6080/ws-login"
 	}
 	termBlock := `<p>WebSocket terminal is configured for command-mode login server.</p>`
-	if a.modernOnRamp {
-		termBlock += `<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.5.0/css/xterm.min.css">
+	termBlock += `<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.5.0/css/xterm.min.css">
 <div id="termHost" style="max-width:820px; margin-top:10px;">
 <div id="xterm" style="height:360px; width:100%; border:1px solid #334; border-radius:8px; overflow:hidden;"></div>
 <div id="termStatus" style="margin-top:8px; color:#666; font-size:12px;">connecting...</div>
@@ -1185,11 +1295,66 @@ func (a *webApp) handleConnect(w http.ResponseWriter, r *http.Request) {
 const host = document.getElementById('xterm');
 const status = document.getElementById('termStatus');
 const wsURL = ` + fmt.Sprintf("%q", wsURL) + `;
-if (!window.Terminal) {
-  status.textContent = "xterm.js failed to load.";
-  return;
+function createFallbackTerminal(container) {
+  container.innerHTML = "";
+  const view = document.createElement('pre');
+  view.id = 'xterm-fallback';
+  view.tabIndex = 0;
+  view.setAttribute('aria-label', 'Web terminal');
+  view.style.margin = '0';
+  view.style.height = '100%';
+  view.style.padding = '12px';
+  view.style.overflowY = 'auto';
+  view.style.whiteSpace = 'pre-wrap';
+  view.style.outline = 'none';
+  view.style.background = '#0b0f14';
+  view.style.color = '#b7f7c1';
+  view.style.font = "14px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace";
+  container.appendChild(view);
+  let onData = function(){};
+  view.addEventListener('keydown', function(evt) {
+    if (evt.metaKey || evt.ctrlKey || evt.altKey) {
+      return;
+    }
+    if (evt.key === 'Enter') {
+      evt.preventDefault();
+      onData('\r');
+      return;
+    }
+    if (evt.key === 'Backspace') {
+      evt.preventDefault();
+      onData('\b');
+      return;
+    }
+    if (evt.key === 'Tab') {
+      evt.preventDefault();
+      onData('\t');
+      return;
+    }
+    if (evt.key.length === 1) {
+      evt.preventDefault();
+      onData(evt.key);
+    }
+  });
+  return {
+    loadAddon: function(){},
+    open: function(){},
+    focus: function(){ view.focus(); },
+    write: function(text){
+      view.textContent += String(text || '');
+      view.scrollTop = view.scrollHeight;
+    },
+    writeln: function(text){
+      view.textContent += String(text || '') + '\n';
+      view.scrollTop = view.scrollHeight;
+    },
+    onData: function(handler){
+      onData = handler || function(){};
+    }
+  };
 }
-const term = new window.Terminal({
+
+const term = window.Terminal ? new window.Terminal({
   cursorBlink: true,
   convertEol: true,
   fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
@@ -1201,14 +1366,16 @@ const term = new window.Terminal({
     selectionBackground: "#334455"
   },
   scrollback: 3000
-});
-const fitAddon = window.FitAddon && window.FitAddon.FitAddon ? new window.FitAddon.FitAddon() : null;
+}) : createFallbackTerminal(host);
+const fitAddon = window.Terminal && window.FitAddon && window.FitAddon.FitAddon ? new window.FitAddon.FitAddon() : null;
 if (fitAddon) {
   term.loadAddon(fitAddon);
 }
-term.open(host);
-if (fitAddon) {
-  fitAddon.fit();
+if (window.Terminal) {
+  term.open(host);
+  if (fitAddon) {
+    fitAddon.fit();
+  }
 }
 term.focus();
 let ws = null;
@@ -1356,7 +1523,6 @@ setInterval(function(){
 setTimeout(function(){ term.focus(); }, 0);
 })();
 </script>`
-	}
 
 	tourLink := ""
 	if a.guestTour {

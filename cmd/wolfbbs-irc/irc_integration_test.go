@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 )
 
 func TestIRCGatewayFlow(t *testing.T) {
+	resetIRCStateForTest()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -88,6 +90,7 @@ func TestIRCGatewayFlow(t *testing.T) {
 }
 
 func TestIRCGatewayModerationEnforced(t *testing.T) {
+	resetIRCStateForTest()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -113,8 +116,9 @@ func TestIRCGatewayModerationEnforced(t *testing.T) {
 		t.Fatalf("dial: %v", err)
 	}
 	defer client.Close()
+	reader := bufio.NewReader(client)
 
-	if !waitForLineContains(client, "Welcome", 3*time.Second) {
+	if !waitForReaderLineContains(client, reader, "Welcome", 3*time.Second) {
 		t.Fatal("missing initial welcome")
 	}
 
@@ -139,8 +143,94 @@ func TestIRCGatewayModerationEnforced(t *testing.T) {
 	}
 }
 
+func TestIRCGatewayWhoisReportsLiveSessionDetails(t *testing.T) {
+	resetIRCStateForTest()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	svc := chat.NewServiceForTest()
+	repo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(repo)
+	_, _ = authSvc.Register("ircuser", "ircpass1")
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		handleIRCConn(conn, svc, authSvc, "127.0.0.1")
+	}()
+
+	client, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client.Close()
+	reader := bufio.NewReader(client)
+
+	if !waitForReaderLineContains(client, reader, "Welcome", 3*time.Second) {
+		t.Fatal("missing initial welcome")
+	}
+
+	_, _ = client.Write([]byte("PASS ircpass1\r\n"))
+	_, _ = client.Write([]byte("NICK ircuser\r\n"))
+	_, _ = client.Write([]byte("USER ircuser 0 * :IRC Integration User\r\n"))
+	_, _ = client.Write([]byte("JOIN #lobby\r\n"))
+	joinLines := collectReaderLinesUntil(client, reader, " 366 ", 3*time.Second)
+	if !lineSliceContains(joinLines, " 366 ") {
+		t.Fatalf("join did not complete; lines=%#v", joinLines)
+	}
+
+	_, _ = client.Write([]byte("WHOIS ircuser\r\n"))
+	lines := collectReaderLinesUntil(client, reader, " 318 ", 3*time.Second)
+	assertContainsLine(t, lines, " 311 ")
+	assertContainsLine(t, lines, " 319 ")
+	assertContainsLine(t, lines, " 312 ")
+	assertContainsLine(t, lines, " 317 ")
+
+	var signonSeen bool
+	for _, line := range lines {
+		if !strings.Contains(line, " 317 ") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 7 {
+			t.Fatalf("unexpected 317 fields: %q", line)
+		}
+		idle, err := strconv.ParseInt(fields[4], 10, 64)
+		if err != nil {
+			t.Fatalf("parse idle seconds: %v line=%q", err, line)
+		}
+		signon, err := strconv.ParseInt(fields[5], 10, 64)
+		if err != nil {
+			t.Fatalf("parse signon: %v line=%q", err, line)
+		}
+		if idle < 0 {
+			t.Fatalf("expected non-negative idle seconds, got %d", idle)
+		}
+		if signon <= 0 {
+			t.Fatalf("expected positive signon timestamp, got %d", signon)
+		}
+		signonSeen = true
+	}
+	if !signonSeen {
+		t.Fatal("expected WHOIS 317 numeric")
+	}
+
+	_, _ = client.Write([]byte("WHOIS ghost\r\n"))
+	missingLines := collectReaderLinesUntil(client, reader, " 318 ", 3*time.Second)
+	assertContainsLine(t, missingLines, " 401 ")
+}
+
 func waitForLineContains(conn net.Conn, needle string, timeout time.Duration) bool {
 	r := bufio.NewReader(conn)
+	return waitForReaderLineContains(conn, r, needle, timeout)
+}
+
+func waitForReaderLineContains(conn net.Conn, r *bufio.Reader, needle string, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for {
 		if time.Now().After(deadline) {
@@ -161,4 +251,68 @@ func waitForLineContains(conn net.Conn, needle string, timeout time.Duration) bo
 			return true
 		}
 	}
+}
+
+func collectLinesUntil(conn net.Conn, needle string, timeout time.Duration) []string {
+	r := bufio.NewReader(conn)
+	return collectReaderLinesUntil(conn, r, needle, timeout)
+}
+
+func collectReaderLinesUntil(conn net.Conn, r *bufio.Reader, needle string, timeout time.Duration) []string {
+	deadline := time.Now().Add(timeout)
+	lines := make([]string, 0, 8)
+	for {
+		if time.Now().After(deadline) {
+			return lines
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(250 * time.Millisecond))
+		line, err := r.ReadString('\n')
+		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				continue
+			}
+			return lines
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		lines = append(lines, line)
+		if strings.Contains(line, needle) {
+			return lines
+		}
+	}
+}
+
+func assertContainsLine(t *testing.T, lines []string, needle string) {
+	t.Helper()
+	if lineSliceContains(lines, needle) {
+		return
+	}
+	t.Fatalf("expected line containing %q in %#v", needle, lines)
+}
+
+func lineSliceContains(lines []string, needle string) bool {
+	for _, line := range lines {
+		if strings.Contains(line, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func resetIRCStateForTest() {
+	connectionMu.Lock()
+	activeByIP = map[string]int{}
+	activeTotal = 0
+	connectionMu.Unlock()
+
+	ipFloodMu.Lock()
+	ipHits = map[string][]time.Time{}
+	ipFloodMu.Unlock()
+
+	clientsMu.Lock()
+	clientsByNick = map[string]*ircClient{}
+	channelPeers = map[string]map[string]*ircClient{}
+	clientsMu.Unlock()
 }

@@ -120,6 +120,14 @@ async function sendIrcMessage({
   });
 }
 
+test("connect page exposes the web terminal entrypoint", async ({ page }) => {
+  await page.goto("/connect");
+  await expect(page.locator("h1")).toContainText(/Connect/i);
+  await expect(page.locator("#xterm")).toBeVisible();
+  await expect(page.locator("#termStatus")).toContainText(/connecting|connected|disconnected|socket error/i);
+  await expect(page.locator("body")).toContainText("ws-login");
+});
+
 test("user web journey supports keyboard navigation and status/config visibility", async ({
   page,
 }) => {

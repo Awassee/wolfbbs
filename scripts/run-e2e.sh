@@ -16,6 +16,7 @@ web_e2e_mirror_dir="${WOLFBBS_WEB_E2E_MIRROR_DIR:-/tmp/wolfbbs-web-e2e-runner}"
 web_e2e_dir="${WOLFBBS_WEB_E2E_DIR:-$ROOT_DIR/e2e/web}"
 node_bin="${WOLFBBS_NODE_BIN:-}"
 npm_bin="${WOLFBBS_NPM_BIN:-}"
+use_existing_web="${WOLFBBS_E2E_USE_EXISTING_WEB:-false}"
 
 has_cmd() {
   command -v "$1" >/dev/null 2>&1
@@ -330,6 +331,9 @@ playwright_chromium_installed() {
 }
 
 ensure_base_url_for_mirror() {
+  if [[ "${use_existing_web}" != "true" && "${use_existing_web}" != "1" ]]; then
+    return 1
+  fi
   if [[ -n "${WOLFBBS_E2E_BASE_URL:-}" ]]; then
     return 0
   fi
@@ -344,9 +348,6 @@ ensure_base_url_for_mirror() {
 }
 
 seed_web_e2e_credentials() {
-  if [[ -z "${WOLFBBS_E2E_BASE_URL:-}" ]]; then
-    return 0
-  fi
   local default_admin_handle="${WOLFBBS_BOOTSTRAP_ADMIN_HANDLE:-sysop}"
   local default_admin_password="${WOLFBBS_BOOTSTRAP_ADMIN_PASSWORD:-wolfbbs-sysop}"
   export WOLFBBS_E2E_ADMIN_HANDLE="${WOLFBBS_E2E_ADMIN_HANDLE:-$default_admin_handle}"
@@ -389,6 +390,8 @@ Environment overrides:
                  Override web e2e directory/prefix path
   WOLFBBS_E2E_REPO_ROOT
                  Repo root used by Playwright webServer command when tests run from a mirrored path
+  WOLFBBS_E2E_USE_EXISTING_WEB
+                 Set to true to reuse an already-running web service instead of booting the current tree
   -h, --help     Show help
 USAGE
 }

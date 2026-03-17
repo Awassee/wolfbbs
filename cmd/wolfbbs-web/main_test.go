@@ -2122,11 +2122,15 @@ func TestConnectAndTourPages(t *testing.T) {
 		t.Fatalf("connect page missing expected content: %s", body)
 	}
 	for _, want := range []string{
-		"function sendLine(value)",
-		"pending.push(payload)",
+		"xterm.min.js",
+		"xterm-addon-fit",
+		"function createFallbackTerminal(container)",
+		"const term = window.Terminal ? new window.Terminal(",
+		"JSON.stringify({t: type, d: data || \"\"})",
+		"pendingFrames.push(frame)",
+		"sendFrame(\"key\", \"\\n\")",
 		"scheduleReconnect(\"socket closed\")",
 		"document.visibilityState === \"visible\"",
-		"echoClient(payload)",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("connect page terminal script missing %q", want)
@@ -2594,5 +2598,86 @@ func TestActivityPubWebFingerActorOutbox(t *testing.T) {
 	items, ok := outbox["orderedItems"].([]interface{})
 	if !ok || len(items) == 0 {
 		t.Fatalf("expected outbox items, got %#v", outbox["orderedItems"])
+	}
+}
+
+func TestActivityPubInboxAcceptsFollowAndAudits(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	user, err := authSvc.Register("alice", "password123")
+	if err != nil {
+		t.Fatalf("register alice: %v", err)
+	}
+	adminRepo := repository.NewInMemoryAdminRepository()
+	app := &webApp{
+		authSvc:   authSvc,
+		userRepo:  userRepo,
+		adminRepo: adminRepo,
+		apEnabled: true,
+		apBaseURL: "https://bbs.example",
+	}
+
+	body := strings.NewReader(`{
+		"id":"https://remote.example/activities/follow-1",
+		"type":"Follow",
+		"actor":"https://remote.example/users/bob",
+		"object":"https://bbs.example/ap/users/alice"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/ap/users/alice/inbox", body)
+	req.Header.Set("Content-Type", "application/activity+json")
+	rr := httptest.NewRecorder()
+
+	app.handleActivityPubUsers(rr, req)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("inbox status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var resp map[string]string
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode inbox response: %v", err)
+	}
+	if resp["status"] != "accepted" || resp["type"] != "Follow" || resp["recipient"] != user.Handle {
+		t.Fatalf("unexpected inbox response: %#v", resp)
+	}
+
+	audit, err := adminRepo.ListAudit(10)
+	if err != nil {
+		t.Fatalf("list audit: %v", err)
+	}
+	if len(audit) != 1 {
+		t.Fatalf("expected 1 audit entry, got %d", len(audit))
+	}
+	if audit[0].Action != "activitypub_inbox_follow" {
+		t.Fatalf("unexpected audit action: %#v", audit[0].Action)
+	}
+	if !strings.Contains(audit[0].Details, "actor=https://remote.example/users/bob") {
+		t.Fatalf("unexpected audit details: %#v", audit[0].Details)
+	}
+}
+
+func TestActivityPubInboxRejectsUnsupportedActivity(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	if _, err := authSvc.Register("alice", "password123"); err != nil {
+		t.Fatalf("register alice: %v", err)
+	}
+	app := &webApp{
+		authSvc:   authSvc,
+		userRepo:  userRepo,
+		apEnabled: true,
+		apBaseURL: "https://bbs.example",
+	}
+
+	body := strings.NewReader(`{"type":"Block","actor":"https://remote.example/users/bob"}`)
+	req := httptest.NewRequest(http.MethodPost, "/ap/users/alice/inbox", body)
+	req.Header.Set("Content-Type", "application/activity+json")
+	rr := httptest.NewRecorder()
+
+	app.handleActivityPubUsers(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for unsupported activity, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "unsupported activity type") {
+		t.Fatalf("unexpected body: %s", rr.Body.String())
 	}
 }

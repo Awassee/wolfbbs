@@ -28,7 +28,7 @@ NICK changes are guarded by collision checks.
 - SASL PLAIN is supported via `CAP REQ :sasl` + `AUTHENTICATE`.
 
 ## Known limitations
-- CTCP and advanced WHOIS fields are not implemented.
+- CTCP is not implemented.
 - Away messages and channel operators are minimal.
 
 ## Security

@@ -26,6 +26,7 @@ import (
 type ircState struct {
 	nick        string
 	user        string
+	realName    string
 	pass        string
 	saslReq     bool
 	awaitSASL   bool
@@ -34,6 +35,9 @@ type ircState struct {
 	canModerate bool
 	channel     string
 	hitTimes    []time.Time
+	remoteHost  string
+	connectedAt time.Time
+	lastActive  time.Time
 }
 
 type ircClient struct {
@@ -235,7 +239,12 @@ func handleIRCConn(conn net.Conn, svc *chat.Service, authSvc *auth.Service, ip s
 
 	r := bufio.NewReader(conn)
 	w := bufio.NewWriter(conn)
-	state := &ircState{}
+	now := time.Now().UTC()
+	state := &ircState{
+		remoteHost:  ip,
+		connectedAt: now,
+		lastActive:  now,
+	}
 	client := &ircClient{
 		conn:   conn,
 		state:  state,
@@ -265,6 +274,7 @@ func handleIRCConn(conn net.Conn, svc *chat.Service, authSvc *auth.Service, ip s
 		if line == "" {
 			continue
 		}
+		state.lastActive = time.Now().UTC()
 		if !checkFloodIP(ip) {
 			_ = replyfConn(client, ":%s 439 %s :Target change too fast", serverName, nickOrStar(state.nick))
 			continue
@@ -401,6 +411,12 @@ func handleIRCConn(conn net.Conn, svc *chat.Service, authSvc *auth.Service, ip s
 				_ = replyfConn(client, ":%s 461 %s :Not enough parameters", serverName, nickOrStar(state.nick))
 				continue
 			}
+			if idx := strings.Index(raw, " :"); idx >= 0 {
+				state.realName = strings.TrimSpace(raw[idx+2:])
+			}
+			if state.realName == "" && len(userParts) >= 4 {
+				state.realName = strings.TrimLeft(strings.Join(userParts[3:], " "), ":")
+			}
 			if state.nick == "" {
 				state.nick = state.user
 				client.nick = state.nick
@@ -532,12 +548,17 @@ func handleIRCConn(conn net.Conn, svc *chat.Service, authSvc *auth.Service, ip s
 			_ = replyfConn(client, ":%s 315 %s %s :End of WHO list", serverName, nickOrStar(state.nick), filterNick)
 		case "WHOIS":
 			target := strings.TrimPrefix(raw, ":")
+			if strings.Contains(target, ",") {
+				target = strings.TrimSpace(strings.SplitN(target, ",", 2)[0])
+			}
 			if target == "" {
 				_ = replyfConn(client, ":%s 431 %s :No nickname given", serverName, nickOrStar(state.nick))
 				continue
 			}
-			_ = replyfConn(client, ":%s 311 %s %s localhost %s * :WolfBBS user", serverName, nickOrStar(state.nick), target, target)
-			_ = replyfConn(client, ":%s 318 %s %s :End of WHOIS list", serverName, nickOrStar(state.nick), target)
+			if !writeWhois(client, target) {
+				_ = replyfConn(client, ":%s 401 %s %s :No such nick", serverName, nickOrStar(state.nick), target)
+				_ = replyfConn(client, ":%s 318 %s %s :End of WHOIS list", serverName, nickOrStar(state.nick), target)
+			}
 		case "TOPIC":
 			channel := strings.TrimPrefix(raw, ":")
 			if channel == "" {
@@ -772,6 +793,71 @@ func sendDirectMessage(target, line string, from *ircClient) bool {
 
 func noticeLine(from, target, body string) string {
 	return fmt.Sprintf(":%s PRIVMSG %s :%s", from, target, body)
+}
+
+type whoisSnapshot struct {
+	nick        string
+	user        string
+	realName    string
+	host        string
+	channels    []string
+	idleSeconds int64
+	signon      int64
+}
+
+func writeWhois(client *ircClient, target string) bool {
+	snapshot, ok := snapshotWhois(target)
+	if !ok {
+		return false
+	}
+	requester := nickOrStar(client.state.nick)
+	realName := strings.TrimSpace(snapshot.realName)
+	if realName == "" {
+		realName = "WolfBBS user"
+	}
+	username := strings.TrimSpace(snapshot.user)
+	if username == "" {
+		username = snapshot.nick
+	}
+	host := strings.TrimSpace(snapshot.host)
+	if host == "" {
+		host = "localhost"
+	}
+	_ = replyfConn(client, ":%s 311 %s %s %s %s * :%s", serverName, requester, snapshot.nick, username, host, realName)
+	if len(snapshot.channels) > 0 {
+		_ = replyfConn(client, ":%s 319 %s %s :%s", serverName, requester, snapshot.nick, strings.Join(snapshot.channels, " "))
+	}
+	_ = replyfConn(client, ":%s 312 %s %s %s :WolfBBS IRCd", serverName, requester, snapshot.nick, serverName)
+	_ = replyfConn(client, ":%s 317 %s %s %d %d :seconds idle, signon time", serverName, requester, snapshot.nick, snapshot.idleSeconds, snapshot.signon)
+	_ = replyfConn(client, ":%s 318 %s %s :End of WHOIS list", serverName, requester, snapshot.nick)
+	return true
+}
+
+func snapshotWhois(target string) (whoisSnapshot, bool) {
+	clientsMu.Lock()
+	defer clientsMu.Unlock()
+
+	targetClient := clientsByNick[strings.ToLower(strings.TrimSpace(target))]
+	if targetClient == nil || targetClient.state == nil || strings.TrimSpace(targetClient.nick) == "" {
+		return whoisSnapshot{}, false
+	}
+
+	idleSeconds := int64(time.Since(targetClient.state.lastActive).Seconds())
+	if idleSeconds < 0 {
+		idleSeconds = 0
+	}
+	snapshot := whoisSnapshot{
+		nick:        strings.TrimSpace(targetClient.nick),
+		user:        strings.TrimSpace(targetClient.state.user),
+		realName:    strings.TrimSpace(targetClient.state.realName),
+		host:        strings.TrimSpace(targetClient.state.remoteHost),
+		idleSeconds: idleSeconds,
+		signon:      targetClient.state.connectedAt.Unix(),
+	}
+	if channel := strings.TrimSpace(targetClient.state.channel); channel != "" {
+		snapshot.channels = []string{channel}
+	}
+	return snapshot, true
 }
 
 func startChatPoller(client *ircClient, svc *chat.Service, channelUpdate <-chan string, done <-chan struct{}) {

@@ -40,7 +40,7 @@
 - Gateway kill-switches, allowlists, and immutable audit logs.
 - Inbound token authentication and sender-domain allowlists for `/mail/inbound`.
 - Optional IRC TLS listener with cert/key config and SASL PLAIN support.
-- ActivityPub remains disabled by default and is limited to read-only actor/outbox endpoints.
+- ActivityPub remains disabled by default. When enabled, actor/outbox are public and inbox ingress is limited to bounded accepted activity logging without signature validation or remote delivery.
 =======
 # Threat Model (Initial)
 

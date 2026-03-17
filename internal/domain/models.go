@@ -100,19 +100,19 @@ type FileArea struct {
 
 type FileEntry struct {
 	ID          int64
-	AreaID       int64
-	Name         string
-	Path         string
-	Description  string
-	Tags         []string
-	SHA256       string
-	SizeBytes    int64
-	UploaderID   int64
-	UploadedAt   time.Time
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	RatingAvg    float64
-	RatingCount  int
+	AreaID      int64
+	Name        string
+	Path        string
+	Description string
+	Tags        []string
+	SHA256      string
+	SizeBytes   int64
+	UploaderID  int64
+	UploadedAt  time.Time
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	RatingAvg   float64
+	RatingCount int
 }
 
 type FileFilter struct {
