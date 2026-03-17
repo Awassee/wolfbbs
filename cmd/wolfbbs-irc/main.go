@@ -499,21 +499,23 @@ func handleIRCConn(conn net.Conn, svc *chat.Service, authSvc *auth.Service, ip s
 				continue
 			}
 			if !strings.HasPrefix(target, "#") {
-				if !sendDirectMessage(target, noticeLine(state.nick, target, message), client) && cmd == "PRIVMSG" {
+				if !sendDirectMessage(target, ircMessageLine(cmd, state.nick, target, message), client) && cmd == "PRIVMSG" {
 					_ = replyfConn(client, ":%s 401 %s %s :No such nick", serverName, nickOrStar(state.nick), target)
 				}
 				continue
 			}
 			target = chat.NormalizeChannel(target)
+			if cmd == "NOTICE" {
+				_ = broadcastToChannel(target, ircMessageLine(cmd, state.nick, target, message))
+				continue
+			}
 			msg, err := svc.Post(state.nick, target, message)
 			if err != nil {
 				_ = replyfConn(client, ":%s 437 %s %s :%s", serverName, nickOrStar(state.nick), target, err.Error())
 				continue
 			}
-			payload := noticeLine(state.nick, target, msg.Body)
-			if cmd == "PRIVMSG" {
-				_ = broadcastToChannel(target, payload)
-			}
+			payload := ircMessageLine(cmd, state.nick, target, msg.Body)
+			_ = broadcastToChannel(target, payload)
 		case "NAMES":
 			channel := strings.TrimPrefix(raw, ":")
 			if channel == "" {
@@ -791,8 +793,12 @@ func sendDirectMessage(target, line string, from *ircClient) bool {
 	return true
 }
 
-func noticeLine(from, target, body string) string {
-	return fmt.Sprintf(":%s PRIVMSG %s :%s", from, target, body)
+func ircMessageLine(kind, from, target, body string) string {
+	kind = strings.ToUpper(strings.TrimSpace(kind))
+	if kind != "NOTICE" {
+		kind = "PRIVMSG"
+	}
+	return fmt.Sprintf(":%s %s %s :%s", from, kind, target, body)
 }
 
 type whoisSnapshot struct {

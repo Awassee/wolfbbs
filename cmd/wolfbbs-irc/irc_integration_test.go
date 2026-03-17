@@ -225,6 +225,83 @@ func TestIRCGatewayWhoisReportsLiveSessionDetails(t *testing.T) {
 	assertContainsLine(t, missingLines, " 401 ")
 }
 
+func TestIRCGatewayNoticeAndCTCPRelay(t *testing.T) {
+	resetIRCStateForTest()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	svc := chat.NewServiceForTest()
+	repo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(repo)
+	_, _ = authSvc.Register("ircuser", "ircpass1")
+	_, _ = authSvc.Register("ircviewer", "ircpass2")
+
+	go func() {
+		for i := 0; i < 2; i++ {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go handleIRCConn(conn, svc, authSvc, "127.0.0.1")
+		}
+	}()
+
+	sender, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("dial sender: %v", err)
+	}
+	defer sender.Close()
+	receiver, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("dial receiver: %v", err)
+	}
+	defer receiver.Close()
+
+	senderReader := bufio.NewReader(sender)
+	receiverReader := bufio.NewReader(receiver)
+
+	if !waitForReaderLineContains(sender, senderReader, "Welcome", 3*time.Second) {
+		t.Fatal("sender did not receive IRC welcome")
+	}
+	if !waitForReaderLineContains(receiver, receiverReader, "Welcome", 3*time.Second) {
+		t.Fatal("receiver did not receive IRC welcome")
+	}
+
+	_, _ = sender.Write([]byte("PASS ircpass1\r\n"))
+	_, _ = sender.Write([]byte("NICK ircuser\r\n"))
+	_, _ = sender.Write([]byte("USER ircuser 0 * :ircuser\r\n"))
+	_, _ = sender.Write([]byte("JOIN #lobby\r\n"))
+
+	_, _ = receiver.Write([]byte("PASS ircpass2\r\n"))
+	_, _ = receiver.Write([]byte("NICK ircviewer\r\n"))
+	_, _ = receiver.Write([]byte("USER ircviewer 0 * :ircviewer\r\n"))
+	_, _ = receiver.Write([]byte("JOIN #lobby\r\n"))
+
+	joinLines := collectReaderLinesUntil(receiver, receiverReader, " 366 ", 3*time.Second)
+	if !lineSliceContains(joinLines, " 366 ") {
+		t.Fatalf("receiver join did not complete; lines=%#v", joinLines)
+	}
+	joinLines = collectReaderLinesUntil(sender, senderReader, " 366 ", 3*time.Second)
+	if !lineSliceContains(joinLines, " 366 ") {
+		t.Fatalf("sender join did not complete; lines=%#v", joinLines)
+	}
+
+	_, _ = sender.Write([]byte("NOTICE ircviewer :direct notice\r\n"))
+	directLines := collectReaderLinesUntil(receiver, receiverReader, "direct notice", 3*time.Second)
+	assertContainsLine(t, directLines, " NOTICE ircviewer :direct notice")
+
+	_, _ = sender.Write([]byte("NOTICE #lobby :channel notice\r\n"))
+	channelNoticeLines := collectReaderLinesUntil(receiver, receiverReader, "channel notice", 3*time.Second)
+	assertContainsLine(t, channelNoticeLines, " NOTICE #lobby :channel notice")
+
+	_, _ = sender.Write([]byte("PRIVMSG #lobby :\u0001ACTION waves\u0001\r\n"))
+	actionLines := collectReaderLinesUntil(receiver, receiverReader, "ACTION waves", 3*time.Second)
+	assertContainsLine(t, actionLines, "\u0001ACTION waves\u0001")
+}
+
 func waitForLineContains(conn net.Conn, needle string, timeout time.Duration) bool {
 	r := bufio.NewReader(conn)
 	return waitForReaderLineContains(conn, r, needle, timeout)

@@ -28,7 +28,7 @@ NICK changes are guarded by collision checks.
 - SASL PLAIN is supported via `CAP REQ :sasl` + `AUTHENTICATE`.
 
 ## Known limitations
-- CTCP is not implemented.
+- CTCP is pass-through only; client-to-client requests/replies and `ACTION` relay, but the server does not synthesize CTCP responses.
 - Away messages and channel operators are minimal.
 
 ## Security
