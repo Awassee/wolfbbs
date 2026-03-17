@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -61,11 +62,41 @@ func NewWebSocketServer(addr, path string, logger *slog.Logger, authSvc *auth.Se
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
-			CheckOrigin: func(_ *http.Request) bool {
-				return true
+			CheckOrigin: func(r *http.Request) bool {
+				return websocketOriginAllowed(r)
 			},
 		},
 	}, nil
+}
+
+func websocketOriginAllowed(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return true
+	}
+	originURL, err := url.Parse(origin)
+	if err != nil || strings.TrimSpace(originURL.Host) == "" {
+		return false
+	}
+	requestHost := strings.TrimSpace(r.Host)
+	if requestHost == "" {
+		return false
+	}
+	originHost := originURL.Hostname()
+	requestHostName := requestHost
+	if parsed, err := url.Parse("//" + requestHost); err == nil && strings.TrimSpace(parsed.Hostname()) != "" {
+		requestHostName = parsed.Hostname()
+	}
+	if !strings.EqualFold(originHost, requestHostName) {
+		return false
+	}
+	if originURL.Scheme != "http" && originURL.Scheme != "https" {
+		return false
+	}
+	return true
 }
 
 func (s *WebSocketServer) SetServices(boards repository.BoardRepository, messages repository.MessageRepository, mail repository.PrivateMailRepository, chatSvc *chat.Service, offlineDir string) {

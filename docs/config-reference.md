@@ -123,7 +123,7 @@ Safety limits:
 
 Inbound handling:
 
-- `WOLFBBS_INBOUND_TOKEN`: required shared token for inbound endpoint/adaptor.
+- `WOLFBBS_INBOUND_TOKEN`: required shared token for inbound endpoint/adaptor. Replace the dev default before public exposure.
 - `WOLFBBS_MAILIN_ALLOW_DOMAINS`: comma-separated sender allowlist.
 - `WOLFBBS_MAILIN_FORWARD_URL`: URL used by `cmd/wolfbbs-mailin` when relaying to web.
 

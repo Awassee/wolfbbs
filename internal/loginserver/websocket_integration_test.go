@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"net/url"
 	"strings"
 	"testing"
@@ -194,4 +195,50 @@ func TestWebSocketLoginFlowKeyFrames(t *testing.T) {
 	readUntil("Enter selection:")
 	sendFrame("key", "Q\n")
 	readUntil("Goodbye.")
+}
+
+func TestWebSocketLoginRejectsForeignOrigin(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	if _, err := authSvc.Register("wsuser", "password123"); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	nodes := session.NewManager(255, 256)
+	srv, err := loginserver.NewWebSocketServer("127.0.0.1:0", "/ws-login", logger, authSvc, nodes, nil)
+	if err != nil {
+		t.Fatalf("new websocket server: %v", err)
+	}
+	srv.SetServices(
+		repository.NewInMemoryBoardRepository(),
+		repository.NewInMemoryMessageRepository(),
+		repository.NewInMemoryPrivateMailRepository(),
+		chat.NewServiceForTest(),
+		t.TempDir(),
+	)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		_ = srv.Serve(ln)
+	}()
+	defer srv.Shutdown(context.Background())
+
+	u := url.URL{Scheme: "ws", Host: ln.Addr().String(), Path: "/ws-login"}
+	header := http.Header{}
+	header.Set("Origin", "https://evil.example")
+	conn, resp, err := websocket.DefaultDialer.Dial(u.String(), header)
+	if conn != nil {
+		conn.Close()
+	}
+	if err == nil {
+		t.Fatal("expected foreign origin to be rejected")
+	}
+	if resp == nil || resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 forbidden handshake, got %#v", resp)
+	}
 }
