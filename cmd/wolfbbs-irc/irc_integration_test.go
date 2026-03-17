@@ -373,6 +373,78 @@ func TestIRCGatewayAwayReportsOnPrivmsgAndWhois(t *testing.T) {
 	assertContainsLine(t, awayClearLines, " 305 ")
 }
 
+func TestIRCGatewayNamesMarksModeratorsAsOperators(t *testing.T) {
+	resetIRCStateForTest()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	svc := chat.NewServiceForTest()
+	repo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(repo)
+	if _, err := authSvc.Register("sysop", "syspass12"); err != nil {
+		t.Fatalf("register sysop: %v", err)
+	}
+	if err := authSvc.SetRole("sysop", "sysop"); err != nil {
+		t.Fatalf("set sysop role: %v", err)
+	}
+	if _, err := authSvc.Register("reader", "readerpass1"); err != nil {
+		t.Fatalf("register reader: %v", err)
+	}
+
+	go func() {
+		for i := 0; i < 2; i++ {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go handleIRCConn(conn, svc, authSvc, "127.0.0.1")
+		}
+	}()
+
+	sysopConn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("dial sysop: %v", err)
+	}
+	defer sysopConn.Close()
+	readerConn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("dial reader: %v", err)
+	}
+	defer readerConn.Close()
+
+	sysopReader := bufio.NewReader(sysopConn)
+	readerReader := bufio.NewReader(readerConn)
+
+	if !waitForReaderLineContains(sysopConn, sysopReader, "Welcome", 3*time.Second) {
+		t.Fatal("sysop welcome missing")
+	}
+	if !waitForReaderLineContains(readerConn, readerReader, "Welcome", 3*time.Second) {
+		t.Fatal("reader welcome missing")
+	}
+
+	_, _ = sysopConn.Write([]byte("PASS syspass12\r\n"))
+	_, _ = sysopConn.Write([]byte("NICK sysop\r\n"))
+	_, _ = sysopConn.Write([]byte("USER sysop 0 * :sysop\r\n"))
+	_, _ = sysopConn.Write([]byte("JOIN #lobby\r\n"))
+
+	_, _ = readerConn.Write([]byte("PASS readerpass1\r\n"))
+	_, _ = readerConn.Write([]byte("NICK reader\r\n"))
+	_, _ = readerConn.Write([]byte("USER reader 0 * :reader\r\n"))
+	_, _ = readerConn.Write([]byte("JOIN #lobby\r\n"))
+
+	joinLines := collectReaderLinesUntil(readerConn, readerReader, " 366 ", 3*time.Second)
+	if !lineSliceContains(joinLines, " 366 ") {
+		t.Fatalf("reader join did not complete; lines=%#v", joinLines)
+	}
+	_, _ = readerConn.Write([]byte("NAMES #lobby\r\n"))
+	nameLines := collectReaderLinesUntil(readerConn, readerReader, " 366 ", 3*time.Second)
+	assertContainsLine(t, nameLines, " 353 ")
+	assertContainsLine(t, nameLines, "@sysop")
+}
+
 func waitForLineContains(conn net.Conn, needle string, timeout time.Duration) bool {
 	r := bufio.NewReader(conn)
 	return waitForReaderLineContains(conn, r, needle, timeout)

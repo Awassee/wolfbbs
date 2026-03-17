@@ -769,17 +769,21 @@ func unregisterClientByConn(conn net.Conn) {
 }
 
 func channelMembers(channel string) []string {
-	members := map[string]struct{}{}
+	members := map[string]string{}
 	clientsMu.Lock()
 	for nick, c := range channelPeers[channel] {
 		if c != nil && strings.TrimSpace(c.nick) != "" && strings.TrimSpace(c.state.nick) != "" {
-			members[nick] = struct{}{}
+			display := nick
+			if c.state != nil && c.state.canModerate {
+				display = "@" + strings.TrimPrefix(display, "@")
+			}
+			members[nick] = display
 		}
 	}
 	clientsMu.Unlock()
 
 	out := make([]string, 0, len(members))
-	for nick := range members {
+	for _, nick := range members {
 		out = append(out, nick)
 	}
 	sort.Strings(out)

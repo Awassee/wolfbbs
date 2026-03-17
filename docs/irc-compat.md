@@ -27,10 +27,10 @@ NICK changes are guarded by collision checks.
 - IRC PASS/NICK should map to existing WolfBBS user handles.
 - Unauthenticated sockets cannot JOIN or send PRIVMSG.
 - SASL PLAIN is supported via `CAP REQ :sasl` + `AUTHENTICATE`.
+- WolfBBS `moderator` and `sysop` roles surface as `@nick` in `NAMES` and can use `KICK`.
 
 ## Known limitations
 - CTCP is pass-through only; client-to-client requests/replies and `ACTION` relay, but the server does not synthesize CTCP responses.
-- Channel operators are minimal.
 
 ## Security
 - Connection limits and per-user flood caps
