@@ -131,10 +131,10 @@ for platform in "${PLATFORMS[@]}"; do
     build_bin "$os" "$arch" "$bundle_root/bin/$bin_name" "$pkg"
   done
 
-  cp README.md docker-compose.yml .env.example install.sh "$bundle_root/"
+  cp README.md docker-compose.yml .env.example install.sh bootstrap.sh "$bundle_root/"
   cp docs/QUICKSTART.md docs/INSTALL.md docs/ACCEPTANCE_SPEC.md docs/feature-reference.md docs/irc-compat.md docs/doors.md docs/chat.md docs/admin.md "$bundle_root/docs/"
   cp scripts/verify.sh scripts/build.sh "$bundle_root/scripts/"
-  chmod +x "$bundle_root/install.sh" "$bundle_root/scripts/verify.sh" "$bundle_root/scripts/build.sh"
+  chmod +x "$bundle_root/install.sh" "$bundle_root/bootstrap.sh" "$bundle_root/scripts/verify.sh" "$bundle_root/scripts/build.sh"
   chmod +x "$bundle_root/bin/"*
 
   cat >"$bundle_root/RELEASE_NOTES.txt" <<EOF
@@ -145,6 +145,7 @@ Platform: $os/$arch
 Contents:
 - bin/: server, web, irc, mailin, trivia, and oputil binaries
 - install.sh: installer and upgrade entrypoint
+- bootstrap.sh: one-line downloader/bootstrap entrypoint
 - docker-compose.yml + .env.example: default stack runtime
 - docs/: quickstart, install, acceptance, feature reference, irc compatibility, doors, chat, and admin references
 - scripts/: verify and build helpers

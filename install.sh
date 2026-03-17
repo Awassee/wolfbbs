@@ -8,6 +8,7 @@ DEFAULT_WEB_PORT=8080
 DEFAULT_IRC_PORT=6667
 DEFAULT_IRC_TLS_PORT=6697
 DEFAULT_MAILIN_PORT=8091
+DEFAULT_CHECKOUT_SUBDIR="app"
 DEFAULT_REPO_SLUG="seanheiney/wolfbbs-public"
 DEFAULT_REPO_URL="https://github.com/${DEFAULT_REPO_SLUG}.git"
 DEFAULT_BBS_NAME="WolfBBS"
@@ -129,6 +130,48 @@ menu_line() {
   printf '│ %-76s │\n' "$left"
 }
 
+find_compose_file_in_dir() {
+  local dir="$1"
+  if [[ -f "${dir}/docker-compose.yml" ]]; then
+    echo "${dir}/docker-compose.yml"
+    return 0
+  fi
+  if [[ -f "${dir}/compose.yml" ]]; then
+    echo "${dir}/compose.yml"
+    return 0
+  fi
+  return 1
+}
+
+managed_checkout_dir() {
+  printf '%s/%s' "$PREFIX" "$DEFAULT_CHECKOUT_SUBDIR"
+}
+
+find_installed_compose_file() {
+  local managed_dir=""
+  if find_compose_file_in_dir "$PREFIX" >/dev/null 2>&1; then
+    find_compose_file_in_dir "$PREFIX"
+    return 0
+  fi
+  managed_dir="$(managed_checkout_dir)"
+  if find_compose_file_in_dir "$managed_dir" >/dev/null 2>&1; then
+    find_compose_file_in_dir "$managed_dir"
+    return 0
+  fi
+  return 1
+}
+
+adopt_installed_compose_if_present() {
+  local installed_compose=""
+  installed_compose="$(find_installed_compose_file || true)"
+  if [[ -z "$installed_compose" ]]; then
+    return 1
+  fi
+  compose_file="$installed_compose"
+  WORK_DIR="$(dirname "$installed_compose")"
+  return 0
+}
+
 prompt_default() {
   local label="$1"
   local current_value="$2"
@@ -164,6 +207,7 @@ show_interactive_install_plan() {
     menu_line "Recommended path: defaults now, bootstrap SYSOP now, finish setup in web UI."
     menu_divider
     menu_line "Install dir : ${PREFIX}"
+    menu_line "Code checkout: $(managed_checkout_dir)"
     menu_line "Ports       : SSH ${SSH_PORT} | Web ${WEB_PORT} | IRC ${IRC_PORT} | TLS ${IRC_TLS_PORT} | Mail ${MAILIN_PORT}"
     menu_line "Source repo : ${repo_display}"
     menu_line "Next step   : web setup at /admin/setup after containers come up"
@@ -810,15 +854,7 @@ is_macos() {
 }
 
 find_compose_file() {
-  if [[ -f "${WORK_DIR}/docker-compose.yml" ]]; then
-    echo "${WORK_DIR}/docker-compose.yml"
-    return 0
-  fi
-  if [[ -f "${WORK_DIR}/compose.yml" ]]; then
-    echo "${WORK_DIR}/compose.yml"
-    return 0
-  fi
-  return 1
+  find_compose_file_in_dir "$WORK_DIR"
 }
 
 compose_file="$(find_compose_file || true)"
@@ -1378,6 +1414,7 @@ resolve_env_file() {
 }
 
 ensure_compose_file() {
+  local checkout_dir=""
   if [[ -n "$compose_file" ]]; then
     return
   fi
@@ -1388,35 +1425,33 @@ ensure_compose_file() {
   fi
 
   if [[ -n "$REPO_URL" ]]; then
-    if [[ -d "$PREFIX" && -n "$(ls -A "$PREFIX" 2>/dev/null)" && "$FORCE" != "true" ]]; then
-      if [[ -d "$PREFIX/.git" ]]; then
-        echo "Target directory is a git checkout and will be updated: $PREFIX"
-      elif [[ "$FORCE" == "true" ]]; then
-        run "rm -rf '$PREFIX'"
-        run "mkdir -p '$PREFIX'"
+    checkout_dir="$(managed_checkout_dir)"
+    if [[ -d "$checkout_dir" && -n "$(ls -A "$checkout_dir" 2>/dev/null)" && "$FORCE" != "true" ]]; then
+      if [[ -d "$checkout_dir/.git" ]]; then
+        echo "Managed code checkout will be updated: $checkout_dir"
       else
-        echo "Target directory exists and is not empty: $PREFIX"
+        echo "Managed code checkout exists and is not empty: $checkout_dir"
         echo "Use --force to replace it, or choose a different --prefix."
         exit 1
       fi
     fi
-    log "No local compose file found. Cloning repository from ${REPO_URL}."
+    log "No local compose file found. Fetching repository from ${REPO_URL} into ${checkout_dir}."
     init_install_dir
     if [[ "$DRY_RUN" == "true" ]]; then
-      WORK_DIR="$PREFIX"
-      compose_file="${PREFIX}/docker-compose.yml"
-      log "DRY-RUN: would clone repository to ${PREFIX} and use ${compose_file}"
+      WORK_DIR="$checkout_dir"
+      compose_file="${checkout_dir}/docker-compose.yml"
+      log "DRY-RUN: would clone repository to ${checkout_dir} and use ${compose_file}"
       return
     fi
-    if [[ -d "$PREFIX/.git" ]]; then
-      run_retry 3 3 "git -C '$PREFIX' pull --ff-only"
+    run "mkdir -p '$(dirname "$checkout_dir")'"
+    if [[ -d "$checkout_dir/.git" ]]; then
+      run_retry 3 3 "git -C '$checkout_dir' pull --ff-only"
     else
-      run_retry 3 3 "git clone '$REPO_URL' '$PREFIX'"
+      run_retry 3 3 "git clone '$REPO_URL' '$checkout_dir'"
     fi
-    WORK_DIR="$PREFIX"
+    WORK_DIR="$checkout_dir"
     compose_file="$(find_compose_file || true)"
     if [[ -n "$compose_file" ]]; then
-      PREFIX="$(dirname "$compose_file")"
       return
     fi
     echo "compose file still not found after clone."
@@ -1959,16 +1994,11 @@ doctor_report() {
     doctor_warn "no compose file in working dir (installer can clone via --repo)"
   fi
 
-  install_compose=""
-  if [[ -f "${PREFIX}/docker-compose.yml" ]]; then
-    install_compose="${PREFIX}/docker-compose.yml"
-  elif [[ -f "${PREFIX}/compose.yml" ]]; then
-    install_compose="${PREFIX}/compose.yml"
-  fi
+  install_compose="$(find_installed_compose_file || true)"
   if [[ -n "$install_compose" ]]; then
-    doctor_ok "compose file in install prefix: ${install_compose}"
+    doctor_ok "compose file in install layout: ${install_compose}"
   else
-    doctor_warn "no compose file in install prefix ${PREFIX}"
+    doctor_warn "no compose file in install layout under ${PREFIX}"
   fi
 
   install_env="${PREFIX}/.env"
@@ -2240,20 +2270,14 @@ main() {
   fi
 
   compose_file="$(find_compose_file || true)"
+  if [[ -z "$compose_file" ]]; then
+    adopt_installed_compose_if_present || true
+  fi
   if [[ -z "$compose_file" && "$STATUS" != "true" ]]; then
     ensure_compose_file
-  elif [[ -z "$compose_file" && "$STATUS" == "true" ]]; then
-    if [[ -d "$PREFIX" ]]; then
-      WORK_DIR="$PREFIX"
-      compose_file="$(find_compose_file || true)"
-    fi
   fi
 
   if [[ -n "$compose_file" ]]; then
-    # if found in a separate path, keep prefix aligned
-    if [[ "$(dirname "$compose_file")" != "$WORK_DIR" ]]; then
-      PREFIX="$(dirname "$compose_file")"
-    fi
     WORK_DIR="$(dirname "$compose_file")"
   fi
 
@@ -2399,18 +2423,18 @@ main() {
       compose_file="$(find_compose_file || true)"
     fi
     if [[ -z "$compose_file" ]]; then
-      compose_file="${PREFIX}/docker-compose.yml"
-      WORK_DIR="$PREFIX"
+      compose_file="$(managed_checkout_dir)/docker-compose.yml"
+      WORK_DIR="$(managed_checkout_dir)"
       log "DRY-RUN: would use compose file ${compose_file}"
     fi
   else
     compose_file="$(find_compose_file || true)"
     if [[ -z "$compose_file" ]]; then
-      if [[ ! -f "$PREFIX/docker-compose.yml" ]]; then
+      compose_file="$(find_installed_compose_file || true)"
+      if [[ -z "$compose_file" ]]; then
         echo "No compose file found after setup."
         exit 1
       fi
-      compose_file="$PREFIX/docker-compose.yml"
     fi
   fi
 

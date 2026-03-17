@@ -5,13 +5,13 @@ WolfBBS is an SSH-first BBS with a Wildcat-inspired ANSI/TUI flow, web admin/cha
 ## Quick install (Linux)
 
 ```bash
-git clone https://github.com/seanheiney/wolfbbs-public.git wolfbbs && cd wolfbbs && bash install.sh --yes
+curl -fsSL https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/bootstrap.sh | bash
 ```
 
 ## Quick install (macOS)
 
 ```bash
-git clone https://github.com/seanheiney/wolfbbs-public.git wolfbbs && cd wolfbbs && bash install.sh --yes --install-brew
+curl -fsSL https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/bootstrap.sh | bash -s -- --install-brew
 ```
 
 ## Easiest local flow (interactive menu)
@@ -38,10 +38,10 @@ cd wolfbbs_<version>_<os>_<arch>
 bash install.sh --yes
 ```
 
-Optional `curl|bash` (requires public raw URL access):
+Turnkey bootstrap with extra flags:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/install.sh" | bash -s -- --yes
+curl -fsSL "https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/bootstrap.sh" | bash -s -- --yes
 ```
 
 Easy-button self-heal / manage commands:

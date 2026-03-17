@@ -4,22 +4,36 @@ Use this if you want the shortest path from download to a working board.
 
 ## 1. Get WolfBBS
 
-Clone the public repo:
+Paste this:
 
 ```bash
-git clone https://github.com/seanheiney/wolfbbs-public.git wolfbbs
-cd wolfbbs
+curl -fsSL https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/bootstrap.sh | bash
 ```
 
-Or download a release bundle from:
+macOS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/bootstrap.sh | bash -s -- --install-brew
+```
+
+Or download a release bundle or clone the repo from:
 
 - [GitHub Releases](https://github.com/seanheiney/wolfbbs-public/releases)
+- [Public repo](https://github.com/seanheiney/wolfbbs-public)
 
 ## 2. Run the installer
 
 Guided menu mode:
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/bootstrap.sh | bash
+```
+
+Clone + local installer:
+
+```bash
+git clone https://github.com/seanheiney/wolfbbs-public.git wolfbbs
+cd wolfbbs
 bash install.sh
 ```
 

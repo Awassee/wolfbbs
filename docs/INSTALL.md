@@ -16,18 +16,18 @@
 - Docker-based install: supported and default.
 - Native mode: not currently supported.
 
-## Quick Install (copy/paste-safe: git clone + local installer)
+## Quick Install (turnkey paste-and-go)
 
 Linux:
 
 ```bash
-git clone https://github.com/seanheiney/wolfbbs-public.git wolfbbs && cd wolfbbs && bash install.sh --yes
+curl -fsSL https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/bootstrap.sh | bash
 ```
 
 macOS:
 
 ```bash
-git clone https://github.com/seanheiney/wolfbbs-public.git wolfbbs && cd wolfbbs && bash install.sh --yes --install-brew
+curl -fsSL https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/bootstrap.sh | bash -s -- --install-brew
 ```
 
 Interactive menu mode (no flags):
@@ -37,6 +37,15 @@ git clone https://github.com/seanheiney/wolfbbs-public.git wolfbbs && cd wolfbbs
 ```
 
 The guided menu path is the recommended consumer install flow. It opens a menu first, then an easy-install screen where you can accept defaults or edit install directory, ports, and source repo without remembering flags.
+
+What the bootstrap does:
+
+1. Downloads the current `install.sh` to a temp location.
+2. Runs the installer with any flags you pass after `bash -s --`.
+3. Installs base dependencies and Docker runtime when supported.
+4. Clones or updates a managed WolfBBS checkout under `<prefix>/app`.
+5. Writes runtime config into `<prefix>/.env`.
+6. Starts the stack and prints first-login steps.
 
 ## Install From GitHub Release Bundle
 
@@ -63,25 +72,25 @@ git clone git@github.com:seanheiney/wolfbbs-public.git wolfbbs && cd wolfbbs && 
 Use this only when the repo's raw GitHub URL is publicly reachable:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/install.sh" | bash -s -- --yes
+curl -fsSL "https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/bootstrap.sh" | bash
 ```
 
 macOS variant:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/install.sh" | bash -s -- --yes --install-brew
+curl -fsSL "https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/bootstrap.sh" | bash -s -- --install-brew
 ```
 
 Dry-run preflight:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/install.sh" | bash -s -- --yes --install-brew --dry-run
+curl -fsSL "https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/bootstrap.sh" | bash -s -- --yes --install-brew --dry-run
 ```
 
 Install from a fork/custom repository:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/install.sh" | bash -s -- --yes --repo your-org/your-repo
+curl -fsSL "https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/bootstrap.sh" | bash -s -- --yes --repo your-org/your-repo
 ```
 
 ## Install From Local Clone
@@ -153,6 +162,7 @@ When run without flags in an interactive terminal, `install.sh` opens an action 
 ## Generated and Managed Files
 
 - `<prefix>/.env` (mode `600`)
+- `<prefix>/app/` managed source checkout for bootstrap installs
 - `<prefix>/install.log` (or script-dir log before clone)
 
 Important generated values include:

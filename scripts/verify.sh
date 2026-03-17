@@ -361,6 +361,7 @@ run_static_checks() {
   must "INS-003" "installer dry-run prints planned actions" bash -c "./install.sh --dry-run --yes --with-docker | grep -Eiq 'would|DRY-RUN|dry-run'"
   must "INS-004" "installer dry-run idempotent when rerun" bash -c "./install.sh --dry-run --yes --with-docker >/dev/null && ./install.sh --dry-run --yes --with-docker >/dev/null"
   must "INS-005" "required installer flags are present" bash -c "./install.sh --help | grep -Eiq -- '--prefix' && ./install.sh --help | grep -Eiq -- '--ssh-port' && ./install.sh --help | grep -Eiq -- '--web-port' && ./install.sh --help | grep -Eiq -- '--irc-port' && ./install.sh --help | grep -Eiq -- '--upgrade' && ./install.sh --help | grep -Eiq -- '--rapid-upgrade' && ./install.sh --help | grep -Eiq -- '--status' && ./install.sh --help | grep -Eiq -- '--uninstall' && ./install.sh --help | grep -Eiq -- '--force'"
+  must "INS-006" "bootstrap helper works in dry-run mode" bash -c "tmpdir=\$(mktemp -d) && WOLFBBS_BOOTSTRAP_INSTALLER_URL=file://\$PWD/install.sh bash ./bootstrap.sh --dry-run --yes --with-docker --prefix \"\$tmpdir/prefix\" >/dev/null"
   must "INS-007" "docs state docker compose as default install path" file_contains "docs/INSTALL.md" "Docker-based install"
   must "INS-008" "installer has post-install verification hooks" bash -c "rg -n 'healthz|verify_install|wait_for_port' install.sh >/dev/null"
   must "INS-009" "installer prints connection summary strings" bash -c "rg -n 'SSH:|/admin|/chat|IRC:' install.sh >/dev/null"
