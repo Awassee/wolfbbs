@@ -29,6 +29,8 @@ Linux:
 curl -fsSL https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh | bash
 ```
 
+This install path only requires `curl` and `bash` up front. The installer figures out the rest.
+
 macOS:
 
 ```bash

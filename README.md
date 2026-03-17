@@ -39,11 +39,15 @@ WolfBBS is a good fit if you want to:
 curl -fsSL https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh | bash
 ```
 
+This path does not require `git` to be installed first.
+
 ## Quick install (macOS)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh | bash -s -- --install-brew
 ```
+
+This path also works without a preinstalled `git` client.
 
 ## Choose Your Path
 

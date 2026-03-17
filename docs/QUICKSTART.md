@@ -20,6 +20,8 @@ Linux:
 curl -fsSL https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh | bash
 ```
 
+This bootstrap path does not require `git` to be installed first.
+
 macOS:
 
 ```bash

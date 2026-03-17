@@ -566,13 +566,13 @@ Options:
   --repair                  self-heal install: ensure deps/env, rebuild + verify stack
   --deps-only               install/check prerequisites and docker runtime, then exit
   --purge                   remove docker volumes/instance on uninstall
-  --repo <owner/repo|url>   GitHub slug or git URL to clone if installer is run standalone
+  --repo <owner/repo|url>   GitHub slug or URL to fetch if installer is run standalone
   --repo-url <url>          alias of --repo
   -h, --help                show this help
 
 Environment shortcuts:
   WOLFBBS_GH=<owner/repo>         e.g. Awassee/wolfbbs
-  WOLFBBS_REPO_URL=<git-url>      e.g. https://github.com/Awassee/wolfbbs.git
+  WOLFBBS_REPO_URL=<repo-url>     e.g. https://github.com/Awassee/wolfbbs.git
   WOLFBBS_BBS_NAME=<name>         optional installer identity override (prefer /admin/setup)
   WOLFBBS_HOSTNAME=<host>         optional installer hostname override (prefer /admin/setup)
   WOLFBBS_SETUP_PROFILE=<profile> basic|critical|expert baseline (prefer /admin/setup)
@@ -721,7 +721,7 @@ prompt_repo_url() {
   if [[ "$NON_INTERACTIVE" == "true" ]]; then
     return
   fi
-  printf "No local docker-compose file found. Enter repository (owner/repo or git URL): "
+  printf "No local docker-compose file found. Enter repository (owner/repo or GitHub URL): "
   read -r input
   if [[ -n "$input" ]]; then
     REPO_URL="$(normalize_repo_input "$input")"
@@ -772,6 +772,67 @@ normalize_repo_input() {
   printf '%s' "$raw"
 }
 
+repo_slug_from_url() {
+  local raw
+  raw="$(trim "${1:-}")"
+  raw="${raw%/}"
+  if [[ "$raw" =~ ^https?://github\.com/([^/]+/[^/]+)(\.git)?$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  if [[ "$raw" =~ ^git@github\.com:([^/]+/[^/]+)(\.git)?$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  if [[ "$raw" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(\.git)?$ ]]; then
+    printf '%s' "${raw%.git}"
+    return 0
+  fi
+  return 1
+}
+
+repo_archive_url() {
+  local slug=""
+  slug="$(repo_slug_from_url "${1:-}")" || return 1
+  printf 'https://codeload.github.com/%s/tar.gz/refs/heads/main' "$slug"
+}
+
+has_working_git() {
+  command -v git >/dev/null 2>&1 || return 1
+  git --version >/dev/null 2>&1
+}
+
+download_repo_archive() {
+  local source_repo="$1"
+  local checkout_dir="$2"
+  local archive_url=""
+  local parent_dir=""
+  local tmp_dir=""
+  local archive_path=""
+  local extracted_dir=""
+
+  archive_url="$(repo_archive_url "$source_repo")" || {
+    echo "Archive download fallback supports GitHub repositories only."
+    echo "Install git, or use a GitHub owner/repo for --repo."
+    exit 1
+  }
+  parent_dir="$(dirname "$checkout_dir")"
+  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/wolfbbs-repo.XXXXXX")"
+  archive_path="${tmp_dir}/repo.tar.gz"
+
+  run "mkdir -p '$parent_dir'"
+  run_retry 3 3 "curl -fsSL '$archive_url' -o '$archive_path'"
+  run "tar -xzf '$archive_path' -C '$tmp_dir'"
+  extracted_dir="$(find "$tmp_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+  if [[ -z "$extracted_dir" ]]; then
+    echo "Unable to extract repository archive from ${archive_url}."
+    exit 1
+  fi
+  run "rm -rf '$checkout_dir'"
+  run "mv '$extracted_dir' '$checkout_dir'"
+  run "rm -rf '$tmp_dir'"
+}
+
 resolve_repo_url() {
   if [[ -n "$REPO_URL" ]]; then
     REPO_URL="$(normalize_repo_input "$REPO_URL")"
@@ -779,7 +840,7 @@ resolve_repo_url() {
   fi
 
   # If installer is executed from a git checkout, prefer that remote.
-  if [[ -d "${WORK_DIR}/.git" ]] && command -v git >/dev/null 2>&1; then
+  if [[ -d "${WORK_DIR}/.git" ]] && has_working_git; then
     local origin
     origin="$(git -C "$WORK_DIR" remote get-url origin 2>/dev/null || true)"
     if [[ -n "$origin" ]]; then
@@ -1163,7 +1224,7 @@ install_base_prereqs() {
 }
 
 ensure_base_prereqs() {
-  local required=(curl git sed awk grep openssl)
+  local required=(curl tar sed awk grep openssl)
   if [[ "$DRY_RUN" == "false" ]]; then
     required+=(nc)
   fi
@@ -1463,6 +1524,8 @@ ensure_compose_file() {
     if [[ -d "$checkout_dir" && -n "$(ls -A "$checkout_dir" 2>/dev/null)" && "$FORCE" != "true" ]]; then
       if [[ -d "$checkout_dir/.git" ]]; then
         echo "Managed code checkout will be updated: $checkout_dir"
+      elif find_compose_file_in_dir "$checkout_dir" >/dev/null 2>&1; then
+        echo "Managed code checkout will be refreshed from archive: $checkout_dir"
       else
         echo "Managed code checkout exists and is not empty: $checkout_dir"
         echo "Use --force to replace it, or choose a different --prefix."
@@ -1474,14 +1537,22 @@ ensure_compose_file() {
     if [[ "$DRY_RUN" == "true" ]]; then
       WORK_DIR="$checkout_dir"
       compose_file="${checkout_dir}/docker-compose.yml"
-      log "DRY-RUN: would clone repository to ${checkout_dir} and use ${compose_file}"
+      if has_working_git; then
+        log "DRY-RUN: would clone repository to ${checkout_dir} and use ${compose_file}"
+      else
+        log "DRY-RUN: would download repository archive to ${checkout_dir} and use ${compose_file}"
+      fi
       return
     fi
     run "mkdir -p '$(dirname "$checkout_dir")'"
-    if [[ -d "$checkout_dir/.git" ]]; then
+    if [[ -d "$checkout_dir/.git" ]] && has_working_git; then
       run_retry 3 3 "git -C '$checkout_dir' pull --ff-only"
-    else
+    elif [[ -d "$checkout_dir" && -n "$(ls -A "$checkout_dir" 2>/dev/null)" ]]; then
+      download_repo_archive "$REPO_URL" "$checkout_dir"
+    elif has_working_git; then
       run_retry 3 3 "git clone '$REPO_URL' '$checkout_dir'"
+    else
+      download_repo_archive "$REPO_URL" "$checkout_dir"
     fi
     WORK_DIR="$checkout_dir"
     compose_file="$(find_compose_file || true)"
@@ -1993,7 +2064,7 @@ doctor_report() {
     doctor_ok "supported OS detected"
   fi
 
-  local required=(curl git openssl sed awk grep)
+  local required=(curl tar openssl sed awk grep)
   local missing=()
   local cmd
   for cmd in "${required[@]}"; do
@@ -2286,7 +2357,7 @@ main() {
   fi
   if [[ "$OS" == "unknown" || ( "$OS" == "linux" && "$PKG_MGR" == "" ) || ( "$OS" == "linux" && "$DISTRO" == "unknown" ) ]]; then
     echo "Unsupported operating system. Supported: Linux (Debian/Ubuntu, Fedora/RHEL/CentOS, Arch) and macOS."
-    echo "Required commands for manual install: curl, git, openssl, sed, awk, grep, docker, docker compose."
+    echo "Required commands for manual install: curl, tar, openssl, sed, awk, grep, docker, docker compose."
     exit 1
   fi
 
