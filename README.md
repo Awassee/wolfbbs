@@ -89,11 +89,12 @@ bash install.sh --yes
 After install, WolfBBS prints the connection summary and bootstrap sysop credentials. The recommended first-run flow is:
 
 1. Open `/admin/setup` to complete identity, safety, and bootstrap checks.
-2. Open `/admin/config` to tune site text, runtime flags, services, and operator preferences.
-3. Seed default boards and confirm the mailbot bootstrap action.
-4. Create at least one non-sysop user or moderator from `/admin/users`.
-5. Connect over SSH and verify the caller-facing ANSI flow.
-6. Open `/boards`, `/chat`, `/doors`, and `/scores` to confirm the public experience.
+2. Open `/admin/launch` to see the operator launch verdict and direct next actions.
+3. Open `/admin/config` to tune site text, runtime flags, services, and operator preferences.
+4. Seed default boards and confirm the mailbot bootstrap action.
+5. Create at least one non-sysop user or moderator from `/admin/users`.
+6. Connect over SSH and verify the caller-facing ANSI flow.
+7. Open `/boards`, `/chat`, `/doors`, and `/scores` to confirm the public experience.
 
 The installer also writes:
 
@@ -136,6 +137,7 @@ Then in the SSH main menu press `/` and enter `/app upgrade`.
 
 - [Start Here](docs/START_HERE.md): fastest route from install to a usable board
 - [Launch Checklist](docs/LAUNCH_CHECKLIST.md): go/no-go pass before inviting callers
+- [Operator Playbook](docs/OPERATOR_PLAYBOOK.md): which operator surface to use, and when
 - [Quickstart](docs/QUICKSTART.md): fastest path from download to first login
 - [Install Guide](docs/INSTALL.md): install modes, flags, lifecycle, and packaging
 - [Troubleshooting](docs/TROUBLESHOOTING.md): symptom-driven fixes and recovery path

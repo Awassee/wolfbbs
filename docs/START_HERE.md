@@ -15,11 +15,12 @@ You are done when:
 
 1. Run the bootstrap installer.
 2. Sign in as the bootstrap sysop.
-3. Finish `/admin/setup`.
-4. Review `/admin/config`.
-5. Seed default boards.
-6. Create a real caller account in `/admin/users`.
-7. Test SSH, web, and chat.
+3. Open `/admin/launch`.
+4. Finish `/admin/setup`.
+5. Review `/admin/config`.
+6. Seed default boards.
+7. Create a real caller account in `/admin/users`.
+8. Test SSH, web, and chat.
 
 The installer writes `<prefix>/FIRST_STEPS.txt` with the exact URLs and commands for this flow.
 
@@ -87,6 +88,7 @@ bash install.sh --repair
 
 - [Quickstart](QUICKSTART.md)
 - [Launch Checklist](LAUNCH_CHECKLIST.md)
+- [Operator Playbook](OPERATOR_PLAYBOOK.md)
 - [Install Guide](INSTALL.md)
 - [Troubleshooting](TROUBLESHOOTING.md)
 - [Operations Guide](OPERATIONS.md)

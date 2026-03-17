@@ -113,6 +113,8 @@ Includes:
 
 - `Setup wizard`
   - first-run configuration without reading internal implementation details
+- `Launch center`
+  - single place to judge readiness, runtime warnings, next actions, and operator commands
 - `Config center`
   - identity, text, runtime services, feature flags, and safety settings in one place
 - `Admin panels`
@@ -203,6 +205,7 @@ bash install.sh --logs
 
 - [Start Here](START_HERE.md)
 - [Launch Checklist](LAUNCH_CHECKLIST.md)
+- [Operator Playbook](OPERATOR_PLAYBOOK.md)
 - [Quickstart](QUICKSTART.md)
 - [Install Guide](INSTALL.md)
 - [Troubleshooting](TROUBLESHOOTING.md)

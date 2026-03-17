@@ -2205,6 +2205,11 @@ func TestConnectAndTourPages(t *testing.T) {
 	if !strings.Contains(body, "WolfBBS Connect") || !strings.Contains(body, "ws://localhost:6080/ws-login") {
 		t.Fatalf("connect page missing expected content: %s", body)
 	}
+	for _, needle := range []string{"Choose your client", "First call checklist"} {
+		if !strings.Contains(body, needle) {
+			t.Fatalf("connect page missing %q: %s", needle, body)
+		}
+	}
 	for _, want := range []string{
 		"xterm.min.js",
 		"xterm-addon-fit",
@@ -2229,8 +2234,10 @@ func TestConnectAndTourPages(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("tour status = %d", rr.Code)
 	}
-	if !strings.Contains(rr.Body.String(), "Guided Tour") {
-		t.Fatalf("tour page missing heading: %s", rr.Body.String())
+	for _, needle := range []string{"Guided Tour", "How to become a caller", "Why people come back"} {
+		if !strings.Contains(rr.Body.String(), needle) {
+			t.Fatalf("tour page missing %q: %s", needle, rr.Body.String())
+		}
 	}
 }
 
@@ -2329,6 +2336,103 @@ func TestStatusAndConfigCenters(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "Easy Setup Path") {
 		t.Fatalf("missing setup path section: %s", rr.Body.String())
+	}
+}
+
+func TestAdminLaunchDashboardAndBoardsEmptyState(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	boardRepo := repository.NewInMemoryBoardRepository()
+	msgRepo := repository.NewInMemoryMessageRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
+	doorRepo := repository.NewInMemoryDoorRepository()
+	authSvc := auth.NewService(userRepo)
+	if _, err := authSvc.Register("sysop", "password123"); err != nil {
+		t.Fatalf("register sysop: %v", err)
+	}
+	if err := authSvc.SetRole("sysop", roleAdmin); err != nil {
+		t.Fatalf("set sysop role: %v", err)
+	}
+	doorRegistry := doors.NewRegistry()
+	doorRegistry.SetRepository(doorRepo)
+	app := &webApp{
+		authSvc:       authSvc,
+		userRepo:      userRepo,
+		boardRepo:     boardRepo,
+		msgRepo:       msgRepo,
+		adminRepo:     adminRepo,
+		doorRepo:      doorRepo,
+		doorRegistry:  doorRegistry,
+		chatSvc:       chat.NewServiceForTest(),
+		sessions:      map[string]sessionState{},
+		savedSearches: map[string][]string{},
+		runtimeCfg:    config.DefaultRuntime(),
+	}
+	sid, ok := app.createSession("sysop")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.handleAdmin(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("admin panel status = %d", rr.Code)
+	}
+	for _, needle := range []string{"Sysop Control Panel", "Launch Digest", "Launch Center"} {
+		if !strings.Contains(rr.Body.String(), needle) {
+			t.Fatalf("admin panel missing %q: %s", needle, rr.Body.String())
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/admin/launch", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleAdminLaunch(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("admin launch status = %d", rr.Code)
+	}
+	for _, needle := range []string{"Launch Center", "Operator Commands", "docs/OPERATOR_PLAYBOOK.md"} {
+		if !strings.Contains(rr.Body.String(), needle) {
+			t.Fatalf("admin launch missing %q: %s", needle, rr.Body.String())
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/status", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleStatusCenter(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("admin status center status = %d", rr.Code)
+	}
+	for _, needle := range []string{"Launch Readiness", "/admin/launch"} {
+		if !strings.Contains(rr.Body.String(), needle) {
+			t.Fatalf("admin status center missing %q: %s", needle, rr.Body.String())
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/config", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleConfigCenter(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("admin config center status = %d", rr.Code)
+	}
+	for _, needle := range []string{"Launch Change Order", "/admin/launch"} {
+		if !strings.Contains(rr.Body.String(), needle) {
+			t.Fatalf("admin config center missing %q: %s", needle, rr.Body.String())
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/boards", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleBoards(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("boards status = %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "Board Launch Tip") {
+		t.Fatalf("boards empty state missing launch tip: %s", rr.Body.String())
 	}
 }
 

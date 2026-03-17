@@ -164,6 +164,19 @@
       "notes": "Discovered from cmd/wolfbbs-web route registration."
     },
     {
+      "id": "web:/admin/launch",
+      "type": "web_route",
+      "entrypoint": "/admin/launch",
+      "user_tui": false,
+      "user_web": false,
+      "admin_tui": false,
+      "admin_web": true,
+      "config_ui": "/admin/config",
+      "status_ui": "/admin/system",
+      "state_visibility": "enabled/configured/healthy surfaced via status center",
+      "notes": "Discovered from cmd/wolfbbs-web route registration."
+    },
+    {
       "id": "web:/admin/mail",
       "type": "web_route",
       "entrypoint": "/admin/mail",

@@ -429,6 +429,10 @@ func TestIRCGatewayNamesMarksModeratorsAsOperators(t *testing.T) {
 	_, _ = sysopConn.Write([]byte("NICK sysop\r\n"))
 	_, _ = sysopConn.Write([]byte("USER sysop 0 * :sysop\r\n"))
 	_, _ = sysopConn.Write([]byte("JOIN #lobby\r\n"))
+	sysopJoinLines := collectReaderLinesUntil(sysopConn, sysopReader, " 366 ", 3*time.Second)
+	if !lineSliceContains(sysopJoinLines, " 366 ") {
+		t.Fatalf("sysop join did not complete; lines=%#v", sysopJoinLines)
+	}
 
 	_, _ = readerConn.Write([]byte("PASS readerpass1\r\n"))
 	_, _ = readerConn.Write([]byte("NICK reader\r\n"))
