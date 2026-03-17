@@ -8,7 +8,8 @@ DEFAULT_WEB_PORT=8080
 DEFAULT_IRC_PORT=6667
 DEFAULT_IRC_TLS_PORT=6697
 DEFAULT_MAILIN_PORT=8091
-DEFAULT_REPO_URL="https://github.com/seanheiney/wolfbbs.git"
+DEFAULT_REPO_SLUG="seanheiney/wolfbbs-public"
+DEFAULT_REPO_URL="https://github.com/${DEFAULT_REPO_SLUG}.git"
 DEFAULT_BBS_NAME="WolfBBS"
 DEFAULT_SETUP_PROFILE="basic"
 
@@ -107,6 +108,110 @@ supports_color() {
   local colors
   colors="$(tput colors 2>/dev/null || echo 0)"
   [[ "${colors:-0}" -ge 8 ]]
+}
+
+style() {
+  local code="$1"
+  shift
+  if supports_color; then
+    printf '\033[%sm%s\033[0m' "$code" "$*"
+  else
+    printf '%s' "$*"
+  fi
+}
+
+menu_divider() {
+  printf '%s\n' "├──────────────────────────────────────────────────────────────────────────────┤"
+}
+
+menu_line() {
+  local left="${1:-}"
+  printf '│ %-76s │\n' "$left"
+}
+
+prompt_default() {
+  local label="$1"
+  local current_value="$2"
+  local reply=""
+  printf '%s [%s]: ' "$label" "$current_value"
+  read -r reply
+  reply="$(trim "$reply")"
+  if [[ -z "$reply" ]]; then
+    printf '%s' "$current_value"
+    return
+  fi
+  printf '%s' "$reply"
+}
+
+show_interactive_install_plan() {
+  local args_count="${1:-0}"
+  local choice=""
+  local repo_display=""
+
+  if [[ "$args_count" -gt 0 ]]; then
+    return
+  fi
+  if [[ "$NON_INTERACTIVE" == "true" || ! -t 0 || ! -t 1 ]]; then
+    return
+  fi
+  if action_selected; then
+    return
+  fi
+
+  while true; do
+    repo_display="${REPO_URL:-$DEFAULT_REPO_URL}"
+    echo "┌──────────────────────────── Easy Install Plan ─────────────────────────────┐"
+    menu_line "Recommended path: defaults now, bootstrap SYSOP now, finish setup in web UI."
+    menu_divider
+    menu_line "Install dir : ${PREFIX}"
+    menu_line "Ports       : SSH ${SSH_PORT} | Web ${WEB_PORT} | IRC ${IRC_PORT} | TLS ${IRC_TLS_PORT} | Mail ${MAILIN_PORT}"
+    menu_line "Source repo : ${repo_display}"
+    menu_line "Next step   : web setup at /admin/setup after containers come up"
+    menu_divider
+    menu_line "1) Continue with recommended install"
+    menu_line "2) Edit install directory"
+    menu_line "3) Edit ports"
+    menu_line "4) Change source repository"
+    menu_line "5) Doctor diagnostics instead"
+    menu_line "q) Quit"
+    echo "└──────────────────────────────────────────────────────────────────────────────┘"
+    printf "Selection [1]: "
+    read -r choice
+    choice="$(trim "$choice")"
+    if [[ -z "$choice" ]]; then
+      choice="1"
+    fi
+    case "$(printf '%s' "$choice" | tr '[:upper:]' '[:lower:]')" in
+      1|continue|install)
+        return
+        ;;
+      2|dir|prefix)
+        PREFIX="$(prompt_default 'Install directory' "$PREFIX")"
+        ;;
+      3|ports|port)
+        SSH_PORT="$(prompt_default 'SSH port' "$SSH_PORT")"
+        WEB_PORT="$(prompt_default 'Web port' "$WEB_PORT")"
+        IRC_PORT="$(prompt_default 'IRC port' "$IRC_PORT")"
+        IRC_TLS_PORT="$(prompt_default 'IRC TLS port' "$IRC_TLS_PORT")"
+        MAILIN_PORT="$(prompt_default 'Mail ingest port' "$MAILIN_PORT")"
+        ;;
+      4|repo|source)
+        REPO_URL="$(normalize_repo_input "$(prompt_default 'Source repo (owner/repo or git URL)' "$repo_display")")"
+        ;;
+      5|doctor)
+        DOCTOR=true
+        return
+        ;;
+      q|quit|exit)
+        echo "Aborted."
+        exit 0
+        ;;
+      *)
+        echo "Unknown selection: ${choice}"
+        echo
+        ;;
+    esac
+  done
 }
 
 print_splash() {
@@ -391,12 +496,12 @@ Options:
   -h, --help                show this help
 
 Environment shortcuts:
-  WOLFBBS_GH=<owner/repo>         e.g. seanheiney/wolfbbs
-  WOLFBBS_REPO_URL=<git-url>      e.g. https://github.com/seanheiney/wolfbbs.git
+  WOLFBBS_GH=<owner/repo>         e.g. seanheiney/wolfbbs-public
+  WOLFBBS_REPO_URL=<git-url>      e.g. https://github.com/seanheiney/wolfbbs-public.git
   WOLFBBS_BBS_NAME=<name>         optional installer identity override (prefer /admin/setup)
   WOLFBBS_HOSTNAME=<host>         optional installer hostname override (prefer /admin/setup)
   WOLFBBS_SETUP_PROFILE=<profile> basic|critical|expert baseline (prefer /admin/setup)
-  WOLFBBS_REPO_URL defaults to:   https://github.com/seanheiney/wolfbbs.git
+  WOLFBBS_REPO_URL defaults to:   https://github.com/seanheiney/wolfbbs-public.git
 USAGE
 }
 
@@ -429,21 +534,27 @@ show_interactive_action_menu() {
   fi
 
   while true; do
-    echo "No flags detected. Choose an action:"
-    echo "  1) Install / first setup (default)"
-    echo "  2) Rapid upgrade (local rebuild/restart)"
-    echo "  3) Upgrade (pull latest images + restart)"
-    echo "  4) Repair install"
-    echo "  5) Start services"
-    echo "  6) Stop services"
-    echo "  7) Restart services"
-    echo "  8) Status"
-    echo "  9) Logs"
-    echo " 10) Uninstall"
-    echo " 11) Uninstall + purge data"
-    echo " 12) Doctor diagnostics"
-    echo " 13) Dependencies only"
-    echo "  q) Quit"
+    echo "┌──────────────────────────── WolfBBS Action Menu ────────────────────────────┐"
+    menu_line "Setup"
+    menu_line "1) Easy install / first setup        Recommended default path"
+    menu_line "2) Rapid upgrade                     Rebuild and restart local code"
+    menu_line "3) Upgrade                           Pull latest images and restart"
+    menu_line "4) Repair                            Fix deps/env and verify stack"
+    menu_divider
+    menu_line "Run"
+    menu_line "5) Start services                    Bring the stack up"
+    menu_line "6) Stop services                     Bring the stack down"
+    menu_line "7) Restart services                  Restart all services"
+    menu_line "8) Status                            Show endpoints and health"
+    menu_line "9) Logs                              Tail recent service logs"
+    menu_divider
+    menu_line "Maintenance"
+    menu_line "10) Uninstall                        Remove services, keep data"
+    menu_line "11) Uninstall + purge                Remove services and data volumes"
+    menu_line "12) Doctor diagnostics               Safe preflight and health checks"
+    menu_line "13) Dependencies only                Install/check prerequisites only"
+    menu_line "q) Quit"
+    echo "└──────────────────────────────────────────────────────────────────────────────┘"
     printf "Selection [1]: "
     read -r choice
     choice="$(trim "$choice")"
@@ -1315,8 +1426,8 @@ ensure_compose_file() {
   echo "Could not find docker-compose.yml or compose.yml."
   echo "Run from repository root, or pass --repo/--repo-url."
   echo "Examples:"
-  echo "  bash install.sh --with-docker --repo seanheiney/wolfbbs --yes"
-  echo "  WOLFBBS_GH=seanheiney/wolfbbs bash install.sh --with-docker --yes"
+  echo "  bash install.sh --with-docker --repo seanheiney/wolfbbs-public --yes"
+  echo "  WOLFBBS_GH=seanheiney/wolfbbs-public bash install.sh --with-docker --yes"
   exit 1
 }
 
@@ -2086,6 +2197,7 @@ main() {
   init_log_file
   print_splash
   show_interactive_action_menu "$args_count"
+  show_interactive_install_plan "$args_count"
   validate_action_flags
 
   if [[ "$USED_INSTALLER_CONFIG_FLAGS" == "true" ]]; then

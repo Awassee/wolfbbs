@@ -21,26 +21,28 @@
 Linux:
 
 ```bash
-git clone https://github.com/seanheiney/wolfbbs.git wolfbbs && cd wolfbbs && bash install.sh --yes
+git clone https://github.com/seanheiney/wolfbbs-public.git wolfbbs && cd wolfbbs && bash install.sh --yes
 ```
 
 macOS:
 
 ```bash
-git clone https://github.com/seanheiney/wolfbbs.git wolfbbs && cd wolfbbs && bash install.sh --yes --install-brew
+git clone https://github.com/seanheiney/wolfbbs-public.git wolfbbs && cd wolfbbs && bash install.sh --yes --install-brew
 ```
 
 Interactive menu mode (no flags):
 
 ```bash
-git clone https://github.com/seanheiney/wolfbbs.git wolfbbs && cd wolfbbs && bash install.sh
+git clone https://github.com/seanheiney/wolfbbs-public.git wolfbbs && cd wolfbbs && bash install.sh
 ```
+
+The guided menu path is the recommended consumer install flow. It opens a menu first, then an easy-install screen where you can accept defaults or edit install directory, ports, and source repo without remembering flags.
 
 ## Install From GitHub Release Bundle
 
 If you prefer a packaged download instead of cloning the repo, download the archive matching your platform from:
 
-- [GitHub Releases](https://github.com/seanheiney/wolfbbs/releases)
+- [GitHub Releases](https://github.com/seanheiney/wolfbbs-public/releases)
 
 Then unpack and run the installer from the bundle root:
 
@@ -50,10 +52,10 @@ cd wolfbbs_<version>_<os>_<arch>
 bash install.sh --yes
 ```
 
-If the repository is private and HTTPS clone fails, use SSH clone instead:
+If HTTPS clone is blocked in your environment, use SSH clone instead:
 
 ```bash
-git clone git@github.com:seanheiney/wolfbbs.git wolfbbs && cd wolfbbs && bash install.sh --yes
+git clone git@github.com:seanheiney/wolfbbs-public.git wolfbbs && cd wolfbbs && bash install.sh --yes
 ```
 
 ## Optional Quick Install (`curl | bash`)
@@ -61,25 +63,25 @@ git clone git@github.com:seanheiney/wolfbbs.git wolfbbs && cd wolfbbs && bash in
 Use this only when the repo's raw GitHub URL is publicly reachable:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/seanheiney/wolfbbs/main/install.sh" | bash -s -- --yes
+curl -fsSL "https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/install.sh" | bash -s -- --yes
 ```
 
 macOS variant:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/seanheiney/wolfbbs/main/install.sh" | bash -s -- --yes --install-brew
+curl -fsSL "https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/install.sh" | bash -s -- --yes --install-brew
 ```
 
 Dry-run preflight:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/seanheiney/wolfbbs/main/install.sh" | bash -s -- --yes --install-brew --dry-run
+curl -fsSL "https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/install.sh" | bash -s -- --yes --install-brew --dry-run
 ```
 
 Install from a fork/custom repository:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/seanheiney/wolfbbs/main/install.sh" | bash -s -- --yes --repo your-org/your-repo
+curl -fsSL "https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/install.sh" | bash -s -- --yes --repo your-org/your-repo
 ```
 
 ## Install From Local Clone
