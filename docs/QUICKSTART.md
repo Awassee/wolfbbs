@@ -83,6 +83,11 @@ The installer prints:
 - IRC host and port
 - bootstrap sysop credentials
 
+The installer also writes:
+
+- `<prefix>/FIRST_STEPS.txt`
+- `<prefix>/SERVICE_STATUS.txt` after `bash install.sh --status`
+
 ## 4. Test the product like a real operator
 
 Use these checks immediately after setup:
@@ -92,7 +97,8 @@ Use these checks immediately after setup:
 3. Open `/chat` and send a message in `#lobby`.
 4. Open `/doors` and launch a built-in door.
 5. Open `/scores` to confirm score surfaces render.
-6. Run `bash install.sh --doctor` and make sure the report is understandable.
+6. Run `bash install.sh --status` and review the launch verdict.
+7. Run `bash install.sh --doctor` and make sure the report is understandable.
 
 ## 5. Decide what you hand to real users
 
@@ -135,7 +141,9 @@ bash install.sh --uninstall --purge --yes
 ## 8. Read next
 
 - [Start Here](START_HERE.md)
+- [Launch Checklist](LAUNCH_CHECKLIST.md)
 - [Install Guide](INSTALL.md)
+- [Troubleshooting](TROUBLESHOOTING.md)
 - [Operations Guide](OPERATIONS.md)
 - [Product Guide](PRODUCT_GUIDE.md)
 - [Datasheet](DATASHEET.md)

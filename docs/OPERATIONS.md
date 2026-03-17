@@ -17,6 +17,11 @@ Review these pages:
 - `/admin/audit`
 - `/status`
 
+Generated references:
+
+- `<prefix>/FIRST_STEPS.txt`
+- `<prefix>/SERVICE_STATUS.txt`
+
 ## Common operator jobs
 
 ### Update the board safely
@@ -36,6 +41,8 @@ bash install.sh --rapid-upgrade
 ### Recover from a bad state
 
 ```bash
+bash install.sh --status
+bash install.sh --doctor
 bash install.sh --repair
 bash install.sh --logs
 ```
@@ -87,3 +94,20 @@ bash install.sh --restart
 - [Install Guide](INSTALL.md)
 - [Product Guide](PRODUCT_GUIDE.md)
 - [Feature Reference](feature-reference.md)
+# WolfBBS Operations Guide
+
+## Fast Recovery Order
+
+When an operator says "the install works but I do not trust it," use this order:
+
+```bash
+bash install.sh --status
+bash install.sh --doctor
+bash install.sh --repair
+bash install.sh --logs
+```
+
+Generated references:
+
+- `<prefix>/FIRST_STEPS.txt`
+- `<prefix>/SERVICE_STATUS.txt`

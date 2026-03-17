@@ -81,6 +81,16 @@ What you have at the end:
 - a bootstrap sysop account
 - printed connection URLs and ports
 - a managed install prefix with runtime config and upgrade commands
+- `<prefix>/FIRST_STEPS.txt` with the exact first-login flow
+- `<prefix>/SERVICE_STATUS.txt` after `bash install.sh --status`
+
+## Files That Matter After Install
+
+- `<prefix>/.env`: runtime configuration and bootstrap sysop credentials
+- `<prefix>/FIRST_STEPS.txt`: exact launch workflow and URLs
+- `<prefix>/SERVICE_STATUS.txt`: last status snapshot from `bash install.sh --status`
+- `<prefix>/app/`: managed WolfBBS checkout when using the standalone installer path
+- `<prefix>/install.log`: installer log
 
 ## What To Expect On First Login
 
@@ -91,6 +101,8 @@ The installer prints a first-login block. Use it in this order:
 3. review `/admin/config`
 4. create at least one non-sysop user
 5. verify SSH, web chat, boards, and doors
+6. run `bash install.sh --status`
+7. if anything feels wrong, run `bash install.sh --doctor`
 
 ## Install From GitHub Release Bundle
 
@@ -131,6 +143,19 @@ Dry-run preflight:
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh" | bash -s -- --yes --install-brew --dry-run
 ```
+
+## Fastest Recovery Order
+
+When the product is up but not trustworthy, use this order:
+
+```bash
+bash install.sh --status
+bash install.sh --doctor
+bash install.sh --repair
+bash install.sh --logs
+```
+
+Then compare the result to [LAUNCH_CHECKLIST.md](LAUNCH_CHECKLIST.md) and [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 Install from a fork/custom repository:
 
