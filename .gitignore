@@ -4,3 +4,4 @@ e2e/web/test-results/
 .pytest_cache/
 .wolfbbs/offline/
 dist/
+install.log

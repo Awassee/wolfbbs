@@ -1,25 +1,25 @@
 # Manual Acceptance Pass
 
-Use this when you want to close the spec items marked `MANUAL` in `/Users/seanheiney/wolfbbs/docs/ACCEPTANCE_SPEC.md`.
+Use this when you want to close the spec items marked `MANUAL` in `docs/ACCEPTANCE_SPEC.md`.
 
 ## Runner
 
 Interactive (recommended):
 
 ```bash
-/Users/seanheiney/wolfbbs/scripts/manual-acceptance.sh --guided
+./scripts/manual-acceptance.sh --guided
 ```
 
 Non-interactive checklist export:
 
 ```bash
-/Users/seanheiney/wolfbbs/scripts/manual-acceptance.sh --non-interactive --no-smoke
+./scripts/manual-acceptance.sh --non-interactive --no-smoke
 ```
 
 Custom report path:
 
 ```bash
-/Users/seanheiney/wolfbbs/scripts/manual-acceptance.sh --guided --report docs/manual-acceptance-2026-02-27.md
+./scripts/manual-acceptance.sh --guided --report docs/manual-acceptance-2026-02-27.md
 ```
 
 ## What it does
@@ -43,4 +43,3 @@ Custom report path:
 
 - Exit `0`: no manual failures recorded.
 - Exit `1`: one or more manual checks marked FAIL.
-
