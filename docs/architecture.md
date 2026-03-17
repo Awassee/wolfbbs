@@ -1,4 +1,3 @@
-<<<<<<< ours
 # WolfBBS Architecture
 
 ## Stack Choice
@@ -32,35 +31,10 @@ Go was selected for this implementation because it gives fast, concurrency-frien
 - `internal/chat`: shared chat service with optional Postgres persistence used by web and IRC.
 - `internal/doors`: manifest-driven door framework (native + external).
 - `internal/content`: optional read-only Gopher/NNTP server implementations.
-=======
-# WolfBBS Architecture (Step 1)
-
-## Stack Choice
-
-**Chosen stack: Go** (Option 1).
-
-Why:
-- Strong fit for long-lived SSH sessions and concurrent node-style connections.
-- Straightforward composition for a custom ANSI UI renderer.
-- Mature SSH ecosystem and fast local dev/deploy with static binaries.
-- Clean repository interface for PostgreSQL now, alternate storage later.
-
-## High-Level Components
-
-- `cmd/wolfbbs`: executable bootstrap.
-- `internal/app`: app wiring, lifecycle, graceful shutdown.
-- `internal/sshserver`: SSH listener + per-session orchestration.
-- `internal/ui`: ANSI rendering utilities (bars, windows, menus, popups).
-- `internal/auth`: login/register/password flows with secure hashing.
-- `internal/domain`: entities and core business types.
-- `internal/repository`: storage abstraction + in-memory MVP adapter.
-- `internal/gateways` (next step): email and text-web gateway services.
->>>>>>> theirs
 
 ## Data Model (MVP)
 
 - `users`
-<<<<<<< ours
   - `id`, `handle` (unique), `password_hash`, `role`
   - `verified`, `theme`, `paging_enabled`, `ansi_enabled`
   - optional `totp_secret` and `recovery_codes`
@@ -126,30 +100,3 @@ Terminal metadata notes:
 - IRC endpoint supports standard minimal IRC commands and channel behavior.
 - IRC supports optional TLS listener and SASL PLAIN authentication.
 - Both web and IRC use the same `internal/chat` core and Postgres notify fanout for cross-process events.
-=======
-  - `id`, `handle` (unique), `password_hash`, `verified`
-  - prefs: `theme`, `time_format_24h`, `ansi_enabled`, `paging_enabled`
-  - audit-ish: `last_login_at`, `created_at`, `updated_at`
-- `boards`
-  - `id`, `name`, `description`, `created_by`, `created_at`
-- `messages`
-  - `id`, `board_id`, `author_id`, `subject`, `body`, `created_at`
-- `private_mail`
-  - `id`, `from_user_id`, `to_user_id`, `subject`, `body`, `external_to`, `created_at`, `read_at`
-
-## Security Baseline
-
-- Password hashing via bcrypt.
-- No plaintext credentials persisted.
-- PTY required for interactive session.
-- Structured logging foundation (`slog`) for future audit trail.
-- Gateway safety requirements reserved in design: rate limits, deny-lists, SSRF guardrails.
-
-## Flow (Current)
-
-1. SSH connect.
-2. Render top status bar + ANSI welcome art.
-3. Prompt for handle/password.
-4. If auth fails, optional account creation.
-5. Enter Main Menu shell with classic hotkeys.
->>>>>>> theirs

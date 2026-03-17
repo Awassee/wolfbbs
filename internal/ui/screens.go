@@ -6,20 +6,16 @@ import (
 	"time"
 )
 
-<<<<<<< ours
 const (
 	DefaultWidth  = 80
 	DefaultHeight = 25
 )
 
-=======
->>>>>>> theirs
 type Theme struct {
 	StatusFg string
 	StatusBg string
 	BodyFg   string
 	AccentFg string
-<<<<<<< ours
 	WarnFg   string
 	ErrorFg  string
 	MutedFg  string
@@ -48,32 +44,10 @@ func RenderTopBarWithClock(width int, boardName, user string, now time.Time, nod
 	}
 	line := fmt.Sprintf(" %s | User: %-12s | %s | %s ", area, user, clock, node)
 	line = padOrTrim(line, width, " ")
-=======
-}
-
-func DefaultTheme() Theme {
-	return Theme{
-		StatusFg: FgWhite,
-		StatusBg: BgBlue,
-		BodyFg:   FgCyan,
-		AccentFg: FgYellow,
-	}
-}
-
-func RenderTopBar(width int, boardName, user string, now time.Time, node string, th Theme) string {
-	line := fmt.Sprintf(" %s | User: %s | %s | %s ", boardName, user, now.Format("2006-01-02 15:04"), node)
-	if len(line) > width {
-		line = line[:width]
-	}
-	if len(line) < width {
-		line += strings.Repeat(" ", width-len(line))
-	}
->>>>>>> theirs
 	return th.StatusBg + th.StatusFg + Bold + line + Reset
 }
 
 func RenderWelcome(width int) string {
-<<<<<<< ours
 	width = normalizeScreenWidth(width)
 	lines := []string{
 		"                           /\\_/\\",
@@ -633,37 +607,4 @@ func renderPanel(width int, title string, content []string, fg string) string {
 		lines = append(lines, padOrTrim(line, innerWidth, " "))
 	}
 	return DrawBox(width, len(lines)+2, title, lines, CP437Box, fg, BgBlack)
-=======
-	art := []string{
-		"╔════════════════════════════════════════════════════════════════════╗",
-		"║  ██     ██  ██████  ██      ███████ ██████  ██████  ███████       ║",
-		"║  ██     ██ ██    ██ ██      ██      ██   ██ ██   ██ ██            ║",
-		"║  ██  █  ██ ██    ██ ██      █████   ██████  ██████  ███████       ║",
-		"║  ██ ███ ██ ██    ██ ██      ██      ██   ██ ██   ██      ██       ║",
-		"║   ███ ███   ██████  ███████ ██      ██████  ██████  ███████       ║",
-		"╚════════════════════════════════════════════════════════════════════╝",
-	}
-	var b strings.Builder
-	for _, l := range art {
-		if len(l) > width {
-			l = l[:width]
-		}
-		b.WriteString(FgYellow)
-		b.WriteString(l)
-		b.WriteString(Reset)
-		b.WriteString("\r\n")
-	}
-	b.WriteString(FgGreen + "Inspired by classic ANSI boards. Original WolfBBS artwork." + Reset + "\r\n")
-	return b.String()
-}
-
-func RenderMainMenu() string {
-	return strings.Join([]string{
-		"┌────────────────────────── Main Menu ──────────────────────────┐",
-		"│ [M]essage Boards   [P]rivate Mail   [F]iles   [C]hat         │",
-		"│ [G]ateways         [S]ettings       [A]dmin   [Q]uit         │",
-		"└───────────────────────────────────────────────────────────────┘",
-		"Select an option:",
-	}, "\r\n") + "\r\n"
->>>>>>> theirs
 }

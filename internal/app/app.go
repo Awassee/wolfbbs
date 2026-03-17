@@ -2,21 +2,14 @@ package app
 
 import (
 	"context"
-<<<<<<< ours
 	"fmt"
 	"os"
 	"os/signal"
 	"strings"
-=======
-	"log/slog"
-	"os"
-	"os/signal"
->>>>>>> theirs
 	"syscall"
 	"time"
 
 	"wolfbbs/internal/auth"
-<<<<<<< ours
 	"wolfbbs/internal/chat"
 	"wolfbbs/internal/config"
 	"wolfbbs/internal/events"
@@ -26,17 +19,10 @@ import (
 	"wolfbbs/internal/session"
 	"wolfbbs/internal/sshserver"
 	"wolfbbs/internal/ui"
-=======
-	"wolfbbs/internal/bbs"
-	"wolfbbs/internal/mail"
-	"wolfbbs/internal/repository"
-	"wolfbbs/internal/sshserver"
->>>>>>> theirs
 )
 
 type Config struct {
 	ListenAddr string
-<<<<<<< ours
 	DBURL      string
 }
 
@@ -157,24 +143,6 @@ func Run(cfg Config) error {
 			}
 		}()
 	}
-=======
-}
-
-func Run(cfg Config) error {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	users := repository.NewInMemoryUserRepository()
-	authSvc := auth.NewService(users)
-	boardRepo := repository.NewInMemoryBoardRepository()
-	mailRepo := repository.NewInMemoryMailRepository()
-	bbsSvc := bbs.NewService(boardRepo)
-	mailSvc := mail.NewService(mailRepo, users)
-	server := sshserver.New(cfg.ListenAddr, logger, authSvc, bbsSvc, mailSvc)
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- server.ListenAndServe()
-	}()
->>>>>>> theirs
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
@@ -184,7 +152,6 @@ func Run(cfg Config) error {
 		logger.Info("shutdown signal received", "signal", sig.String())
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-<<<<<<< ours
 		var shutdownErr error
 		if wssSrv != nil {
 			if err := wssSrv.Shutdown(ctx); err != nil && shutdownErr == nil {
@@ -205,14 +172,10 @@ func Run(cfg Config) error {
 			shutdownErr = err
 		}
 		return shutdownErr
-=======
-		return server.Shutdown(ctx)
->>>>>>> theirs
 	case err := <-errCh:
 		return err
 	}
 }
-<<<<<<< ours
 
 func parseCSV(raw string) []string {
 	parts := strings.Split(raw, ",")
@@ -226,5 +189,3 @@ func parseCSV(raw string) []string {
 	}
 	return out
 }
-=======
->>>>>>> theirs

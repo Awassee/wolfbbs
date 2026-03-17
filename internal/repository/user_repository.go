@@ -15,10 +15,7 @@ type UserRepository interface {
 	Create(user *domain.User) error
 	GetByHandle(handle string) (*domain.User, error)
 	Update(user *domain.User) error
-<<<<<<< ours
 	List() ([]domain.User, error)
-=======
->>>>>>> theirs
 }
 
 type InMemoryUserRepository struct {
@@ -71,7 +68,6 @@ func (r *InMemoryUserRepository) GetByHandle(handle string) (*domain.User, error
 	return &user, nil
 }
 
-<<<<<<< ours
 func (r *InMemoryUserRepository) List() ([]domain.User, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -82,8 +78,6 @@ func (r *InMemoryUserRepository) List() ([]domain.User, error) {
 	return out, nil
 }
 
-=======
->>>>>>> theirs
 func (r *InMemoryUserRepository) Update(user *domain.User) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

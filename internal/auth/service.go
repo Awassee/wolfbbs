@@ -1,7 +1,6 @@
 package auth
 
 import (
-<<<<<<< ours
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -16,19 +15,10 @@ import (
 	"wolfbbs/internal/domain"
 	"wolfbbs/internal/events"
 	"wolfbbs/internal/rbac"
-=======
-	"errors"
-	"strings"
-	"time"
-
-	"golang.org/x/crypto/bcrypt"
-	"wolfbbs/internal/domain"
->>>>>>> theirs
 	"wolfbbs/internal/repository"
 )
 
 var (
-<<<<<<< ours
 	ErrInvalidCredentials  = errors.New("invalid credentials")
 	ErrMissingSecondFactor = errors.New("missing second-factor code")
 	ErrInvalidSecondFactor = errors.New("invalid second-factor code")
@@ -56,17 +46,6 @@ func NewServiceWithPolicy(users repository.UserRepository, policy HashPolicy) *S
 
 func (s *Service) SetEventBus(bus *events.Bus) {
 	s.bus = bus
-=======
-	ErrInvalidCredentials = errors.New("invalid credentials")
-)
-
-type Service struct {
-	users repository.UserRepository
-}
-
-func NewService(users repository.UserRepository) *Service {
-	return &Service{users: users}
->>>>>>> theirs
 }
 
 func (s *Service) Register(handle, password string) (*domain.User, error) {
@@ -77,43 +56,29 @@ func (s *Service) Register(handle, password string) (*domain.User, error) {
 	if len(password) < 8 {
 		return nil, errors.New("password must be at least 8 characters")
 	}
-<<<<<<< ours
 	hash, err := hashPassword(password, s.hashPolicy)
-=======
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
->>>>>>> theirs
 	if err != nil {
 		return nil, err
 	}
 	user := &domain.User{
 		Handle:        handle,
 		PasswordHash:  string(hash),
-<<<<<<< ours
 		Enabled:       true,
 		ANSIEnabled:   true,
 		PagingEnabled: true,
 		Theme:         "retro-amber",
 		Role:          rbac.RoleUser,
-=======
-		ANSIEnabled:   true,
-		PagingEnabled: true,
-		Theme:         "retro-amber",
->>>>>>> theirs
 	}
 	if err := s.users.Create(user); err != nil {
 		return nil, err
 	}
-<<<<<<< ours
 	s.publish("auth.registered", map[string]string{"handle": user.Handle})
-=======
->>>>>>> theirs
 	return user, nil
 }
 
 func (s *Service) Login(handle, password string) (*domain.User, error) {
 	user, err := s.users.GetByHandle(handle)
 	if err != nil {
-<<<<<<< ours
 		s.publish("auth.login_failed", map[string]string{"handle": handle, "reason": "unknown_user"})
 		return nil, ErrInvalidCredentials
 	}
@@ -501,15 +466,3 @@ func (s *Service) publish(name string, fields map[string]string) {
 	}
 	s.bus.Publish(name, fields)
 }
-=======
-		return nil, ErrInvalidCredentials
-	}
-	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) != nil {
-		return nil, ErrInvalidCredentials
-	}
-	now := time.Now().UTC()
-	user.LastLoginAt = &now
-	_ = s.users.Update(user)
-	return user, nil
-}
->>>>>>> theirs

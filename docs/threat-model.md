@@ -1,4 +1,3 @@
-<<<<<<< ours
 # Threat Model (MVP)
 
 ## Assets
@@ -41,31 +40,3 @@
 - Inbound token authentication and sender-domain allowlists for `/mail/inbound`.
 - Optional IRC TLS listener with cert/key config and SASL PLAIN support.
 - ActivityPub remains disabled by default. When enabled, actor/outbox are public and inbox ingress is limited to bounded accepted activity logging without signature validation or remote delivery.
-=======
-# Threat Model (Initial)
-
-## Assets
-- User credentials and account preferences.
-- Message content and private mail.
-- Admin actions and moderation controls.
-
-## Key Threats
-- Credential stuffing / brute force login attempts.
-- Session abuse and command spam.
-- Privilege abuse in admin tools.
-- Gateway abuse:
-  - outbound email spam
-  - text-web SSRF to local/private hosts
-
-## Initial Controls
-- Bcrypt password hashing.
-- Structured logs for traceability.
-- PTY gate for interactive shell correctness.
-
-## Planned Controls (Next Milestones)
-- Login attempt throttling and lockouts.
-- Account verification before external gateways.
-- Outbound email rate limits + denylist + kill-switch.
-- SSRF deny defaults (loopback, RFC1918, link-local, metadata endpoints).
-- Admin audit log with actor, target, action, timestamp.
->>>>>>> theirs

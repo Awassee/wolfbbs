@@ -1,6 +1,5 @@
 package ui
 
-<<<<<<< ours
 import (
 	"fmt"
 	"strings"
@@ -10,11 +9,6 @@ import (
 const (
 	Esc = "\x1b"
 
-=======
-import "fmt"
-
-const (
->>>>>>> theirs
 	Reset = "\x1b[0m"
 	Bold  = "\x1b[1m"
 
@@ -26,7 +20,6 @@ const (
 	FgMagenta = "\x1b[35m"
 	FgCyan    = "\x1b[36m"
 	FgWhite   = "\x1b[37m"
-<<<<<<< ours
 	FgOrange  = "\x1b[38;5;208m"
 
 	BgBlack = "\x1b[40m"
@@ -160,17 +153,4 @@ func trimRunes(value string, width int) string {
 		return value
 	}
 	return string(r[:width])
-=======
-
-	BgBlue  = "\x1b[44m"
-	BgBlack = "\x1b[40m"
-)
-
-func ClearScreen() string {
-	return "\x1b[2J\x1b[H"
-}
-
-func MoveCursor(row, col int) string {
-	return fmt.Sprintf("\x1b[%d;%dH", row, col)
->>>>>>> theirs
 }

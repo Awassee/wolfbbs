@@ -7,26 +7,17 @@ import (
 	"log/slog"
 	"net"
 	"strings"
-<<<<<<< ours
 	"sync"
-=======
->>>>>>> theirs
 	"testing"
 	"time"
 
 	"golang.org/x/crypto/ssh"
 	"wolfbbs/internal/auth"
-<<<<<<< ours
 	"wolfbbs/internal/domain"
-=======
-	"wolfbbs/internal/bbs"
-	"wolfbbs/internal/mail"
->>>>>>> theirs
 	"wolfbbs/internal/repository"
 	"wolfbbs/internal/sshserver"
 )
 
-<<<<<<< ours
 type safeBuffer struct {
 	mu sync.RWMutex
 	b  bytes.Buffer
@@ -44,8 +35,6 @@ func (s *safeBuffer) String() string {
 	return s.b.String()
 }
 
-=======
->>>>>>> theirs
 func TestSSHLoginFlow(t *testing.T) {
 	userRepo := repository.NewInMemoryUserRepository()
 	authSvc := auth.NewService(userRepo)
@@ -55,15 +44,7 @@ func TestSSHLoginFlow(t *testing.T) {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-<<<<<<< ours
 	srv := sshserver.New("127.0.0.1:0", logger, authSvc)
-=======
-	boardRepo := repository.NewInMemoryBoardRepository()
-	mailRepo := repository.NewInMemoryMailRepository()
-	bbsSvc := bbs.NewService(boardRepo)
-	mailSvc := mail.NewService(mailRepo, userRepo)
-	srv := sshserver.New("127.0.0.1:0", logger, authSvc, bbsSvc, mailSvc)
->>>>>>> theirs
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -107,11 +88,7 @@ func TestSSHLoginFlow(t *testing.T) {
 		t.Fatalf("shell: %v", err)
 	}
 
-<<<<<<< ours
 	var out safeBuffer
-=======
-	var out bytes.Buffer
->>>>>>> theirs
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -132,16 +109,12 @@ func TestSSHLoginFlow(t *testing.T) {
 		t.Fatalf("timed out waiting for %q in output: %q", substr, curr)
 	}
 
-<<<<<<< ours
 	waitFor("Press any key to continue")
 	_, _ = stdin.Write([]byte("x"))
-=======
->>>>>>> theirs
 	waitFor("Handle:")
 	_, _ = stdin.Write([]byte("tester\n"))
 	waitFor("Password:")
 	_, _ = stdin.Write([]byte("password123\n"))
-<<<<<<< ours
 	waitFor("Any key to return.")
 	_, _ = stdin.Write([]byte("x"))
 	waitFor("Enter selection:")
@@ -559,10 +532,6 @@ func TestSSHNewscanDigestShowsRecentTraffic(t *testing.T) {
 	_, _ = stdin.Write([]byte("x"))
 	waitFor("Enter selection:")
 	_, _ = stdin.Write([]byte("Q"))
-=======
-	waitFor("Main Menu")
-	_, _ = stdin.Write([]byte("Q\n"))
->>>>>>> theirs
 
 	_ = session.Wait()
 	<-done

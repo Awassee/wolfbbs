@@ -3,29 +3,22 @@ package sshserver
 import (
 	"bufio"
 	"context"
-<<<<<<< ours
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-=======
->>>>>>> theirs
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
-<<<<<<< ours
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
-=======
->>>>>>> theirs
 	"strconv"
 	"strings"
 	"time"
 
 	gssh "github.com/gliderlabs/ssh"
-<<<<<<< ours
 	"wolfbbs/internal/acs"
 	"wolfbbs/internal/auth"
 	"wolfbbs/internal/chat"
@@ -41,12 +34,6 @@ import (
 	"wolfbbs/internal/repository"
 	"wolfbbs/internal/session"
 	"wolfbbs/internal/term"
-=======
-	"wolfbbs/internal/auth"
-	"wolfbbs/internal/bbs"
-	"wolfbbs/internal/domain"
-	"wolfbbs/internal/mail"
->>>>>>> theirs
 	"wolfbbs/internal/ui"
 )
 
@@ -54,7 +41,6 @@ type Server struct {
 	address string
 	logger  *slog.Logger
 	auth    *auth.Service
-<<<<<<< ours
 	users   repository.UserRepository
 	boards  repository.BoardRepository
 	msgs    repository.MessageRepository
@@ -114,31 +100,10 @@ func New(address string, logger *slog.Logger, authSvc *auth.Service) *Server {
 		Handler:     s.handleSession,
 		IdleTimeout: 10 * time.Minute,
 		MaxTimeout:  30 * time.Minute,
-=======
-	bbs     *bbs.Service
-	mail    *mail.Service
-	server  *gssh.Server
-}
-
-func New(address string, logger *slog.Logger, authSvc *auth.Service, bbsSvc *bbs.Service, mailSvc *mail.Service) *Server {
-	s := &Server{address: address, logger: logger, auth: authSvc, bbs: bbsSvc, mail: mailSvc}
-	s.server = &gssh.Server{
-		Addr:    address,
-		Handler: s.handleSession,
-		PasswordHandler: func(_ gssh.Context, _ string) bool {
-			return true
-		},
-		IdleTimeout: 10 * time.Minute,
-		MaxTimeout:  30 * time.Minute,
-		PublicKeyHandler: func(_ gssh.Context, _ gssh.PublicKey) bool {
-			return false
-		},
->>>>>>> theirs
 	}
 	return s
 }
 
-<<<<<<< ours
 func (s *Server) SetSessionManager(mgr *session.Manager) {
 	if mgr == nil {
 		return
@@ -170,8 +135,6 @@ func (s *Server) SetMenuRegistry(registry *menu.Registry) {
 	s.menuMod = registry
 }
 
-=======
->>>>>>> theirs
 func (s *Server) ListenAndServe() error {
 	s.logger.Info("starting ssh server", "addr", s.address)
 	return s.server.ListenAndServe()
@@ -192,7 +155,6 @@ func (s *Server) handleSession(sess gssh.Session) {
 		io.WriteString(sess, "PTY required. Reconnect with a terminal.\n")
 		return
 	}
-<<<<<<< ours
 	termWidth := pty.Window.Width
 	h := pty.Window.Height
 	if termWidth < 40 {
@@ -1283,131 +1245,10 @@ func pagerWrite(out io.Writer, reader *bufio.Reader, text string) {
 		key, err := readKey(reader)
 		if err != nil || key == "Q" || key == "ESC" {
 			return
-=======
-	w := pty.Window.Width
-	if w < 40 {
-		w = 40
-	}
-
-	reader := bufio.NewReader(sess)
-	th := ui.DefaultTheme()
-	io.WriteString(sess, ui.ClearScreen())
-	io.WriteString(sess, ui.RenderTopBar(w, "WolfBBS", "Guest", time.Now(), "Node 1", th)+"\r\n")
-	io.WriteString(sess, ui.RenderWelcome(w))
-	io.WriteString(sess, "\r\nHandle: ")
-	handle, _ := reader.ReadString('\n')
-	handle = strings.TrimSpace(handle)
-	io.WriteString(sess, "Password: ")
-	pass, _ := reader.ReadString('\n')
-	pass = strings.TrimSpace(pass)
-
-	user, err := s.auth.Login(handle, pass)
-	if err != nil {
-		io.WriteString(sess, "\r\nInvalid login. Create account? (Y/N): ")
-		choice, _ := reader.ReadString('\n')
-		choice = strings.TrimSpace(strings.ToUpper(choice))
-		if choice == "Y" {
-			io.WriteString(sess, "New password (min 8): ")
-			newPass, _ := reader.ReadString('\n')
-			newPass = strings.TrimSpace(newPass)
-			created, createErr := s.auth.Register(handle, newPass)
-			if createErr != nil {
-				io.WriteString(sess, fmt.Sprintf("\r\nCould not create account: %v\r\n", createErr))
-				return
-			}
-			user = created
-		} else {
-			io.WriteString(sess, "\r\nGoodbye.\r\n")
-			return
-		}
-	}
-
-	s.mainMenu(sess, reader, th, w, user)
-}
-
-func (s *Server) mainMenu(sess gssh.Session, reader *bufio.Reader, th ui.Theme, width int, user *domain.User) {
-	for {
-		io.WriteString(sess, ui.ClearScreen())
-		io.WriteString(sess, ui.RenderTopBar(width, "WolfBBS", user.Handle, time.Now(), "Node 1", th)+"\r\n\r\n")
-		io.WriteString(sess, ui.RenderMainMenu())
-		io.WriteString(sess, "> ")
-		input, err := reader.ReadString('\n')
-		if err != nil {
-			return
-		}
-		cmd := strings.ToUpper(strings.TrimSpace(input))
-		s.logger.Info("menu selection", "user", user.Handle, "selection", cmd)
-		switch cmd {
-		case "Q", "QUIT", "X":
-			io.WriteString(sess, "Signing off WolfBBS...\r\n")
-			return
-		case "M":
-			s.handleMessageBoards(sess, reader, user)
-		case "P":
-			s.handlePrivateMail(sess, reader, user)
-		case "F", "C", "G", "S", "A":
-			io.WriteString(sess, "Section scaffolded; implementation in next step.\r\nPress ENTER to continue...")
-			_, _ = reader.ReadString('\n')
-		default:
-			io.WriteString(sess, "Unknown command. Use hotkeys from the menu.\r\nPress ENTER to continue...")
-			_, _ = reader.ReadString('\n')
 		}
 	}
 }
 
-func (s *Server) handleMessageBoards(sess gssh.Session, reader *bufio.Reader, user *domain.User) {
-	for {
-		boards, _ := s.bbs.ListBoards()
-		io.WriteString(sess, ui.ClearScreen()+"\r\nMessage Boards\r\n")
-		for _, b := range boards {
-			io.WriteString(sess, fmt.Sprintf("[%d] %s - %s\r\n", b.ID, b.Name, b.Description))
-		}
-		io.WriteString(sess, "\r\nCommands: [R]ead board  [P]ost message  [B]ack\r\n> ")
-		in, _ := reader.ReadString('\n')
-		switch strings.ToUpper(strings.TrimSpace(in)) {
-		case "B":
-			return
-		case "R":
-			io.WriteString(sess, "Board number: ")
-			line, _ := reader.ReadString('\n')
-			id, _ := strconv.ParseInt(strings.TrimSpace(line), 10, 64)
-			msgs, err := s.bbs.ListMessages(id)
-			if err != nil {
-				io.WriteString(sess, "Board not found.\r\nPress ENTER...")
-				_, _ = reader.ReadString('\n')
-				continue
-			}
-			if len(msgs) == 0 {
-				io.WriteString(sess, "No posts yet.\r\nPress ENTER...")
-				_, _ = reader.ReadString('\n')
-				continue
-			}
-			for _, m := range msgs {
-				io.WriteString(sess, fmt.Sprintf("\r\n#%d %s\r\n%s\r\n", m.ID, m.Subject, m.Body))
-			}
-			io.WriteString(sess, "\r\nPress ENTER...")
-			_, _ = reader.ReadString('\n')
-		case "P":
-			io.WriteString(sess, "Board number: ")
-			bline, _ := reader.ReadString('\n')
-			boardID, _ := strconv.ParseInt(strings.TrimSpace(bline), 10, 64)
-			io.WriteString(sess, "Subject: ")
-			sub, _ := reader.ReadString('\n')
-			io.WriteString(sess, "Body: ")
-			body, _ := reader.ReadString('\n')
-			if err := s.bbs.Post(boardID, user.ID, strings.TrimSpace(sub), strings.TrimSpace(body)); err != nil {
-				io.WriteString(sess, fmt.Sprintf("Could not post: %v\r\n", err))
-			} else {
-				io.WriteString(sess, "Posted.\r\n")
-			}
-			io.WriteString(sess, "Press ENTER...")
-			_, _ = reader.ReadString('\n')
->>>>>>> theirs
-		}
-	}
-}
-
-<<<<<<< ours
 func readLine(reader *bufio.Reader, max int) (string, error) {
 	if max <= 0 {
 		max = 80
@@ -3736,51 +3577,4 @@ func boardWriteRule(board domain.Board) string {
 		return rule
 	}
 	return strings.TrimSpace(os.Getenv("WOLFBBS_ACS_BOARDS_POST"))
-=======
-func (s *Server) handlePrivateMail(sess gssh.Session, reader *bufio.Reader, user *domain.User) {
-	for {
-		io.WriteString(sess, ui.ClearScreen()+"\r\nPrivate Mail\r\nCommands: [I]nbox [O]utbox [S]end [B]ack\r\n> ")
-		in, _ := reader.ReadString('\n')
-		switch strings.ToUpper(strings.TrimSpace(in)) {
-		case "B":
-			return
-		case "I":
-			mails, _ := s.mail.Inbox(user.ID)
-			if len(mails) == 0 {
-				io.WriteString(sess, "Inbox empty.\r\n")
-			} else {
-				for _, m := range mails {
-					io.WriteString(sess, fmt.Sprintf("\r\nFrom User#%d - %s\r\n%s\r\n", m.FromUserID, m.Subject, m.Body))
-				}
-			}
-			io.WriteString(sess, "\r\nPress ENTER...")
-			_, _ = reader.ReadString('\n')
-		case "O":
-			mails, _ := s.mail.Outbox(user.ID)
-			if len(mails) == 0 {
-				io.WriteString(sess, "Outbox empty.\r\n")
-			} else {
-				for _, m := range mails {
-					io.WriteString(sess, fmt.Sprintf("\r\nTo User#%d - %s\r\n%s\r\n", m.ToUserID, m.Subject, m.Body))
-				}
-			}
-			io.WriteString(sess, "\r\nPress ENTER...")
-			_, _ = reader.ReadString('\n')
-		case "S":
-			io.WriteString(sess, "To Handle: ")
-			to, _ := reader.ReadString('\n')
-			io.WriteString(sess, "Subject: ")
-			sub, _ := reader.ReadString('\n')
-			io.WriteString(sess, "Body: ")
-			body, _ := reader.ReadString('\n')
-			if err := s.mail.Send(user.ID, strings.TrimSpace(to), strings.TrimSpace(sub), strings.TrimSpace(body)); err != nil {
-				io.WriteString(sess, fmt.Sprintf("Could not send: %v\r\n", err))
-			} else {
-				io.WriteString(sess, "Sent.\r\n")
-			}
-			io.WriteString(sess, "Press ENTER...")
-			_, _ = reader.ReadString('\n')
-		}
-	}
->>>>>>> theirs
 }
