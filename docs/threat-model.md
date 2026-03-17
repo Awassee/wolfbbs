@@ -24,6 +24,7 @@
 - PTY required for SSH terminal mode.
 - Logged menu/auth events.
 - Web cookie flags (`HttpOnly`, `SameSite=Strict`) in web companion.
+- Web login and password-reset request throttles are enforced per client address.
 - Password reset tokens are one-time, hashed at rest, and expiry-bound.
 - Password reset request responses are non-enumerating; SMTP delivery is attempted only when configured and logs failures server-side.
 - Shared chat service applies basic per-nick rate limiting and presence tracking.
@@ -31,12 +32,14 @@
 - Sysop/admin (alias) and moderation actions are recorded through audit repositories.
 - External doors run with timeout + output-rate caps and optional network deny by default.
 - Per-door writable directories isolate external door filesystem access.
+- Inbound mail webhooks require shared-secret token auth; default dev tokens are limited to local callers only.
+- Websocket login rejects foreign browser origins.
+- JSON webhook/chat endpoints are size-bounded and strict-decoded.
 
 ## Planned Controls
-- Connection/IP/command-rate throttles for SSH and web login flows.
+- Connection/IP/command-rate throttles for SSH flows beyond the current login throttles.
 - 2FA enforcement for sysop paths.
 - Postgres-backed storage and transaction boundaries.
 - Gateway kill-switches, allowlists, and immutable audit logs.
-- Inbound token authentication and sender-domain allowlists for `/mail/inbound`.
 - Optional IRC TLS listener with cert/key config and SASL PLAIN support.
 - ActivityPub remains disabled by default. When enabled, actor/outbox are public and inbox ingress is limited to bounded accepted activity logging without signature validation or remote delivery.

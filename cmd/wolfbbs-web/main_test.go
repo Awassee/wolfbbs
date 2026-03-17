@@ -3178,6 +3178,122 @@ func TestPasswordResetRequestInvokesNotifierForEmailHandle(t *testing.T) {
 	}
 }
 
+func TestHandleLoginRateLimitsFailedAttempts(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	if _, err := authSvc.Register("reader", "password123"); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	app := &webApp{
+		authSvc:         authSvc,
+		userRepo:        userRepo,
+		sessions:        map[string]sessionState{},
+		rateLimits:      map[string][]time.Time{},
+		loginRateLimit:  2,
+		loginRateWindow: time.Hour,
+	}
+
+	post := func(password string) *httptest.ResponseRecorder {
+		form := url.Values{}
+		form.Set("handle", "reader")
+		form.Set("password", password)
+		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+		req.RemoteAddr = "198.51.100.50:4444"
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rr := httptest.NewRecorder()
+		app.handleLogin(rr, req)
+		return rr
+	}
+
+	if rr := post("wrongpass"); rr.Code != http.StatusUnauthorized {
+		t.Fatalf("first failed login status = %d", rr.Code)
+	}
+	if rr := post("wrongpass"); rr.Code != http.StatusUnauthorized {
+		t.Fatalf("second failed login status = %d", rr.Code)
+	}
+	if rr := post("wrongpass"); rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("third failed login status = %d", rr.Code)
+	}
+}
+
+func TestPasswordResetRequestRateLimit(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	resetRepo := repository.NewInMemoryPasswordResetRepository()
+	authSvc := auth.NewService(userRepo)
+	authSvc.SetPasswordResetRepository(resetRepo)
+	if _, err := authSvc.Register("resetme", "password123"); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	app := &webApp{
+		authSvc:         authSvc,
+		userRepo:        userRepo,
+		sessions:        map[string]sessionState{},
+		rateLimits:      map[string][]time.Time{},
+		resetRateLimit:  2,
+		resetRateWindow: time.Hour,
+	}
+
+	form := url.Values{}
+	form.Set("handle", "resetme")
+	for attempt := 1; attempt <= 2; attempt++ {
+		req := httptest.NewRequest(http.MethodPost, "/reset/request", strings.NewReader(form.Encode()))
+		req.RemoteAddr = "198.51.100.60:5555"
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rr := httptest.NewRecorder()
+		app.handlePasswordResetRequest(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("reset request %d status = %d", attempt, rr.Code)
+		}
+	}
+	req := httptest.NewRequest(http.MethodPost, "/reset/request", strings.NewReader(form.Encode()))
+	req.RemoteAddr = "198.51.100.60:5555"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	app.handlePasswordResetRequest(rr, req)
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 for rate-limited reset request, got %d", rr.Code)
+	}
+}
+
+func TestActivityPubBaseIgnoresHostHeaderPoisoning(t *testing.T) {
+	app := &webApp{
+		siteHostname: "bbs.example",
+		secureCookie: true,
+	}
+	req := httptest.NewRequest(http.MethodGet, "/ap/users/alice", nil)
+	req.Host = "attacker.example"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	if got := app.activityPubBase(req); got != "https://bbs.example" {
+		t.Fatalf("activityPubBase() = %q", got)
+	}
+}
+
+func TestParseJSONBodyRejectsOversizePayload(t *testing.T) {
+	payload := `{"message":"` + strings.Repeat("a", maxJSONRequestBytes) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/chat/send", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	var body map[string]string
+	if err := parseJSONBody(req, &body); err == nil {
+		t.Fatal("expected oversized json payload to be rejected")
+	}
+}
+
+func TestHandleMailInboundBlocksPublicDefaultToken(t *testing.T) {
+	app := &webApp{
+		inboundToken: defaultInboundToken,
+	}
+	body := strings.NewReader(`{"from":"sender@example.com","to":"reader@example.com","subject":"hello","body":"world"}`)
+	req := httptest.NewRequest(http.MethodPost, "/mail/inbound", body)
+	req.RemoteAddr = "198.51.100.70:6666"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Inbound-Token", defaultInboundToken)
+	rr := httptest.NewRecorder()
+	app.handleMailInbound(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for public default inbound token, got %d", rr.Code)
+	}
+}
+
 func TestSeedDefaultBoardsAddsMissingDefaultsOnly(t *testing.T) {
 	repo := repository.NewInMemoryBoardRepository()
 	if err := repo.Create(&domain.Board{Name: "General", Description: "already there", CreatedBy: 99}); err != nil {

@@ -358,6 +358,12 @@ const (
 	sysSettingConnectorTelnetArgs    = "runtime.connector.telnet_bridge.args"
 	maxAdminErrorEntries             = 300
 	maxActivityPubInboxBytes         = 1 << 20
+	maxJSONRequestBytes              = 1 << 20
+	defaultInboundToken              = "dev-inbound-token"
+	defaultWebLoginRateLimit         = 10
+	defaultWebLoginRateWindow        = 15 * time.Minute
+	defaultResetRateLimit            = 5
+	defaultResetRateWindow           = 30 * time.Minute
 )
 
 type webApp struct {
@@ -371,6 +377,12 @@ type webApp struct {
 	email     *gateway.EmailGateway
 	sessions  map[string]sessionState
 	sync.Mutex
+	proxyResolver        *netutil.ProxyResolver
+	rateLimits           map[string][]time.Time
+	loginRateLimit       int
+	loginRateWindow      time.Duration
+	resetRateLimit       int
+	resetRateWindow      time.Duration
 	chatSvc              *chat.Service
 	doorRegistry         *doors.Registry
 	eventBus             *events.Bus
@@ -507,17 +519,28 @@ func main() {
 	} else if seeded > 0 {
 		log.Printf("seeded %d default board(s)", seeded)
 	}
+	proxyResolver, err := netutil.NewProxyResolver(parseCSVStrings(runtimeCfg.Login.TrustedProxies))
+	if err != nil {
+		log.Printf("proxy resolver config invalid: %v", err)
+		proxyResolver, _ = netutil.NewProxyResolver(nil)
+	}
 
 	app := &webApp{
-		authSvc:   authSvc,
-		userRepo:  storage.Users,
-		boardRepo: storage.Boards,
-		msgRepo:   storage.Messages,
-		mailRepo:  storage.Mail,
-		adminRepo: storage.Admin,
-		doorRepo:  storage.Doors,
-		email:     gateway.NewEmailGateway(gateway.LoadEmailConfigFromEnv()),
-		sessions:  map[string]sessionState{},
+		authSvc:         authSvc,
+		userRepo:        storage.Users,
+		boardRepo:       storage.Boards,
+		msgRepo:         storage.Messages,
+		mailRepo:        storage.Mail,
+		adminRepo:       storage.Admin,
+		doorRepo:        storage.Doors,
+		email:           gateway.NewEmailGateway(gateway.LoadEmailConfigFromEnv()),
+		sessions:        map[string]sessionState{},
+		proxyResolver:   proxyResolver,
+		rateLimits:      map[string][]time.Time{},
+		loginRateLimit:  defaultWebLoginRateLimit,
+		loginRateWindow: defaultWebLoginRateWindow,
+		resetRateLimit:  defaultResetRateLimit,
+		resetRateWindow: defaultResetRateWindow,
 		chatSvc: func() *chat.Service {
 			svc := chat.NewService()
 			svc.SetEventBus(bus)
@@ -696,7 +719,14 @@ func main() {
 	startOptionalContentServers(runtimeCfg, storage.Boards, storage.Messages)
 
 	fmt.Printf("WolfBBS web companion on %s\n", *listen)
-	log.Fatal(http.ListenAndServe(*listen, app.withModernUI(http.DefaultServeMux)))
+	server := &http.Server{
+		Addr:              *listen,
+		Handler:           app.withModernUI(http.DefaultServeMux),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
+	log.Fatal(server.ListenAndServe())
 }
 
 func startOptionalContentServers(runtimeCfg config.Runtime, boardRepo repository.BoardRepository, msgRepo repository.MessageRepository) {
@@ -811,7 +841,7 @@ func (a *webApp) handleActivityPubWebFinger(w http.ResponseWriter, r *http.Reque
 	actorURL := base + "/ap/users/" + url.PathEscape(user.Handle)
 	subjectHost := parts[1]
 	if strings.TrimSpace(subjectHost) == "" {
-		subjectHost = r.Host
+		subjectHost = sanitizedConfiguredHost(a.siteHost())
 	}
 	_ = writeJSON(w, http.StatusOK, map[string]interface{}{
 		"subject": fmt.Sprintf("acct:%s@%s", user.Handle, subjectHost),
@@ -1932,6 +1962,7 @@ func (w *htmlStyleWriter) sendHeaders() {
 
 func (a *webApp) withModernUI(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		applyCommonSecurityHeaders(w)
 		if strings.HasPrefix(r.URL.Path, "/chat/stream") {
 			next.ServeHTTP(w, r)
 			return
@@ -1954,6 +1985,22 @@ func (a *webApp) withModernUI(next http.Handler) http.Handler {
 			_, _ = w.Write(body)
 		}
 	})
+}
+
+func applyCommonSecurityHeaders(w http.ResponseWriter) {
+	headers := w.Header()
+	if headers.Get("X-Content-Type-Options") == "" {
+		headers.Set("X-Content-Type-Options", "nosniff")
+	}
+	if headers.Get("X-Frame-Options") == "" {
+		headers.Set("X-Frame-Options", "DENY")
+	}
+	if headers.Get("Referrer-Policy") == "" {
+		headers.Set("Referrer-Policy", "same-origin")
+	}
+	if headers.Get("Permissions-Policy") == "" {
+		headers.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+	}
 }
 
 func shouldInjectModernUI(contentType string, body []byte) bool {
@@ -1986,22 +2033,20 @@ func injectModernUI(page string) string {
 }
 
 func (a *webApp) activityPubBase(r *http.Request) string {
-	base := strings.TrimSpace(a.apBaseURL)
-	if base != "" {
-		return strings.TrimSuffix(base, "/")
+	if base := normalizedPublicURL(a.apBaseURL); base != "" {
+		return base
+	}
+	if base := normalizedPublicURL(a.publicBaseURL); base != "" {
+		return base
 	}
 	scheme := "http"
-	if r != nil {
-		if proto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); proto != "" {
-			scheme = proto
-		} else if r.TLS != nil {
-			scheme = "https"
-		}
-		if host := strings.TrimSpace(r.Host); host != "" {
-			return scheme + "://" + host
-		}
+	if a != nil && a.secureCookie {
+		scheme = "https"
 	}
-	return scheme + "://localhost"
+	if r != nil && (r.TLS != nil || strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https")) {
+		scheme = "https"
+	}
+	return scheme + "://" + sanitizedConfiguredHost(a.siteHost())
 }
 
 func (a *webApp) deliverPasswordReset(r *http.Request, handle, token string) error {
@@ -2015,7 +2060,7 @@ func (a *webApp) deliverPasswordReset(r *http.Request, handle, token string) err
 	if recipient == "" {
 		return nil
 	}
-	base := strings.TrimSpace(a.publicBaseURL)
+	base := normalizedPublicURL(a.publicBaseURL)
 	if base == "" {
 		base = a.activityPubBase(r)
 	}
@@ -2412,6 +2457,7 @@ func (a *webApp) handleGuestTour(w http.ResponseWriter, r *http.Request) {
 
 func (a *webApp) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
+		w.Header().Set("Cache-Control", "no-store")
 		if user, ok := a.currentUser(r); ok {
 			if user != nil && a.hasRole(user, roleAdmin) && strings.HasPrefix(r.URL.Path, "/admin") {
 				http.Redirect(w, r, "/admin", http.StatusFound)
@@ -2428,12 +2474,18 @@ func (a *webApp) handleLogin(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	loginKey := a.rateLimitKey("login", r)
+	if !a.allowRateLimitedAction(loginKey, a.loginRateLimit, a.loginRateWindow, false) {
+		http.Error(w, "too many login attempts", http.StatusTooManyRequests)
+		return
+	}
 	handle := strings.TrimSpace(r.FormValue("handle"))
 	password := strings.TrimSpace(r.FormValue("password"))
 	totp := strings.TrimSpace(r.FormValue("totp"))
 
 	user, err := a.authSvc.Authenticate(handle, password, totp)
 	if err != nil {
+		_ = a.allowRateLimitedAction(loginKey, a.loginRateLimit, a.loginRateWindow, true)
 		if err == auth.ErrMissingSecondFactor || err == auth.ErrInvalidSecondFactor {
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = w.Write([]byte("invalid 2FA code"))
@@ -2443,6 +2495,7 @@ func (a *webApp) handleLogin(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("invalid credentials"))
 		return
 	}
+	a.clearRateLimitedAction(loginKey)
 
 	if sid, ok := a.createSession(user.Handle); ok {
 		http.SetCookie(w, &http.Cookie{
@@ -2465,10 +2518,16 @@ func (a *webApp) handleLogin(w http.ResponseWriter, r *http.Request) {
 func (a *webApp) handlePasswordResetRequest(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(resetRequestPage(a.siteDisplayName(), "")))
 		return
 	case http.MethodPost:
+		resetKey := a.rateLimitKey("reset", r)
+		if !a.allowRateLimitedAction(resetKey, a.resetRateLimit, a.resetRateWindow, true) {
+			http.Error(w, "too many reset requests", http.StatusTooManyRequests)
+			return
+		}
 		handle := strings.TrimSpace(r.FormValue("handle"))
 		token, err := a.authSvc.IssuePasswordReset(handle, a.resetTTL)
 		message := "If the account exists, a password reset token has been issued."
@@ -2495,6 +2554,7 @@ func (a *webApp) handlePasswordResetRequest(w http.ResponseWriter, r *http.Reque
 func (a *webApp) handlePasswordResetComplete(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		w.Header().Set("Cache-Control", "no-store")
 		token := strings.TrimSpace(r.URL.Query().Get("token"))
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(resetCompletePage(a.siteDisplayName(), token, "")))
@@ -7386,6 +7446,125 @@ func (a *webApp) siteHost() string {
 	return host
 }
 
+func sanitizedConfiguredHost(raw string) string {
+	raw = strings.TrimSpace(strings.TrimSuffix(raw, "/"))
+	if raw == "" {
+		return "localhost"
+	}
+	if strings.Contains(raw, "://") {
+		if parsed, err := url.Parse(raw); err == nil && strings.TrimSpace(parsed.Host) != "" {
+			return strings.TrimSpace(parsed.Host)
+		}
+	}
+	if parsed, err := url.Parse("//" + raw); err == nil && strings.TrimSpace(parsed.Host) != "" {
+		return strings.TrimSpace(parsed.Host)
+	}
+	return "localhost"
+}
+
+func normalizedPublicURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	if (parsed.Scheme != "http" && parsed.Scheme != "https") || strings.TrimSpace(parsed.Host) == "" {
+		return ""
+	}
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	return strings.TrimRight(parsed.String(), "/")
+}
+
+func parseCSVStrings(raw string) []string {
+	out := make([]string, 0, 8)
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		out = append(out, part)
+	}
+	return out
+}
+
+func (a *webApp) clientAddress(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if a != nil && a.proxyResolver != nil {
+		if resolved := strings.TrimSpace(a.proxyResolver.Resolve(r.RemoteAddr, r.Header)); resolved != "" {
+			return resolved
+		}
+	}
+	return strings.TrimSpace(netutil.RemoteHost(r.RemoteAddr))
+}
+
+func (a *webApp) rateLimitKey(prefix string, r *http.Request) string {
+	client := strings.ToLower(strings.TrimSpace(a.clientAddress(r)))
+	if client == "" {
+		client = "unknown"
+	}
+	return prefix + ":" + client
+}
+
+func (a *webApp) allowRateLimitedAction(key string, limit int, window time.Duration, consume bool) bool {
+	key = strings.TrimSpace(key)
+	if key == "" || limit <= 0 || window <= 0 {
+		return true
+	}
+	now := time.Now().UTC()
+	cutoff := now.Add(-window)
+
+	a.Lock()
+	defer a.Unlock()
+	if a.rateLimits == nil {
+		a.rateLimits = map[string][]time.Time{}
+	}
+	rows := a.rateLimits[key]
+	kept := make([]time.Time, 0, len(rows)+1)
+	for _, row := range rows {
+		if row.After(cutoff) {
+			kept = append(kept, row)
+		}
+	}
+	if len(kept) >= limit {
+		a.rateLimits[key] = kept
+		return false
+	}
+	if consume {
+		kept = append(kept, now)
+	}
+	if len(kept) == 0 {
+		delete(a.rateLimits, key)
+	} else {
+		a.rateLimits[key] = kept
+	}
+	return true
+}
+
+func (a *webApp) clearRateLimitedAction(key string) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return
+	}
+	a.Lock()
+	delete(a.rateLimits, key)
+	a.Unlock()
+}
+
+func (a *webApp) isSafeDevInboundRemote(r *http.Request) bool {
+	if a == nil || strings.TrimSpace(a.inboundToken) != defaultInboundToken {
+		return true
+	}
+	origin := netutil.RemoteOrigin(a.clientAddress(r))
+	return origin == "loopback" || origin == "lan"
+}
+
 func checkedAttr(active bool) string {
 	if active {
 		return "checked"
@@ -8052,9 +8231,24 @@ func parseJSONBody(r *http.Request, out interface{}) error {
 	if !strings.Contains(strings.ToLower(r.Header.Get("Content-Type")), "application/json") {
 		return parseBodyFromForm(r, out)
 	}
-	dec := json.NewDecoder(r.Body)
 	defer r.Body.Close()
-	return dec.Decode(out)
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxJSONRequestBytes+1))
+	if err != nil {
+		return err
+	}
+	if int64(len(body)) > maxJSONRequestBytes {
+		return fmt.Errorf("request body exceeds limit (%d bytes)", maxJSONRequestBytes)
+	}
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(out); err != nil {
+		return err
+	}
+	var extra interface{}
+	if err := dec.Decode(&extra); err != io.EOF {
+		return fmt.Errorf("invalid json body")
+	}
+	return nil
 }
 
 func parseBodyFromForm(r *http.Request, out interface{}) error {
@@ -8089,6 +8283,10 @@ func (a *webApp) handleMailInbound(w http.ResponseWriter, r *http.Request) {
 	}
 	if !secureEquals(strings.TrimSpace(r.Header.Get("X-Inbound-Token")), a.inboundToken) {
 		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if !a.isSafeDevInboundRemote(r) {
+		http.Error(w, "inbound token must be customized before public exposure", http.StatusForbidden)
 		return
 	}
 	var payload struct {

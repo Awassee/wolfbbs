@@ -17,16 +17,22 @@
 - `/reset/request` issues one-time reset tokens with expiration.
 - If SMTP is configured and the account handle is an email-form handle, WolfBBS sends a reset link via email.
 - Reset URL base:
-  - `WOLFBBS_PUBLIC_BASE_URL` when set, otherwise inferred from request host/proto.
+  - `WOLFBBS_PUBLIC_BASE_URL` when set, otherwise the configured WolfBBS hostname/base URL.
 - Delivery failures are logged server-side while API responses remain non-enumerating.
+- Web reset requests are rate-limited per client address.
 
 ## Inbound (preferred optional)
 - HTTP ingestion route is available:
   - `POST /mail/inbound`
   - Requires `X-Inbound-Token` matching `WOLFBBS_INBOUND_TOKEN`
+  - Default dev token is accepted only from loopback/LAN callers; public exposure requires a custom token
   - JSON payload: `from`, `to`, `subject`, `body`, `raw_headers`
 - Companion daemon (`cmd/wolfbbs-mailin`):
   - Receives inbound JSON on `/ingest`
+  - Requires one of:
+    - `X-Inbound-Token`
+    - `Authorization: Bearer <token>`
+    - `?token=<token>`
   - Applies sender-domain allowlist (`WOLFBBS_MAILIN_ALLOW_DOMAINS`)
   - Forwards to `/mail/inbound` with token auth
 - Recipient mapping:

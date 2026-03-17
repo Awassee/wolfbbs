@@ -37,6 +37,9 @@ func TestEmailGatewayValidateOutbound(t *testing.T) {
 	if err := gw.ValidateOutbound([]string{"reader@example.com"}, "hello", strings.Repeat("a", 100)); err == nil {
 		t.Fatalf("expected max message bytes error")
 	}
+	if err := gw.ValidateOutbound([]string{"reader@example.com"}, "hello\r\nBcc:evil@example.com", "world"); err == nil {
+		t.Fatalf("expected header injection subject to be rejected")
+	}
 }
 
 func TestLoadEmailConfigFromWolfbbsPrefixedEnv(t *testing.T) {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -14,7 +15,11 @@ import (
 	"time"
 
 	"wolfbbs/internal/logging"
+	"wolfbbs/internal/netutil"
 )
+
+const defaultInboundToken = "dev-inbound-token"
+const maxIngestPayloadBytes = 1 << 20
 
 type ingestPayload struct {
 	From       string `json:"from"`
@@ -42,18 +47,32 @@ func main() {
 	allowed := parseAllowDomains(*allowDomains)
 	client := &http.Client{Timeout: 10 * time.Second}
 
-	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		_ = r
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-	http.HandleFunc("/ingest", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/ingest", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
+		if !ingestAuthorized(r, *token) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxIngestPayloadBytes)
+		defer r.Body.Close()
 		var payload ingestPayload
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		dec := json.NewDecoder(r.Body)
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&payload); err != nil {
+			http.Error(w, "invalid payload", http.StatusBadRequest)
+			return
+		}
+		var extra interface{}
+		if err := dec.Decode(&extra); err != io.EOF {
 			http.Error(w, "invalid payload", http.StatusBadRequest)
 			return
 		}
@@ -100,7 +119,15 @@ func main() {
 	})
 
 	log.Printf("wolfbbs-mailin listening on %s forwarding to %s", *listen, *forwardURL)
-	log.Fatal(http.ListenAndServe(*listen, nil))
+	server := &http.Server{
+		Addr:              *listen,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      20 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	log.Fatal(server.ListenAndServe())
 }
 
 func parseAllowDomains(raw string) map[string]struct{} {
@@ -130,4 +157,37 @@ func senderDomain(from string) string {
 		return ""
 	}
 	return strings.ToLower(strings.TrimSpace(from[at+1:]))
+}
+
+func inboundAuthToken(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if token := strings.TrimSpace(r.Header.Get("X-Inbound-Token")); token != "" {
+		return token
+	}
+	authz := strings.TrimSpace(r.Header.Get("Authorization"))
+	if len(authz) > 7 && strings.EqualFold(authz[:7], "Bearer ") {
+		return strings.TrimSpace(authz[7:])
+	}
+	if token := strings.TrimSpace(r.URL.Query().Get("token")); token != "" {
+		return token
+	}
+	return ""
+}
+
+func ingestAuthorized(r *http.Request, expectedToken string) bool {
+	expectedToken = strings.TrimSpace(expectedToken)
+	if expectedToken == "" {
+		return false
+	}
+	token := inboundAuthToken(r)
+	if len(token) != len(expectedToken) || subtle.ConstantTimeCompare([]byte(token), []byte(expectedToken)) != 1 {
+		return false
+	}
+	if expectedToken != defaultInboundToken {
+		return true
+	}
+	origin := netutil.RemoteOrigin(strings.TrimSpace(r.RemoteAddr))
+	return origin == "loopback" || origin == "lan"
 }

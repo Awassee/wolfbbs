@@ -93,6 +93,9 @@ func (g *EmailGateway) ValidateOutbound(to []string, subject, body string) error
 	if strings.TrimSpace(subject) == "" {
 		return errors.New("subject is required")
 	}
+	if strings.ContainsAny(subject, "\r\n") {
+		return errors.New("subject must not contain CR/LF characters")
+	}
 	if strings.TrimSpace(body) == "" {
 		return errors.New("body is required")
 	}
@@ -100,6 +103,9 @@ func (g *EmailGateway) ValidateOutbound(to []string, subject, body string) error
 		return fmt.Errorf("message exceeds %d bytes", g.cfg.MaxMessageBytes)
 	}
 	for _, recipient := range to {
+		if strings.ContainsAny(recipient, "\r\n") {
+			return fmt.Errorf("invalid recipient %q", recipient)
+		}
 		if _, err := mail.ParseAddress(strings.TrimSpace(recipient)); err != nil {
 			return fmt.Errorf("invalid recipient %q", recipient)
 		}
