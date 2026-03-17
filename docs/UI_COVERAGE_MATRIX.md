@@ -60,6 +60,7 @@ Auto-generated from `docs/function-registry.json`.
 | `web:/admin/files` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/gateways` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/login` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
+| `web:/admin/launch` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/mail` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/node-state` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/setup` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |

@@ -344,7 +344,7 @@ run_static_checks() {
   must "R-001" "README includes Linux + macOS quick install and endpoints summary" bash -c "grep -Eiq 'Quick install \\(Linux\\)' README.md && grep -Eiq 'Quick install \\(macOS\\)' README.md && grep -Eiq '/admin' README.md && grep -Eiq '/chat' README.md && grep -Eiq 'IRC' README.md"
   must "R-002" "compose file exists at repo root" bash -c "test -f docker-compose.yml || test -f compose.yml"
   must "R-003" ".env.example exists" test -f .env.example
-  must "R-004" "required docs are present" bash -c "test -f docs/architecture.md && test -f docs/threat-model.md && test -f docs/INSTALL.md && test -f docs/admin.md && test -f docs/chat.md && test -f docs/irc-compat.md && test -f docs/email-gateway.md && test -f docs/web-gateway.md && test -f docs/ACCEPTANCE_SPEC.md && test -f docs/LAUNCH_CHECKLIST.md && test -f docs/TROUBLESHOOTING.md"
+  must "R-004" "required docs are present" bash -c "test -f docs/architecture.md && test -f docs/threat-model.md && test -f docs/INSTALL.md && test -f docs/admin.md && test -f docs/chat.md && test -f docs/irc-compat.md && test -f docs/email-gateway.md && test -f docs/web-gateway.md && test -f docs/ACCEPTANCE_SPEC.md && test -f docs/LAUNCH_CHECKLIST.md && test -f docs/TROUBLESHOOTING.md && test -f docs/OPERATOR_PLAYBOOK.md"
   must "R-005" "verifier script exists" test -f scripts/verify.sh
   must "R-006" "installer supports Linux + macOS" bash -c "test -f install.sh && (./install.sh --help | grep -qi macos || test -f install-macos.sh)"
 

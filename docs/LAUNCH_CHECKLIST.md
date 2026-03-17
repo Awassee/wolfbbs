@@ -15,15 +15,16 @@ You are ready to announce the board when:
 ## 10-Minute Launch Pass
 
 1. Open `/admin/login` and confirm the bootstrap sysop can sign in.
-2. Finish `/admin/setup` in order.
-3. Review `/admin/config` and set the real site name and hostname.
-4. Run the bootstrap actions in `/admin/setup?step=4`.
-5. Create at least one non-sysop account in `/admin/users`.
-6. Open `/boards` and confirm the board is not empty.
-7. Open `/chat` and send a test line in `#lobby`.
-8. Open `/doors` and `/scores`.
-9. Test SSH with `ssh <host> -p <port>`.
-10. Run `bash install.sh --status` and `bash install.sh --doctor`.
+2. Open `/admin/launch` and read the launch verdict.
+3. Finish `/admin/setup` in order.
+4. Review `/admin/config` and set the real site name and hostname.
+5. Run the bootstrap actions in `/admin/setup?step=4`.
+6. Create at least one non-sysop account in `/admin/users`.
+7. Open `/boards` and confirm the board is not empty.
+8. Open `/chat` and send a test line in `#lobby`.
+9. Open `/doors` and `/scores`.
+10. Test SSH with `ssh <host> -p <port>`.
+11. Run `bash install.sh --status` and `bash install.sh --doctor`.
 
 ## Go / No-Go Checks
 

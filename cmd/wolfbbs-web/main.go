@@ -670,6 +670,7 @@ func main() {
 	http.Handle("/admin/gateways", app.mustBeRole(roleAdmin, app.handleAdminGateways))
 	http.Handle("/admin/chat", app.mustBeRole(roleAdmin, app.handleAdminChat))
 	http.Handle("/admin/doors", app.mustBeRole(roleAdmin, app.handleAdminDoors))
+	http.Handle("/admin/launch", app.mustBeRole(roleAdmin, app.handleAdminLaunch))
 	http.Handle("/admin/setup", app.mustBeRole(roleAdmin, app.handleAdminSetup))
 	http.Handle("/admin/config", app.mustBeRole(roleAdmin, app.handleAdminConfig))
 	http.Handle("/admin/errors", app.mustBeRole(roleAdmin, app.handleAdminErrors))
@@ -1549,6 +1550,21 @@ hr{
         { label: "Status", href: "/status" }
       ]
     },
+    "/admin/launch": {
+      eyebrow: "Operator flow",
+      title: "Run the board like a product, not a scavenger hunt",
+      body: "This page consolidates launch readiness, runtime health, operator commands, and the direct links you need when the board is almost ready but not obviously done.",
+      bullets: [
+        "Fix launch blockers first, polish second.",
+        "Walk the real caller journey before announcing anything.",
+        "Use this route as the home base for first-run and recovery."
+      ],
+      actions: [
+        { label: "Setup wizard", href: "/admin/setup" },
+        { label: "System", href: "/admin/system" },
+        { label: "Users", href: "/admin/users" }
+      ]
+    },
     "/admin/config": {
       eyebrow: "Runtime controls",
       title: "Use config after setup, not instead of it",
@@ -1600,6 +1616,7 @@ hr{
       actions: [
         { label: "Admin system", href: "/admin/system" },
         { label: "Admin setup", href: "/admin/setup" },
+        { label: "Launch center", href: "/admin/launch" },
         { label: "Help", href: "/help" }
       ]
     },
@@ -1636,6 +1653,7 @@ hr{
   };
   function primerForPath(pathname) {
     if (primerRegistry[pathname]) return primerRegistry[pathname];
+    if (pathname.startsWith("/admin/launch")) return primerRegistry["/admin/launch"];
     if (pathname.startsWith("/admin/setup")) return primerRegistry["/admin/setup"];
     if (pathname.startsWith("/admin/config")) return primerRegistry["/admin/config"];
     return null;
@@ -2304,6 +2322,20 @@ setTimeout(function(){ term.focus(); }, 0);
 <li>Telnet (optional): <code>telnet ` + htmlEscape(connectHost) + ` ` + strconv.Itoa(telnetPort) + `</code></li>
 <li>WebSocket login endpoint: <code>` + htmlEscape(wsURL) + `</code></li>
 </ul>
+<h2>Choose your client</h2>
+<table border="1">
+<tr><th>Surface</th><th>Best for</th><th>Why pick it</th></tr>
+<tr><td>SSH</td><td>real callers</td><td>The full ANSI board feel with menus, mail, files, and doors.</td></tr>
+<tr><td>Web terminal</td><td>browser users</td><td>No terminal client required; good for quick access and testing.</td></tr>
+<tr><td>IRC</td><td>chat regulars</td><td>Same live chat layer as the web UI, but in an IRC client.</td></tr>
+</table>
+<h2>First call checklist</h2>
+<ol>
+<li>Connect with SSH or the web terminal.</li>
+<li>Read the MOTD and announcement.</li>
+<li>Open boards, chat, and doors once so the main surfaces are familiar.</li>
+<li>If you are just exploring, use the guided tour first.</li>
+</ol>
 <p><a href="/login">Sign in with account</a> | <a href="/help">help</a></p>
 ` + tourLink + `
 ` + termBlock + `
@@ -2361,6 +2393,18 @@ func (a *webApp) handleGuestTour(w http.ResponseWriter, r *http.Request) {
 <h2>One-Liners</h2><ul>` + chatRows.String() + `</ul>
 <h2>Featured Thread</h2><p>` + htmlEscape(feature) + `</p>
 <h2>Today's Download Pick</h2><p>` + htmlEscape(downloadPick) + `</p>
+<h2>How to become a caller</h2>
+<ol>
+<li>Create or use an account from <a href="/login">/login</a>.</li>
+<li>Use <a href="/connect">/connect</a> for SSH, web terminal, or IRC details.</li>
+<li>After login, start with boards, chat, and doors.</li>
+</ol>
+<h2>Why people come back</h2>
+<ul>
+<li>Boards keep the long-form community memory.</li>
+<li>Chat and IRC provide the live social loop.</li>
+<li>Doors and scores add the classic repeat-visit hook.</li>
+</ul>
 </body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -2544,11 +2588,11 @@ func (a *webApp) handleHelp(w http.ResponseWriter, r *http.Request) {
 	troubleMatrix := `<h2>If something feels broken</h2>
 <table border="1">
 <tr><th>Symptom</th><th>Where to look first</th><th>Practical next move</th></tr>
-<tr><td>I cannot tell what to do after install</td><td><a href="/admin/setup">/admin/setup</a>, <code>docs/START_HERE.md</code></td><td>Use the launch checklist and finish the four setup steps in order.</td></tr>
+<tr><td>I cannot tell what to do after install</td><td><a href="/admin/launch">/admin/launch</a>, <code>docs/START_HERE.md</code></td><td>Use Launch Center first, then finish the setup steps in order.</td></tr>
 <tr><td>The board feels empty</td><td><a href="/admin/setup?step=4">/admin/setup?step=4</a>, <a href="/boards">/boards</a></td><td>Seed default boards, post a starter message, and create a caller account.</td></tr>
 <tr><td>Chat or IRC seems wrong</td><td><a href="/chat">/chat</a>, <a href="/admin/chat">/admin/chat</a>, <a href="/status">/status</a></td><td>Verify <code>#lobby</code>, moderation state, and bridge health before inviting users.</td></tr>
 <tr><td>Browser routes work but launch still feels risky</td><td><a href="/status">/status</a>, <a href="/admin/system">/admin/system</a></td><td>Use the readiness views and fix warnings before you announce the board.</td></tr>
-<tr><td>I need operator docs fast</td><td><code>docs/LAUNCH_CHECKLIST.md</code>, <code>docs/TROUBLESHOOTING.md</code></td><td>Use the checklist first, then the troubleshooting guide if a command or surface is failing.</td></tr>
+<tr><td>I need operator docs fast</td><td><code>docs/LAUNCH_CHECKLIST.md</code>, <code>docs/OPERATOR_PLAYBOOK.md</code></td><td>Use the checklist for go-live order, then the playbook when you need to know which screen or command to use next.</td></tr>
 </table>`
 
 	page := `<html><body>
@@ -2610,6 +2654,7 @@ func (a *webApp) handleHelp(w http.ResponseWriter, r *http.Request) {
 <ul>
 <li><code>docs/START_HERE.md</code></li>
 <li><code>docs/LAUNCH_CHECKLIST.md</code></li>
+<li><code>docs/OPERATOR_PLAYBOOK.md</code></li>
 <li><code>docs/TROUBLESHOOTING.md</code></li>
 <li><code>docs/OPERATIONS.md</code></li>
 <li><code>docs/help-guides.md</code></li>
@@ -3303,8 +3348,12 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 		for _, row := range boardRows {
 			rows.WriteString(`<tr><td>` + strconv.FormatInt(row.Board.ID, 10) + `</td><td><a href="/boards?board=` + strconv.FormatInt(row.Board.ID, 10) + `">` + htmlEscape(row.Board.Name) + `</a></td><td>` + htmlEscape(defaultConferenceValue(row.Board.Conference)) + `</td><td>` + strconv.Itoa(row.MessageCount) + `</td><td>` + strconv.Itoa(row.NewCount) + `</td><td>` + strconv.Itoa(row.MyPosts) + `</td><td>` + strconv.Itoa(row.Mentions) + `</td><td>` + htmlEscape(row.LastAt) + `</td><td>` + htmlEscape(row.LastSubject) + `</td></tr>`)
 		}
+		emptyBoardHelper := ""
 		if rows.Len() == 0 {
 			rows.WriteString(`<tr><td colspan="9">No boards matched the current filters.</td></tr>`)
+			if a.hasRole(user, roleAdmin) {
+				emptyBoardHelper = `<article class="wolfbbs-card"><h2>Board Launch Tip</h2><p>The board list is empty from the caller point of view. That usually means setup is not finished, content has not been seeded, or the current filters are too narrow.</p><p><a href="/admin/launch">Launch Center</a> | <a href="/admin/setup?step=4">Seed Default Boards</a> | <a href="/admin/boards">Board Admin</a></p></article>`
+			}
 		}
 		quickJumpBlock := ""
 		if a.quickJump {
@@ -3372,11 +3421,12 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 %s
 %s
 %s
+%s
 <p><strong>Tip:</strong> Select a board to read, then open a message ID to reply/report. Use search, conference, and mode filters to work your unread and mention queues.</p>
 <h1>Message Boards</h1>
 <table border="1">
 <tr><th>ID</th><th>Board</th><th>Conf</th><th>Topics</th><th>New</th><th>Mine</th><th>Mentions</th><th>Last</th><th>Last subject</th></tr>%s</table>
-</body></html>`, user.Handle, discoverLink, messageBlock, motdBlock, announcementBlock, quickJumpBlock, confFilterBlock, dashboardBlock, rows.String())
+</body></html>`, user.Handle, discoverLink, messageBlock, motdBlock, announcementBlock, quickJumpBlock, confFilterBlock, dashboardBlock, emptyBoardHelper, rows.String())
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(page))
 		return
@@ -4719,6 +4769,16 @@ func (a *webApp) buildSetupReadinessSnapshot(user *domain.User) statusSnapshot {
 	}
 }
 
+func launchVerdictText(snapshot statusSnapshot) string {
+	if snapshot.Summary.Warn == 0 {
+		return "Caller-ready baseline reached"
+	}
+	if snapshot.Summary.Pass >= snapshot.Summary.Total-2 {
+		return "Close to launch"
+	}
+	return "Needs operator attention"
+}
+
 func (a *webApp) handleStatusCenter(w http.ResponseWriter, r *http.Request) {
 	user, ok := a.currentUser(r)
 	if !ok {
@@ -4732,8 +4792,13 @@ func (a *webApp) handleStatusCenter(w http.ResponseWriter, r *http.Request) {
 
 	snapshot := a.buildStatusSnapshot(user)
 	adminLink := ""
+	launchBlock := ""
 	if a.hasRole(user, roleAdmin) {
 		adminLink = ` | <a href="/admin/system">sysop system</a>`
+		readiness := a.buildSetupReadinessSnapshot(user)
+		launchBlock = `<h2>Launch Readiness</h2>` +
+			`<p><strong>Verdict:</strong> ` + htmlEscape(launchVerdictText(readiness)) + ` | ` + strconv.Itoa(readiness.Summary.Pass) + `/` + strconv.Itoa(readiness.Summary.Total) + ` launch checks PASS</p>` +
+			`<p><a href="/admin/launch">Launch Center</a> | <a href="/admin/setup">Setup Wizard</a> | <a href="/admin/users">Create Caller</a></p>`
 	}
 	rows := strings.Builder{}
 	for _, row := range snapshot.Checks {
@@ -4747,6 +4812,7 @@ func (a *webApp) handleStatusCenter(w http.ResponseWriter, r *http.Request) {
 		`<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/radar">radar</a> | <a href="/clubhouse">clubhouse</a> | <a href="/doors">doors</a> | <a href="/config">config</a> | <a href="/settings">settings</a> | <a href="/help">help</a> | <a href="/logout">logout</a>` + adminLink + `</p>` +
 		`<p><strong>Summary:</strong> ` + strconv.Itoa(snapshot.Summary.Pass) + `/` + strconv.Itoa(snapshot.Summary.Total) + ` PASS, ` + strconv.Itoa(snapshot.Summary.Warn) + ` WARN | generated ` + snapshot.GeneratedAt.Local().Format("2006-01-02 15:04:05") + `</p>` +
 		`<p><a href="/statusz">Machine-readable status JSON (/statusz)</a> | <a href="/radar">Caller Radar</a> | <a href="/clubhouse">Clubhouse</a></p>` +
+		launchBlock +
 		`<h2>Checks</h2><table border="1"><tr><th>Function</th><th>State</th><th>Details</th></tr>` + rows.String() + `</table>` +
 		`<h2>Recommendations</h2><ul>` + recoRows.String() + `</ul></body></html>`
 	w.WriteHeader(http.StatusOK)
@@ -4779,7 +4845,15 @@ func (a *webApp) handleConfigCenter(w http.ResponseWriter, r *http.Request) {
 	role := rbac.NormalizeRole(user.Role)
 	adminLinks := ""
 	if a.hasRole(user, roleAdmin) {
-		adminLinks = `<h2>Sysop Configuration Directory</h2><table border="1"><tr><th>Area</th><th>Configure</th><th>Status</th></tr>` +
+		adminLinks = `<h2>Launch Change Order</h2><ol>` +
+			`<li><a href="/admin/launch">/admin/launch</a> for the operator home base and launch verdict.</li>` +
+			`<li><a href="/admin/setup">/admin/setup</a> for identity, safety, and bootstrap actions.</li>` +
+			`<li><a href="/admin/config">/admin/config</a> for runtime services, flags, and exposure.</li>` +
+			`<li><a href="/admin/users">/admin/users</a> to create the first real caller.</li>` +
+			`<li><a href="/status">/status</a> and <a href="/admin/system">/admin/system</a> before launch.</li>` +
+			`</ol>` +
+			`<h2>Sysop Configuration Directory</h2><table border="1"><tr><th>Area</th><th>Configure</th><th>Status</th></tr>` +
+			`<tr><td>Launch center</td><td><a href="/admin/launch">/admin/launch</a></td><td><a href="/status">/status</a></td></tr>` +
 			`<tr><td>Identity + safety baseline</td><td><a href="/admin/setup">/admin/setup</a></td><td><a href="/admin/system">/admin/system</a></td></tr>` +
 			`<tr><td>Runtime toggles + menu editor</td><td><a href="/admin/config">/admin/config</a></td><td><a href="/admin/system">/admin/system</a></td></tr>` +
 			`<tr><td>Users + RBAC + verification</td><td><a href="/admin/users">/admin/users</a></td><td><a href="/admin/audit">/admin/audit</a></td></tr>` +
@@ -4858,11 +4932,24 @@ func (a *webApp) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	errorCount := len(a.latestErrors(1000))
+	readiness := a.buildSetupReadinessSnapshot(user)
+	statusSnapshot := a.buildStatusSnapshot(user)
+	adminActions := strings.Builder{}
+	for _, item := range readiness.Recommendations {
+		adminActions.WriteString(`<li>` + htmlEscape(item) + `</li>`)
+	}
+	if adminActions.Len() == 0 {
+		adminActions.WriteString(`<li>No launch blockers detected. Walk the caller path once more, then announce the board.</li>`)
+	}
 	page := `<html><body><h1>Sysop Control Panel</h1><p>Logged in as ` + user.Handle + `</p>` +
 		`<p><a href="/admin/users">Users</a> | <a href="/admin/boards">Boards</a> | <a href="/admin/mail">Mail</a> | ` +
 		`<a href="/admin/files">Files</a> | <a href="/admin/gateways">Gateways</a> | <a href="/admin/chat">Chat</a> | ` +
-		`<a href="/admin/doors">Doors</a> | <a href="/admin/setup">Setup</a> | <a href="/admin/config">Config</a> | ` +
+		`<a href="/admin/doors">Doors</a> | <a href="/admin/launch">Launch Center</a> | <a href="/admin/setup">Setup</a> | <a href="/admin/config">Config</a> | ` +
 		`<a href="/admin/system">System</a> | <a href="/admin/errors">Errors</a> | <a href="/admin/audit">Audit Log</a> | <a href="/help">Help</a></p>` +
+		`<h2>Launch Digest</h2>` +
+		`<p><strong>Verdict:</strong> ` + htmlEscape(launchVerdictText(readiness)) + ` | ` + strconv.Itoa(readiness.Summary.Pass) + `/` + strconv.Itoa(readiness.Summary.Total) + ` launch checks PASS | ` + strconv.Itoa(statusSnapshot.Summary.Warn) + ` runtime warnings | ` + strconv.Itoa(errorCount) + ` runtime errors logged</p>` +
+		`<p><a href="/admin/launch">Open Launch Center</a> | <a href="/admin/setup">Finish setup</a> | <a href="/status">Caller status center</a></p>` +
+		`<ul>` + adminActions.String() + `</ul>` +
 		`<ul><li>Users: list/search, disable, ban, reset passwords</li>` +
 		`<li>Boards: create, edit, delete, permissions</li>` +
 		`<li>Mail: audit, limit controls</li>` +
@@ -4873,6 +4960,68 @@ func (a *webApp) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		`<li>Gateway controls, setup checks, runtime config, and server health</li></ul>` +
 		`<p><a href="/scores">Door Scores & Trophies</a></p>` +
 		`<p>Read-only mode: ` + boolToText(a.readOnly) + ` | Runtime errors logged: ` + strconv.Itoa(errorCount) + `</p></body></html>`
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(page))
+}
+
+func (a *webApp) handleAdminLaunch(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	readiness := a.buildSetupReadinessSnapshot(user)
+	runtime := a.buildStatusSnapshot(user)
+	readinessRows := strings.Builder{}
+	for _, row := range readiness.Checks {
+		readinessRows.WriteString(statusRow(row.Name, row.OK, row.Detail))
+	}
+	runtimeRows := strings.Builder{}
+	for _, row := range runtime.Checks {
+		runtimeRows.WriteString(statusRow(row.Name, row.OK, row.Detail))
+	}
+	launchActionRows := strings.Builder{}
+	for _, row := range readiness.Recommendations {
+		launchActionRows.WriteString(`<li>` + htmlEscape(row) + `</li>`)
+	}
+	for _, row := range runtime.Recommendations {
+		launchActionRows.WriteString(`<li>` + htmlEscape(row) + `</li>`)
+	}
+	if launchActionRows.Len() == 0 {
+		launchActionRows.WriteString(`<li>No immediate issues detected. Validate the real caller path and publish the board.</li>`)
+	}
+	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Launch Center</title></head><body><h1>Launch Center</h1>` +
+		`<p><a href="/admin">back</a> | <a href="/admin/setup">setup</a> | <a href="/admin/config">config</a> | <a href="/admin/system">system</a> | <a href="/status">status</a> | <a href="/help">help</a></p>` +
+		`<p>Use this page as the sysop home base for first-run, pre-launch review, and support triage.</p>` +
+		`<h2>Launch Summary</h2>` +
+		`<p><strong>Verdict:</strong> ` + htmlEscape(launchVerdictText(readiness)) + ` | ` + strconv.Itoa(readiness.Summary.Pass) + `/` + strconv.Itoa(readiness.Summary.Total) + ` launch checks PASS | runtime ` + strconv.Itoa(runtime.Summary.Warn) + ` WARN</p>` +
+		`<p><a href="/admin/setup">Setup Wizard</a> | <a href="/admin/users">Create Caller</a> | <a href="/boards">Walk Boards</a> | <a href="/chat">Walk Chat</a> | <a href="/doors">Walk Doors</a></p>` +
+		`<h2>Launch Checks</h2><table border="1"><tr><th>Check</th><th>Status</th><th>Details</th></tr>` + readinessRows.String() + `</table>` +
+		`<h2>Runtime Checks</h2><table border="1"><tr><th>Check</th><th>Status</th><th>Details</th></tr>` + runtimeRows.String() + `</table>` +
+		`<h2>Next Best Actions</h2><ul>` + launchActionRows.String() + `</ul>` +
+		`<h2>Run In This Order</h2><ol>` +
+		`<li><a href="/admin/setup">/admin/setup</a> for identity, safety, and bootstrap actions.</li>` +
+		`<li><a href="/admin/config">/admin/config</a> for runtime flags, services, and public-facing behavior.</li>` +
+		`<li><a href="/admin/users">/admin/users</a> to create at least one non-sysop caller.</li>` +
+		`<li><a href="/boards">/boards</a>, <a href="/chat">/chat</a>, <a href="/doors">/doors</a>, and <a href="/scores">/scores</a> as a real user.</li>` +
+		`<li><a href="/status">/status</a> and <a href="/admin/system">/admin/system</a> before you announce the board.</li>` +
+		`</ol>` +
+		`<h2>Operator Commands</h2><pre>bash install.sh --status
+bash install.sh --doctor
+bash install.sh --repair
+bash install.sh --logs
+bash install.sh --upgrade</pre>` +
+		`<h2>Operator Docs</h2><ul>` +
+		`<li><code>docs/START_HERE.md</code></li>` +
+		`<li><code>docs/LAUNCH_CHECKLIST.md</code></li>` +
+		`<li><code>docs/OPERATOR_PLAYBOOK.md</code></li>` +
+		`<li><code>docs/TROUBLESHOOTING.md</code></li>` +
+		`<li><code>docs/OPERATIONS.md</code></li>` +
+		`</ul></body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
 }
@@ -5027,12 +5176,7 @@ func (a *webApp) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
 	for _, item := range readiness.Recommendations {
 		readinessItems.WriteString(`<li>` + htmlEscape(item) + `</li>`)
 	}
-	readinessVerdict := "Needs launch work"
-	if readiness.Summary.Warn == 0 {
-		readinessVerdict = "Caller-ready baseline reached"
-	} else if readiness.Summary.Pass >= readiness.Summary.Total-2 {
-		readinessVerdict = "Close to launch"
-	}
+	readinessVerdict := launchVerdictText(readiness)
 
 	csrf := a.csrfHiddenInput(r)
 	noticeBlock := ""
@@ -5069,7 +5213,7 @@ func (a *webApp) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
 		`<li><strong>Read-only mode</strong> is for maintenance, not normal launch.</li>` +
 		`<li><strong>Guest tour</strong>, discover, and quick jump are experience choices, not hard requirements.</li>` +
 		`</ul>`
-	page := `<html><body><h1>Setup & Install</h1><p><a href="/admin">back</a> | <a href="/admin/system">system</a> | <a href="/help">help</a></p>` +
+	page := `<html><body><h1>Setup & Install</h1><p><a href="/admin">back</a> | <a href="/admin/launch">launch</a> | <a href="/admin/system">system</a> | <a href="/help">help</a></p>` +
 		`<p>Use this screen to verify base services and bootstrap sysop dependencies after install/upgrade.</p>` +
 		`<p>UI-first setup: keep installer flags minimal; set board identity and runtime policy here.</p>` +
 		`<h2>Setup Wizard</h2>` +
@@ -5117,6 +5261,7 @@ func (a *webApp) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
 		`<ul>` +
 		`<li>Start here: <code>docs/START_HERE.md</code></li>` +
 		`<li>Launch checklist: <code>docs/LAUNCH_CHECKLIST.md</code></li>` +
+		`<li>Operator playbook: <code>docs/OPERATOR_PLAYBOOK.md</code></li>` +
 		`<li>Troubleshooting: <code>docs/TROUBLESHOOTING.md</code></li>` +
 		`<li>Operations guide: <code>docs/OPERATIONS.md</code></li>` +
 		`<li>Installer docs: <code>docs/INSTALL.md</code></li>` +

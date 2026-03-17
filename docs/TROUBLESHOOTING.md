@@ -23,6 +23,7 @@ Useful generated files:
 ### I am not sure what to do next after install
 
 - Open `FIRST_STEPS.txt`
+- Open `/admin/launch`
 - Read [START_HERE.md](START_HERE.md)
 - Finish `/admin/setup`
 

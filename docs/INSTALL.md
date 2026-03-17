@@ -97,12 +97,13 @@ What you have at the end:
 The installer prints a first-login block. Use it in this order:
 
 1. sign in to `/admin`
-2. finish `/admin/setup`
-3. review `/admin/config`
-4. create at least one non-sysop user
-5. verify SSH, web chat, boards, and doors
-6. run `bash install.sh --status`
-7. if anything feels wrong, run `bash install.sh --doctor`
+2. open `/admin/launch`
+3. finish `/admin/setup`
+4. review `/admin/config`
+5. create at least one non-sysop user
+6. verify SSH, web chat, boards, and doors
+7. run `bash install.sh --status`
+8. if anything feels wrong, run `bash install.sh --doctor`
 
 ## Install From GitHub Release Bundle
 

@@ -123,6 +123,8 @@ async function sendIrcMessage({
 test("connect page exposes the web terminal entrypoint", async ({ page }) => {
   await page.goto("/connect");
   await expect(page.locator("h1")).toContainText(/Connect/i);
+  await expect(page.locator("body")).toContainText("Choose your client");
+  await expect(page.locator("body")).toContainText("First call checklist");
   await expect(page.locator("#xterm")).toBeVisible();
   await expect(page.locator("#termStatus")).toContainText(/connecting|connected|disconnected|socket error/i);
   await expect(page.locator("body")).toContainText("ws-login");
@@ -245,6 +247,13 @@ test("admin journey enforces RBAC and exposes sysop pages", async ({ browser }) 
   await login(adminPage, ADMIN_HANDLE, ADMIN_PASSWORD, "/admin/login");
   await expect(adminPage).toHaveURL(/\/admin$/);
   await expect(adminPage.locator("h1")).toContainText("Sysop Control Panel");
+  await expect(adminPage.locator("body")).toContainText("Launch Digest");
+
+  await adminPage.goto("/admin/launch");
+  await expect(adminPage.locator("h1")).toContainText("Launch Center");
+  await expect(adminPage.locator("body")).toContainText("Operator Commands");
+  await expect(adminPage.locator("body")).toContainText("docs/OPERATOR_PLAYBOOK.md");
+  await adminPage.goto("/admin");
 
   await adminPage.locator('a[href="/admin/users"]').focus();
   await adminPage.keyboard.press("Enter");
