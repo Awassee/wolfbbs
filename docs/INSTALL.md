@@ -69,7 +69,9 @@ What the bootstrap does:
 1. Downloads the current `install.sh` to a temp location.
 2. Runs the installer with any flags you pass after `bash -s --`.
 3. Installs base dependencies and Docker runtime when supported.
-4. Clones or updates a managed WolfBBS checkout under `<prefix>/app`.
+4. Fetches or updates a managed WolfBBS checkout under `<prefix>/app`.
+   - uses `git` when it is available
+   - falls back to a GitHub archive download when `git` is not installed
 5. Writes runtime config into `<prefix>/.env`.
 6. Starts the stack and prints first-login steps.
 
@@ -177,14 +179,15 @@ Use this sequence:
 ## What the Installer Does
 
 1. Detects OS, architecture, package manager.
-2. Ensures required tools are present (`curl`, `git`, `openssl`, `sed`, `awk`, `grep`, `nc`).
+2. Ensures required tools are present (`curl`, `tar`, `openssl`, `sed`, `awk`, `grep`, `nc`).
 3. Installs missing base dependencies automatically when possible.
 4. Ensures Docker runtime is available.
    - Linux: installs Docker Engine + compose plugin when needed.
    - macOS: supports Docker Desktop or Colima; with `--yes --install-brew`, can bootstrap Colima stack.
 5. Resolves compose file.
    - Uses local repo if present.
-   - If missing and `--repo`/`--repo-url` set, clones/updates into `--prefix`.
+   - If missing and `--repo`/`--repo-url` set, fetches/updates into `--prefix`.
+   - GitHub repos can be downloaded without `git` by using archive fallback.
 6. Generates `.env` (unless existing and no `--force`), sets `chmod 600`.
 7. Runs `docker compose up -d --build`.
 8. Verifies health and key ports.

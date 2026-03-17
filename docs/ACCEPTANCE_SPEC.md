@@ -411,13 +411,17 @@ INS-LNX-001 (MUST) Detect distro + package manager (apt/dnf/pacman)
   Evidence:
     install logs show detection
 
-INS-LNX-002 (MUST) Installs prereqs or clearly instructs (curl, git, openssl, docker)
+INS-LNX-002 (MUST) Installs prereqs or clearly instructs (curl, tar, openssl, docker)
   Evidence:
     docs/INSTALL.md + installer output
 
 INS-LNX-003 (MUST) Supports curl|bash bootstrap
   Evidence:
-    docs/INSTALL.md provides one-liner; installer supports running outside repo by cloning.
+    docs/INSTALL.md provides one-liner; installer supports running outside repo without requiring git.
+
+INS-010 (MUST) Standalone install path works without git preinstalled for GitHub-hosted repo bootstrap
+  Evidence:
+    installer dry-run from a temp directory succeeds with `git` unavailable and reports archive download fallback
 
 ---------------------------
 macOS-specific (REQUIRED)

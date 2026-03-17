@@ -126,7 +126,7 @@ file_contains() {
 
 check_linux_prereq_docs() {
   grep -Eiq 'curl' docs/INSTALL.md &&
-    grep -Eiq 'git' docs/INSTALL.md &&
+    grep -Eiq 'tar' docs/INSTALL.md &&
     grep -Eiq 'openssl' docs/INSTALL.md &&
     grep -Eiq 'docker' docs/INSTALL.md
 }
@@ -164,7 +164,7 @@ check_installer_linux_detection() {
 
 check_bootstrap_docs() {
   grep -Eiq 'curl -fsSL' docs/INSTALL.md &&
-    search_tree_quiet 'repo-url|git clone' install.sh
+    search_tree_quiet 'repo-url|download_repo_archive|git clone' install.sh
 }
 
 check_brew_handling() {
@@ -186,6 +186,33 @@ check_ci_fast_verify() {
 
 check_ci_smoke_workflow() {
   search_tree_quiet 'integration-smoke|docker compose up' .github/workflows
+}
+
+check_installer_no_git_dry_run() {
+  local tmpdir=""
+  local fakebin=""
+  local output=""
+  local status=0
+  local installer_copy=""
+
+  tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/wolfbbs-verify-nogit.XXXXXX")"
+  fakebin="${tmpdir}/fakebin"
+  installer_copy="${tmpdir}/install.sh"
+  mkdir -p "$fakebin"
+  cat >"${fakebin}/git" <<'EOF'
+#!/usr/bin/env bash
+exit 127
+EOF
+  chmod +x "${fakebin}/git"
+  cp "${ROOT_DIR}/install.sh" "$installer_copy"
+  chmod +x "$installer_copy"
+  output="$(
+    cd "$tmpdir" &&
+      PATH="${fakebin}:$PATH" bash "$installer_copy" --dry-run --yes --with-docker --repo Awassee/wolfbbs --prefix "${tmpdir}/prefix" 2>&1
+  )" || status=$?
+  rm -rf "$tmpdir"
+  [[ "$status" -eq 0 ]] || return 1
+  printf '%s' "$output" | grep -Eiq 'download repository archive'
 }
 
 compose_file() {
@@ -431,6 +458,7 @@ run_static_checks() {
   must "INS-007" "docs state docker compose as default install path" file_contains "docs/INSTALL.md" "Docker-based install"
   must "INS-008" "installer has post-install verification hooks" check_installer_verification_hooks
   must "INS-009" "installer prints connection summary strings" check_installer_summary_strings
+  must "INS-010" "standalone installer dry-run works without git by using archive fallback" check_installer_no_git_dry_run
   must "INS-LNX-001" "installer detects linux distro and package manager" check_installer_linux_detection
   must "INS-LNX-002" "linux prereqs documented" check_linux_prereq_docs
   must "INS-LNX-003" "curl|bash bootstrap documented" check_bootstrap_docs
