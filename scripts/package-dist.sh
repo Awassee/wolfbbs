@@ -132,7 +132,7 @@ for platform in "${PLATFORMS[@]}"; do
   done
 
   cp README.md docker-compose.yml .env.example install.sh "$bundle_root/"
-  cp docs/INSTALL.md docs/ACCEPTANCE_SPEC.md docs/doors.md docs/chat.md docs/admin.md "$bundle_root/docs/"
+  cp docs/INSTALL.md docs/ACCEPTANCE_SPEC.md docs/feature-reference.md docs/irc-compat.md docs/doors.md docs/chat.md docs/admin.md "$bundle_root/docs/"
   cp scripts/verify.sh scripts/build.sh "$bundle_root/scripts/"
   chmod +x "$bundle_root/install.sh" "$bundle_root/scripts/verify.sh" "$bundle_root/scripts/build.sh"
   chmod +x "$bundle_root/bin/"*
@@ -146,7 +146,7 @@ Contents:
 - bin/: server, web, irc, mailin, trivia, and oputil binaries
 - install.sh: installer and upgrade entrypoint
 - docker-compose.yml + .env.example: default stack runtime
-- docs/: install, acceptance, doors, chat, and admin references
+- docs/: install, acceptance, feature reference, irc compatibility, doors, chat, and admin references
 - scripts/: verify and build helpers
 
 Quick start:
@@ -157,12 +157,15 @@ EOF
 
   tarball="$release_dir/${bundle_name}.tar.gz"
   tar -C "$stage_dir" -czf "$tarball" "$bundle_name"
-  sha256_file "$tarball" >>"$checksums_file"
+  (
+    cd "$release_dir"
+    sha256_file "$(basename "$tarball")"
+  ) >>"$checksums_file"
   {
     echo "$bundle_name"
     echo "  tarball: $(basename "$tarball")"
     echo "  binaries: ${#targets[@]}"
-    echo "  docs: INSTALL, ACCEPTANCE_SPEC, doors, chat, admin"
+    echo "  docs: INSTALL, ACCEPTANCE_SPEC, feature-reference, irc-compat, doors, chat, admin"
   } >>"$manifest_file"
   rm -rf "$stage_dir"
 done

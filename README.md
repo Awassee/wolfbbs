@@ -20,6 +20,20 @@ git clone https://github.com/seanheiney/wolfbbs.git wolfbbs && cd wolfbbs && bas
 git clone https://github.com/seanheiney/wolfbbs.git wolfbbs && cd wolfbbs && bash install.sh
 ```
 
+## GitHub release bundles
+
+If you want a packaged download instead of cloning source, use the platform tarballs on the GitHub Releases page:
+
+- [GitHub Releases](https://github.com/seanheiney/wolfbbs/releases)
+
+After downloading the matching archive for your platform:
+
+```bash
+tar -xzf wolfbbs_<version>_<os>_<arch>.tar.gz
+cd wolfbbs_<version>_<os>_<arch>
+bash install.sh --yes
+```
+
 Optional `curl|bash` (requires public raw URL access):
 
 ```bash

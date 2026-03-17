@@ -294,7 +294,17 @@ run_static_checks() {
       else
         fail_must "C-005" "irc port exposure configured"
       fi
-      if echo "$cfg" | grep -Eiq '(:|published:[[:space:]]*")6697("|$)|IRC_TLS_PORT|WOLFBBS_IRC_TLS_PORT'; then
+      if printf '%s\n' "$cfg" | awk '
+        BEGIN { in_irc=0; target=0; published=0 }
+        /^  irc:$/ { in_irc=1; next }
+        in_irc && /^  [^ ]/ { in_irc=0 }
+        in_irc {
+          if ($1 == "target:" && $2 == "6697") target=1
+          if ($1 == "published:" && $2 ~ /^"?[0-9]+"?$/) published=1
+          if ($0 ~ /WOLFBBS_IRC_TLS_PORT/) { target=1; published=1 }
+        }
+        END { exit !(target && published) }
+      '; then
         pass "C-006" "irc tls exposure configured"
       else
         warn_should "C-006" "irc tls exposure configured"

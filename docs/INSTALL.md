@@ -36,6 +36,20 @@ Interactive menu mode (no flags):
 git clone https://github.com/seanheiney/wolfbbs.git wolfbbs && cd wolfbbs && bash install.sh
 ```
 
+## Install From GitHub Release Bundle
+
+If you prefer a packaged download instead of cloning the repo, download the archive matching your platform from:
+
+- [GitHub Releases](https://github.com/seanheiney/wolfbbs/releases)
+
+Then unpack and run the installer from the bundle root:
+
+```bash
+tar -xzf wolfbbs_<version>_<os>_<arch>.tar.gz
+cd wolfbbs_<version>_<os>_<arch>
+bash install.sh --yes
+```
+
 If the repository is private and HTTPS clone fails, use SSH clone instead:
 
 ```bash
