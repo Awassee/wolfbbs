@@ -138,6 +138,26 @@ test("user web journey supports keyboard navigation and status/config visibility
   await login(page, USER_HANDLE, USER_PASSWORD);
   await expect(page).toHaveURL(/\/boards$/);
   await expect(page.locator("h1")).toContainText("Message Boards");
+  await expect(page.locator("#wolfbbsCommandButton")).toContainText(/Jump \/ Search/i);
+  await expect(page.locator("body")).toContainText("Caller Cockpit");
+
+  await page.goto("/doors");
+  await expect(page.locator("h1")).toContainText("Door Cockpit");
+  await expect(page.locator("body")).toContainText("Recommended For This Caller");
+  await expect(page.locator("body")).toContainText("Directory");
+
+  await page.goto("/radar");
+  await expect(page.locator("h1")).toContainText("Caller Radar");
+  await expect(page.locator("body")).toContainText("Board Pulse");
+  await expect(page.locator("body")).toContainText("Live Caller Radar");
+
+  await page.goto("/clubhouse");
+  await expect(page.locator("h1")).toContainText("Clubhouse");
+  await expect(page.locator("body")).toContainText("OneLinerz Wall");
+  await page.fill('input[name="text"]', "Playwright clubhouse line");
+  await page.getByRole("button", { name: "Post" }).click();
+  await expect(page.locator("body")).toContainText("One-liner posted");
+  await expect(page.locator("body")).toContainText("Playwright clubhouse line");
 
   await page.locator('a[href="/mail"]').focus();
   await page.keyboard.press("Enter");
@@ -531,4 +551,113 @@ test("irc message is visible in web chat", async ({ browser }) => {
     })
     .not.toContain("[undefined] undefined: undefined");
   await ctx.close();
+});
+
+test("support, discovery, reset, and activitypub surfaces behave like real user flows", async ({
+  browser,
+  page,
+}) => {
+  await page.goto("/help");
+  await expect(page.locator("h1")).toContainText(/Help/i);
+  await expect(page.locator("body")).toContainText("Current role: guest");
+
+  await page.goto("/tour");
+  await expect(page.locator("h1")).toContainText("Guided Tour");
+  await expect(page.locator("body")).toContainText("Last Callers");
+
+  await login(page, USER_HANDLE, USER_PASSWORD);
+  await page.goto("/help");
+  await expect(page.locator("body")).toContainText("Current role: user");
+  await expect(page.locator("body")).toContainText("/scores");
+
+  await page.goto("/discover");
+  await expect(page.locator("h1")).toContainText("Since Your Last Call");
+  await page.fill('input[name="q"]', USER_HANDLE);
+  await page.getByRole("button", { name: "Save Search" }).click();
+  await expect(page.locator("body")).toContainText(USER_HANDLE);
+
+  await page.goto("/scores");
+  await expect(page.locator("h1")).toContainText("Door Scores & Trophies");
+  await expect(page.locator("body")).toContainText(/No scores yet|Door filter:/);
+
+  const statusPayload = await page.evaluate(async () => {
+    const res = await fetch("/statusz");
+    return { status: res.status, json: await res.json() };
+  });
+  expect(statusPayload.status).toBe(200);
+  expect(Array.isArray(statusPayload.json.checks)).toBeTruthy();
+  expect(statusPayload.json.role).toBe("user");
+
+  const baseOrigin = new URL(page.url()).origin;
+  const apPayload = await page.evaluate(async ({ userHandle, adminHandle, baseURL }) => {
+    const webfinger = await fetch(
+      `/.well-known/webfinger?resource=${encodeURIComponent(`acct:${userHandle}@127.0.0.1:18080`)}`,
+    );
+    const actor = await fetch(`/ap/users/${encodeURIComponent(userHandle)}`);
+    const outbox = await fetch(`/ap/users/${encodeURIComponent(userHandle)}/outbox`);
+    const inbox = await fetch(`/ap/users/${encodeURIComponent(adminHandle)}/inbox`, {
+      method: "POST",
+      headers: { "Content-Type": "application/activity+json" },
+      body: JSON.stringify({
+        id: `${baseURL}/qa-follow-${Date.now()}`,
+        type: "Follow",
+        actor: "https://remote.example/users/qa",
+        object: `${baseURL}/ap/users/${adminHandle}`,
+      }),
+    });
+    return {
+      webfingerStatus: webfinger.status,
+      webfinger: await webfinger.json(),
+      actorStatus: actor.status,
+      actor: await actor.json(),
+      outboxStatus: outbox.status,
+      outbox: await outbox.json(),
+      inboxStatus: inbox.status,
+      inbox: await inbox.json(),
+    };
+  }, { userHandle: USER_HANDLE, adminHandle: ADMIN_HANDLE, baseURL: baseOrigin });
+  expect(apPayload.webfingerStatus).toBe(200);
+  expect(apPayload.webfinger.subject).toContain(`acct:${USER_HANDLE}@`);
+  expect(apPayload.actorStatus).toBe(200);
+  expect(apPayload.actor.type).toBe("Person");
+  expect(apPayload.outboxStatus).toBe(200);
+  expect(apPayload.outbox.type).toBe("OrderedCollection");
+  expect(apPayload.inboxStatus).toBe(202);
+  expect(apPayload.inbox.status).toBe("accepted");
+
+  const adminCtx = await browser.newContext();
+  const adminPage = await adminCtx.newPage();
+  await login(adminPage, ADMIN_HANDLE, ADMIN_PASSWORD, "/admin/login");
+  await expect(adminPage).toHaveURL(/\/admin$/);
+  await adminPage.goto("/admin/users");
+  await expect(adminPage.locator("h1")).toContainText("Sysop Users");
+  const resetHandle = `reset${Date.now().toString(36).slice(-6)}`;
+  let csrf = await csrfFrom(adminPage);
+  await postForm(adminPage, "/admin/users", {
+    csrf_token: csrf,
+    action: "create",
+    handle: resetHandle,
+    password: "resetpass1",
+    role: "user",
+  }, [200]);
+  await adminCtx.close();
+
+  await page.goto("/logout");
+  await page.goto("/reset/request");
+  await expect(page.locator("h1")).toContainText("Password Reset");
+  await page.fill('input[name="handle"]', resetHandle);
+  await page.getByRole("button", { name: "Issue Reset Token" }).click();
+  const resetBody = await page.locator("body").innerText();
+  const tokenMatch = resetBody.match(/Dev token:\s*([A-Za-z0-9]+)/);
+  expect(tokenMatch).not.toBeNull();
+  const resetToken = tokenMatch[1];
+
+  await page.goto(`/reset/complete?token=${encodeURIComponent(resetToken)}`);
+  await expect(page.locator("h1")).toContainText("Set New Password");
+  await page.fill('input[name="password"]', "resetpass2");
+  await page.getByRole("button", { name: "Reset Password" }).click();
+  await expect(page).toHaveURL(/\/login$/);
+
+  await login(page, resetHandle, "resetpass2");
+  await expect(page).toHaveURL(/\/boards$/);
 });

@@ -18,7 +18,9 @@ import (
 	"wolfbbs/internal/chat"
 	"wolfbbs/internal/config"
 	"wolfbbs/internal/domain"
+	"wolfbbs/internal/doors"
 	"wolfbbs/internal/gateway"
+	"wolfbbs/internal/mods"
 	"wolfbbs/internal/repository"
 )
 
@@ -2321,6 +2323,255 @@ func TestDiscoverDigestAndSavedSearch(t *testing.T) {
 	}
 }
 
+func TestBoardsDashboardAndDoorCockpit(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	boardRepo := repository.NewInMemoryBoardRepository()
+	msgRepo := repository.NewInMemoryMessageRepository()
+	mailRepo := repository.NewInMemoryPrivateMailRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
+	doorRepo := repository.NewInMemoryDoorRepository()
+	authSvc := auth.NewService(userRepo)
+
+	user, err := authSvc.Register("caller", "password123")
+	if err != nil {
+		t.Fatalf("register caller: %v", err)
+	}
+	if err := boardRepo.Create(&domain.Board{Name: "General", Description: "Main", CreatedBy: user.ID}); err != nil {
+		t.Fatalf("create board: %v", err)
+	}
+	if err := msgRepo.CreateMessage(&domain.Message{
+		BoardID:   1,
+		AuthorID:  user.ID,
+		Subject:   "Unread topic",
+		Body:      "hello world",
+		CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("create message: %v", err)
+	}
+	if err := mailRepo.CreateMail(&domain.PrivateMail{
+		FromUserID: 999,
+		ToUserID:   user.ID,
+		Subject:    "Unread mail",
+		Body:       "hello caller",
+		CreatedAt:  time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("create mail: %v", err)
+	}
+	if err := adminRepo.AddCallerHistory(&domain.CallerHistory{
+		SessionID:       "s1",
+		NodeID:          1,
+		Username:        "sysop",
+		Area:            "Doors",
+		RemoteAddr:      "203.0.113.10:2222",
+		LoginAt:         time.Now().UTC().Add(-10 * time.Minute),
+		LogoutAt:        time.Now().UTC().Add(-5 * time.Minute),
+		DurationSeconds: 300,
+	}); err != nil {
+		t.Fatalf("add caller history: %v", err)
+	}
+
+	doorRegistry := doors.NewRegistry()
+	doorRegistry.SetRepository(doorRepo)
+	if err := doorRegistry.LoadManifestDir(filepath.Join("..", "..", "doors")); err != nil {
+		t.Fatalf("load door manifests: %v", err)
+	}
+	lastPlayed := time.Now().UTC().Add(-30 * time.Minute)
+	if err := doorRepo.UpsertUserMeta(&domain.DoorUserMeta{
+		UserID:       user.ID,
+		DoorID:       "dragon-tavern-legends",
+		Favorite:     true,
+		LastPlayedAt: &lastPlayed,
+		PlayCount:    3,
+	}); err != nil {
+		t.Fatalf("seed user meta: %v", err)
+	}
+	if err := doorRepo.AddAchievement(&domain.DoorAchievement{
+		DoorID:          "dragon-tavern-legends",
+		UserID:          user.ID,
+		AchievementCode: "first_quest",
+	}); err != nil {
+		t.Fatalf("seed achievement: %v", err)
+	}
+	if err := doorRepo.SubmitScore(&domain.DoorScore{
+		DoorID:    "dragon-tavern-legends",
+		UserID:    user.ID,
+		ScoreType: "points",
+		Value:     42,
+		CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("seed score: %v", err)
+	}
+	if err := doorRepo.AddEvent(&domain.DoorEvent{
+		DoorID:    "dragon-tavern-legends",
+		UserID:    user.ID,
+		EventType: "door_launch",
+		CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("seed event: %v", err)
+	}
+
+	chatSvc := chat.NewServiceForTest()
+	chatSvc.JoinChannel("caller", "#lobby")
+	chatSvc.JoinChannel("sysop", "#lobby")
+	oneLinerz := mods.NewOneLinerzMod(80)
+	oneLinerz.Add("sysop", "Tonight is door night.")
+	rumorz := mods.NewRumorzMod([]string{"Dragon Tavern is hot tonight."})
+	bbsList := mods.NewBBSListMod(20)
+	bbsList.Add("Night Owl BBS", "bbs.example.com", 23)
+
+	app := &webApp{
+		authSvc:       authSvc,
+		userRepo:      userRepo,
+		boardRepo:     boardRepo,
+		msgRepo:       msgRepo,
+		mailRepo:      mailRepo,
+		adminRepo:     adminRepo,
+		doorRepo:      doorRepo,
+		doorRegistry:  doorRegistry,
+		chatSvc:       chatSvc,
+		sessions:      map[string]sessionState{},
+		discover:      true,
+		quickJump:     true,
+		savedSearches: map[string][]string{},
+		oneLinerzMod:  oneLinerz,
+		rumorzMod:     rumorz,
+		bbsListMod:    bbsList,
+	}
+	sid, ok := app.createSession("caller")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/boards", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.handleBoards(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("boards status = %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"Caller Cockpit", "Door Cockpit", "Last Callers", "Tonight is door night", "Recommended door"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("boards dashboard missing %q: %s", want, body)
+		}
+	}
+	for _, want := range []string{"Caller Radar", "Clubhouse"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("boards dashboard missing new action %q: %s", want, body)
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/doors?mode=favorites", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleDoors(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("doors status = %d", rr.Code)
+	}
+	body = rr.Body.String()
+	for _, want := range []string{"Door Cockpit", "Recommended For This Caller", "Dragon Tavern Legends", "favorite", "door launch"} {
+		if !strings.Contains(strings.ToLower(body), strings.ToLower(want)) {
+			t.Fatalf("door cockpit missing %q: %s", want, body)
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/radar", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleRadar(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("radar status = %d", rr.Code)
+	}
+	body = rr.Body.String()
+	for _, want := range []string{"Caller Radar", "Board Pulse", "Live Caller Radar", "Arcade Heat", "Dragon Tavern is hot tonight."} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("radar missing %q: %s", want, body)
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/clubhouse", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleClubhouse(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("clubhouse status = %d", rr.Code)
+	}
+	body = rr.Body.String()
+	for _, want := range []string{"Clubhouse", "OneLinerz Wall", "Night Owl BBS", "Rumorz", "Tonight is door night"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("clubhouse missing %q: %s", want, body)
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/scores", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleScores(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("scores status = %d", rr.Code)
+	}
+	body = rr.Body.String()
+	for _, want := range []string{"Door Scores & Trophies", "Current Champions", "Your Scorecard", "Dragon Tavern Legends"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("scores missing %q: %s", want, body)
+		}
+	}
+
+	form := url.Values{}
+	form.Set("action", "toggle_favorite")
+	form.Set("door_id", "dragon-tavern-legends")
+	form.Set("csrf_token", app.sessions[sid].csrf)
+	req = httptest.NewRequest(http.MethodPost, "/doors", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleDoors(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("door toggle status = %d", rr.Code)
+	}
+	meta, err := doorRepo.GetUserMeta(user.ID, "dragon-tavern-legends")
+	if err != nil {
+		t.Fatalf("load updated user meta: %v", err)
+	}
+	if meta.Favorite {
+		t.Fatalf("expected favorite to be toggled off, got %+v", meta)
+	}
+
+	form = url.Values{}
+	form.Set("action", "add_oneliner")
+	form.Set("text", "Clubhouse test line")
+	form.Set("csrf_token", app.sessions[sid].csrf)
+	req = httptest.NewRequest(http.MethodPost, "/clubhouse", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleClubhouse(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("clubhouse oneliner post status = %d", rr.Code)
+	}
+	if got := app.oneLinerzMod.List(1); len(got) == 0 || !strings.Contains(got[0].Text, "Clubhouse test line") {
+		t.Fatalf("expected clubhouse one-liner to be posted, got %+v", got)
+	}
+
+	form = url.Values{}
+	form.Set("action", "add_bbs")
+	form.Set("name", "Skyline BBS")
+	form.Set("host", "skyline.example.com")
+	form.Set("port", "2323")
+	form.Set("csrf_token", app.sessions[sid].csrf)
+	req = httptest.NewRequest(http.MethodPost, "/clubhouse", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleClubhouse(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("clubhouse bbs post status = %d", rr.Code)
+	}
+	if got := app.bbsListMod.List(1); len(got) == 0 || got[0].Name != "Skyline BBS" {
+		t.Fatalf("expected clubhouse bbs listing, got %+v", got)
+	}
+}
+
 func TestHandleRootRedirectTargets(t *testing.T) {
 	userRepo := repository.NewInMemoryUserRepository()
 	authSvc := auth.NewService(userRepo)
@@ -2517,6 +2768,15 @@ func TestWebQuickJumpPath(t *testing.T) {
 	}
 	if got := webQuickJumpPath("status"); got != "/status" {
 		t.Fatalf("expected /status, got %q", got)
+	}
+	if got := webQuickJumpPath("doors"); got != "/doors" {
+		t.Fatalf("expected /doors, got %q", got)
+	}
+	if got := webQuickJumpPath("radar"); got != "/radar" {
+		t.Fatalf("expected /radar, got %q", got)
+	}
+	if got := webQuickJumpPath("clubhouse"); got != "/clubhouse" {
+		t.Fatalf("expected /clubhouse, got %q", got)
 	}
 	if got := webQuickJumpPath("unknown"); got != "" {
 		t.Fatalf("expected empty path for unknown target, got %q", got)

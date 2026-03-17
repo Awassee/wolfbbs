@@ -100,6 +100,15 @@ scripts/build.sh --quick   # fast local check
 scripts/build.sh --full    # full smoke + e2e
 ```
 
+Distribution bundle builder:
+
+```bash
+scripts/package-dist.sh
+scripts/package-dist.sh --platform linux/amd64 --platform linux/arm64
+```
+
+This writes versioned tarballs plus checksums under `dist/`.
+
 If local Node is 25+, install/use Node 24 on macOS:
 
 ```bash

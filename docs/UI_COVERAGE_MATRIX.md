@@ -79,6 +79,9 @@ Auto-generated from `docs/function-registry.json`.
 | `web:/config` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/connect` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/discover` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
+| `web:/radar` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
+| `web:/clubhouse` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
+| `web:/doors` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/gateway` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/healthz` | `web_route` | N | N | N | N | `N/A (operational endpoint)` | `/admin/system` |
 | `web:/help` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |

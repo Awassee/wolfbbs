@@ -92,6 +92,8 @@ Reference: `docs/help-guides.md`, `docs/screens.md`.
 - `GET/POST /settings`
 - `GET /status`
 - `GET /config`
+- `GET /radar`
+- `GET/POST /clubhouse`
 - `GET /chat`
 - `POST /chat/send`
 - `GET /chat/stream`

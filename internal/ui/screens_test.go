@@ -97,6 +97,22 @@ func TestRenderBoardAndMailMenus(t *testing.T) {
 			t.Fatalf("files menu missing %q", want)
 		}
 	}
+
+	doorMenu := RenderDoorMenu(80, []DoorMenuItem{
+		{Hotkey: "D", Name: "Dragon Tavern Legends", Category: "rpg", TurnsRemaining: 3, Favorite: true},
+	}, []string{"DRAGON-TAVERN-LEGENDS"}, []string{"SPACE-TRADER-WARS"}, DoorMenuSummary{
+		Total:         12,
+		Visible:       1,
+		Category:      "rpg",
+		FavoritesOnly: true,
+		RecentOnly:    false,
+		Spotlight:     "Dragon Tavern Legends [D] • 3 turns",
+	})
+	for _, want := range []string{"Favorites only", "Category=RPG", "Spotlight:", "Dragon Tavern Legends", "Favorite Toggle"} {
+		if !strings.Contains(doorMenu, want) {
+			t.Fatalf("door menu missing %q", want)
+		}
+	}
 }
 
 func TestRenderSinceLastCallAndGuestTour(t *testing.T) {

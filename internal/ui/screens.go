@@ -405,11 +405,35 @@ type DoorMenuItem struct {
 	Favorite       bool
 }
 
-func RenderDoorMenu(width int, items []DoorMenuItem, favoriteIDs []string, recentIDs []string) string {
+type DoorMenuSummary struct {
+	Total         int
+	Visible       int
+	Category      string
+	FavoritesOnly bool
+	RecentOnly    bool
+	Spotlight     string
+}
+
+func RenderDoorMenu(width int, items []DoorMenuItem, favoriteIDs []string, recentIDs []string, summary DoorMenuSummary) string {
 	lines := []string{
-		"[R]eturn  [Q]uit  [!] Favorite Toggle  [?] Help  [T] Trophies",
+		"[R]eturn  [Q]uit  [!] Favorite Toggle  [F]avorites  [V]Recent  [C]ategory  [?] Help  [T] Trophies",
 		"",
 	}
+	filterParts := []string{fmt.Sprintf("Showing %d of %d", summary.Visible, summary.Total)}
+	if summary.Category != "" {
+		filterParts = append(filterParts, "Category="+strings.ToUpper(summary.Category))
+	}
+	if summary.FavoritesOnly {
+		filterParts = append(filterParts, "Favorites only")
+	}
+	if summary.RecentOnly {
+		filterParts = append(filterParts, "Recent only")
+	}
+	lines = append(lines, strings.Join(filterParts, "  |  "))
+	if strings.TrimSpace(summary.Spotlight) != "" {
+		lines = append(lines, "Spotlight: "+summary.Spotlight)
+	}
+	lines = append(lines, "")
 	if len(favoriteIDs) > 0 {
 		lines = append(lines, "Favorites: "+strings.Join(favoriteIDs, ", "))
 	}
@@ -420,7 +444,7 @@ func RenderDoorMenu(width int, items []DoorMenuItem, favoriteIDs []string, recen
 		lines = append(lines, "")
 	}
 	if len(items) == 0 {
-		lines = append(lines, "No doors configured.")
+		lines = append(lines, "No doors matched the active filter.")
 		return renderPanel(width, "Door Hub", lines, FgYellow) + "\r\n"
 	}
 	lines = append(lines, "HK  Category   Door Name                          Turns  Flags")
@@ -451,6 +475,9 @@ func RenderDoorsHelp(width int) string {
 		"",
 		"[Door hotkey] launch selected door",
 		"!            toggle favorite by hotkey",
+		"F            toggle favorites-only filter",
+		"V            toggle recent-only filter",
+		"C            cycle category filter",
 		"T            open scores and trophies",
 		"Q/Esc/R      return to Main Menu",
 		"",

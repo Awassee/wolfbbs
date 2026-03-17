@@ -411,6 +411,45 @@
       "notes": "Discovered from cmd/wolfbbs-web route registration."
     },
     {
+      "id": "web:/radar",
+      "type": "web_route",
+      "entrypoint": "/radar",
+      "user_tui": true,
+      "user_web": true,
+      "admin_tui": false,
+      "admin_web": false,
+      "config_ui": "/admin/config",
+      "status_ui": "/status",
+      "state_visibility": "enabled/configured/healthy surfaced via status center",
+      "notes": "Discovered from cmd/wolfbbs-web route registration."
+    },
+    {
+      "id": "web:/clubhouse",
+      "type": "web_route",
+      "entrypoint": "/clubhouse",
+      "user_tui": true,
+      "user_web": true,
+      "admin_tui": false,
+      "admin_web": false,
+      "config_ui": "/admin/config",
+      "status_ui": "/status",
+      "state_visibility": "enabled/configured/healthy surfaced via status center",
+      "notes": "Discovered from cmd/wolfbbs-web route registration."
+    },
+    {
+      "id": "web:/doors",
+      "type": "web_route",
+      "entrypoint": "/doors",
+      "user_tui": true,
+      "user_web": true,
+      "admin_tui": false,
+      "admin_web": false,
+      "config_ui": "/admin/config",
+      "status_ui": "/status",
+      "state_visibility": "enabled/configured/healthy surfaced via status center",
+      "notes": "Discovered from cmd/wolfbbs-web route registration."
+    },
+    {
       "id": "web:/gateway",
       "type": "web_route",
       "entrypoint": "/gateway",

@@ -54,10 +54,13 @@ const sharedEnv = [
   `WOLFBBS_BOOTSTRAP_ADMIN_PASSWORD=${shellQuote(bootstrapAdminPassword)}`,
   `WOLFBBS_BOOTSTRAP_USER_HANDLE=${shellQuote(bootstrapUserHandle)}`,
   `WOLFBBS_BOOTSTRAP_USER_PASSWORD=${shellQuote(bootstrapUserPassword)}`,
+  "WOLFBBS_DEV_SHOW_RESET_TOKEN=true",
   "WOLFBBS_GUEST_TOUR_ENABLE=true",
   "WOLFBBS_DISCOVER_ENABLE=true",
   "WOLFBBS_QUICK_JUMP_ENABLE=true",
   "WOLFBBS_CLASSIC_SEARCH_ENABLE=true",
+  "WOLFBBS_ACTIVITYPUB_ENABLE=true",
+  `WOLFBBS_ACTIVITYPUB_BASE_URL=${shellQuote(baseURL)}`,
 ];
 const envPrefix = `env ${sharedEnv.join(" ")}`;
 

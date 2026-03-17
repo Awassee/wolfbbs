@@ -178,6 +178,17 @@ bash install.sh --restart
 bash install.sh --logs
 ```
 
+## Distribution Packaging
+
+Build versioned tarball bundles with binaries, installer, compose assets, docs, and checksums:
+
+```bash
+scripts/package-dist.sh
+scripts/package-dist.sh --platform linux/amd64 --platform linux/arm64
+```
+
+Artifacts are written to `dist/<version>/`.
+
 Dependencies/runtime bootstrap only:
 
 ```bash

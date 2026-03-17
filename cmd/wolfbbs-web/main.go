@@ -104,6 +104,90 @@ type statusSnapshot struct {
 	Recommendations []string      `json:"recommendations,omitempty"`
 }
 
+type webDoorView struct {
+	Door                 doors.Door
+	TurnsRemaining       int
+	Favorite             bool
+	Recent               bool
+	PlayCount            int
+	LastPlayed           string
+	PersonalAchievements int
+	TopScore             int64
+	TopScoreHandle       string
+	DailyActive          int
+	MonthlyActive        int
+	TotalPlays           int64
+	RecommendedScore     int
+}
+
+type boardsDashboardSnapshot struct {
+	VisibleBoards     int
+	UnreadPosts       int
+	UnreadMail        int
+	OnlineUsers       int
+	FavoriteDoors     int
+	RecommendedDoor   string
+	RecommendedDoorID string
+	RecentCallers     []string
+	OneLiners         []string
+}
+
+type boardPulseRow struct {
+	BoardID      int64
+	BoardName    string
+	Conference   string
+	MessageCount int
+	NewCount     int
+	LastAt       string
+	LastSubject  string
+	Heat         int
+}
+
+type callerRadarRow struct {
+	Handle   string
+	Node     string
+	Area     string
+	Since    string
+	Idle     string
+	Origin   string
+	From     string
+	Duration string
+}
+
+type scoreChampion struct {
+	DoorID    string
+	DoorName  string
+	Handle    string
+	Score     int64
+	ScoreType string
+	CreatedAt string
+}
+
+type radarSnapshot struct {
+	UnreadMail        int
+	UnreadPosts       int
+	OnlineUsers       int
+	LiveNodes         int
+	TrackedBoards     int
+	ActivityItems     []string
+	BoardPulse        []boardPulseRow
+	LiveCallers       []callerRadarRow
+	RecentCallers     []callerRadarRow
+	RecommendedDoors  []webDoorView
+	RecentAchievements []domain.DoorAchievement
+	Rumor             string
+}
+
+type scoreboardSnapshot struct {
+	FilterDoor           string
+	DoorsWithScores      int
+	VisibleScoreRows     int
+	PersonalAchievements int
+	ChampionRows         []scoreChampion
+	RecentRows           []scoreChampion
+	PersonalRows         []scoreChampion
+}
+
 type sessionState struct {
 	handle string
 	expire time.Time
@@ -480,6 +564,9 @@ func main() {
 	http.Handle("/statusz", app.authRequired(http.HandlerFunc(app.handleStatusJSON)))
 	http.Handle("/config", app.authRequired(http.HandlerFunc(app.handleConfigCenter)))
 	http.Handle("/discover", app.authRequired(http.HandlerFunc(app.handleDiscover)))
+	http.Handle("/radar", app.authRequired(http.HandlerFunc(app.handleRadar)))
+	http.Handle("/clubhouse", app.authRequired(http.HandlerFunc(app.handleClubhouse)))
+	http.Handle("/doors", app.authRequired(http.HandlerFunc(app.handleDoors)))
 	http.Handle("/admin", app.mustBeRole(roleAdmin, app.handleAdmin))
 	http.Handle("/admin/users", app.mustBeRole(roleAdmin, app.handleAdminUsers))
 	http.Handle("/admin/boards", app.mustBeRole(roleAdmin, app.handleAdminBoards))
@@ -891,6 +978,7 @@ const modernUIBootstrap = `<style id="wolfbbs-modern-ui">
   --bg-alt:#e8eef7;
   --surface:#ffffff;
   --surface-2:#f8fbff;
+  --surface-3:#eef5ff;
   --text:#0f1b2a;
   --muted:#516173;
   --line:#d9e3ef;
@@ -1042,6 +1130,137 @@ pre{
   background:#f7fbff;
   overflow:auto;
 }
+hr{
+  border:0;
+  border-top:1px solid var(--line);
+  margin:16px 0;
+}
+.wolfbbs-muted{color:var(--muted)}
+.wolfbbs-kpi-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+  gap:12px;
+  margin:16px 0 18px;
+}
+.wolfbbs-kpi-card,.wolfbbs-card,.wolfbbs-action-card{
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:16px;
+  box-shadow:var(--shadow);
+}
+.wolfbbs-kpi-card{
+  padding:16px 18px;
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+.wolfbbs-kpi-card strong{
+  font-size:1.65rem;
+  line-height:1;
+}
+.wolfbbs-kpi-card span{
+  color:var(--muted);
+  font-weight:600;
+}
+.wolfbbs-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
+  gap:14px;
+  margin:14px 0 18px;
+}
+.wolfbbs-card-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+  gap:12px;
+}
+.wolfbbs-card{
+  padding:16px 18px;
+}
+.wolfbbs-action-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
+  gap:10px;
+  margin-top:12px;
+}
+.wolfbbs-action-card{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  padding:14px 16px;
+  color:var(--text);
+  background:
+    radial-gradient(circle at top right, rgba(15,79,168,.10), transparent 42%),
+    linear-gradient(180deg,var(--surface),var(--surface-2));
+}
+.wolfbbs-action-card:hover{
+  text-decoration:none;
+  transform:translateY(-1px);
+  transition:transform .16s ease;
+}
+.wolfbbs-action-card strong{
+  color:#17385e;
+  font-size:1rem;
+}
+.wolfbbs-action-card span{
+  color:var(--muted);
+  font-size:.92rem;
+}
+.wolfbbs-chip-row{
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+}
+.wolfbbs-chip{
+  display:inline-flex;
+  align-items:center;
+  min-height:24px;
+  padding:2px 9px;
+  border-radius:999px;
+  background:#eef4ff;
+  border:1px solid #c9daf3;
+  color:#244c83;
+  font-size:.8rem;
+  font-weight:700;
+}
+.wolfbbs-inline-form{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:flex-end;
+  gap:10px;
+}
+.wolfbbs-inline-form label{
+  margin:0;
+}
+.wolfbbs-section-nav,.wolfbbs-recent-rail{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  margin:0 0 16px;
+}
+.wolfbbs-section-nav a,.wolfbbs-recent-rail a{
+  display:inline-flex;
+  align-items:center;
+  min-height:30px;
+  padding:6px 11px;
+  border-radius:999px;
+  background:rgba(255,255,255,.72);
+  border:1px solid #cbdaee;
+  color:#21467c;
+  font-size:.85rem;
+  font-weight:700;
+}
+.wolfbbs-section-nav a:hover,.wolfbbs-recent-rail a:hover{
+  text-decoration:none;
+  background:#eef5ff;
+}
+.wolfbbs-inline-filter{
+  margin:12px 0 10px;
+  padding:10px 12px;
+  background:rgba(255,255,255,.78);
+  border:1px solid var(--line);
+  border-radius:12px;
+  box-shadow:var(--shadow);
+}
 #chat{
   border:1px solid #173456 !important;
   border-radius:12px;
@@ -1064,10 +1283,60 @@ pre{
   background:#f7fbff;
   border-color:#bfd4ec;
 }
-hr{
-  border:0;
-  border-top:1px solid var(--line);
-  margin:16px 0;
+#wolfbbsCommandButton{
+  position:fixed;
+  right:20px;
+  bottom:18px;
+  z-index:40;
+  min-height:42px;
+  padding:10px 14px;
+  border-radius:999px;
+  border:1px solid rgba(255,255,255,.25);
+  box-shadow:0 18px 34px rgba(9,57,122,.18);
+}
+#wolfbbsPaletteOverlay{
+  position:fixed;
+  inset:0;
+  background:rgba(10,18,30,.42);
+  display:none;
+  z-index:60;
+  padding:24px 16px;
+}
+#wolfbbsPaletteOverlay.active{display:block}
+#wolfbbsPalette{
+  max-width:760px;
+  margin:0 auto;
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:18px;
+  box-shadow:0 22px 48px rgba(15,27,42,.22);
+  overflow:hidden;
+}
+#wolfbbsPaletteHeader{
+  padding:14px;
+  background:linear-gradient(180deg,#f7fbff,#edf4fc);
+  border-bottom:1px solid var(--line);
+}
+#wolfbbsPaletteList{
+  max-height:min(60vh,520px);
+  overflow:auto;
+  padding:8px;
+}
+.wolfbbs-palette-item{
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+  padding:11px 12px;
+  border-radius:12px;
+  color:var(--text);
+}
+.wolfbbs-palette-item:hover{
+  background:#eef5ff;
+  text-decoration:none;
+}
+.wolfbbs-palette-meta{
+  color:var(--muted);
+  font-size:.82rem;
 }
 @media (max-width: 820px){
   body{padding:18px 14px 26px}
@@ -1075,14 +1344,175 @@ hr{
   input[type=text],input[type=password],input[type=email],input[type=number],input[type=url],input[type=search],select,textarea{
     width:100%;
   }
+  #wolfbbsCommandButton{
+    left:14px;
+    right:14px;
+    bottom:14px;
+    justify-content:center;
+  }
 }
 </style>
 <script id="wolfbbs-modern-ui-js">
 (() => {
   if (document.documentElement.dataset.wolfbbsModernUi === "1") return;
   document.documentElement.dataset.wolfbbsModernUi = "1";
-  const navRows = [...document.querySelectorAll("p")].filter((p) => p.querySelectorAll("a").length >= 3 && p.textContent.includes("|"));
+
+  const navRows = Array.from(document.querySelectorAll("p")).filter((p) => p.querySelectorAll("a").length >= 3 && p.textContent.includes("|"));
   navRows.forEach((row) => row.classList.add("wolfbbs-nav-row"));
+
+  const title = (document.querySelector("h1") && document.querySelector("h1").textContent.trim()) || document.title || "WolfBBS";
+  const currentPath = location.pathname + location.search;
+  const navLinks = [];
+  const navSeen = new Set();
+  Array.from(document.querySelectorAll("a[href]")).forEach((anchor) => {
+    const href = anchor.getAttribute("href");
+    if (!href || href[0] !== "/" || href.startsWith("/chat/") || href.startsWith("/mail/inbound")) return;
+    const key = href + "|" + anchor.textContent.trim().toLowerCase();
+    if (navSeen.has(key)) return;
+    navSeen.add(key);
+    navLinks.push({
+      href: href,
+      label: anchor.textContent.trim() || href,
+      meta: (anchor.closest("p") ? "nav" : "page")
+    });
+  });
+
+  try {
+    const recentKey = "wolfbbsRecentPages";
+    const recent = JSON.parse(localStorage.getItem(recentKey) || "[]").filter((item) => item && item.href);
+    const next = [{href: currentPath, label: title}].concat(recent.filter((item) => item.href !== currentPath)).slice(0, 6);
+    localStorage.setItem(recentKey, JSON.stringify(next));
+    if (next.length > 1) {
+      const rail = document.createElement("div");
+      rail.className = "wolfbbs-recent-rail";
+      next.slice(1).forEach((item) => {
+        const a = document.createElement("a");
+        a.href = item.href;
+        a.textContent = item.label;
+        rail.appendChild(a);
+      });
+      const firstHeading = document.querySelector("h1");
+      if (firstHeading && firstHeading.parentNode) {
+        firstHeading.parentNode.insertBefore(rail, firstHeading.nextSibling);
+      }
+    }
+  } catch (_) {}
+
+  const headings = Array.from(document.querySelectorAll("h2, h3"));
+  if (headings.length >= 2) {
+    const nav = document.createElement("div");
+    nav.className = "wolfbbs-section-nav";
+    headings.forEach((heading, idx) => {
+      if (!heading.id) heading.id = "wolfbbs-section-" + idx;
+      const link = document.createElement("a");
+      link.href = "#" + heading.id;
+      link.textContent = heading.textContent.trim();
+      nav.appendChild(link);
+    });
+    const h1 = document.querySelector("h1");
+    if (h1 && h1.parentNode) {
+      h1.parentNode.insertBefore(nav, h1.nextSibling ? h1.nextSibling.nextSibling : null);
+    }
+  }
+
+  const firstTable = document.querySelector("table");
+  if (firstTable && firstTable.querySelectorAll("tr").length >= 6) {
+    const box = document.createElement("div");
+    box.className = "wolfbbs-inline-filter";
+    const label = document.createElement("label");
+    label.textContent = "Filter this page";
+    const input = document.createElement("input");
+    input.type = "search";
+    input.placeholder = "type to filter visible rows";
+    label.appendChild(input);
+    box.appendChild(label);
+    firstTable.parentNode.insertBefore(box, firstTable);
+    input.addEventListener("input", () => {
+      const q = input.value.trim().toLowerCase();
+      Array.from(document.querySelectorAll("table")).forEach((table) => {
+        const rows = Array.from(table.querySelectorAll("tr"));
+        rows.forEach((row, index) => {
+          if (index === 0) return;
+          row.style.display = !q || row.textContent.toLowerCase().includes(q) ? "" : "none";
+        });
+      });
+    });
+  }
+
+  const overlay = document.createElement("div");
+  overlay.id = "wolfbbsPaletteOverlay";
+  overlay.innerHTML = '<div id="wolfbbsPalette"><div id="wolfbbsPaletteHeader"><label style="display:block;margin:0"><span class="wolfbbs-muted">Command palette</span><input id="wolfbbsPaletteInput" type="search" placeholder="jump to boards, doors, status, admin..." style="width:100%;margin-top:8px"></label></div><div id="wolfbbsPaletteList"></div></div>';
+  document.body.appendChild(overlay);
+
+  const paletteButton = document.createElement("button");
+  paletteButton.id = "wolfbbsCommandButton";
+  paletteButton.type = "button";
+  paletteButton.textContent = "Jump / Search";
+  document.body.appendChild(paletteButton);
+
+  const paletteInput = overlay.querySelector("#wolfbbsPaletteInput");
+  const paletteList = overlay.querySelector("#wolfbbsPaletteList");
+  const commands = navLinks.concat(headings.map((heading) => ({
+    href: "#" + heading.id,
+    label: heading.textContent.trim(),
+    meta: "section"
+  })));
+
+  function renderPalette(query) {
+    const q = (query || "").trim().toLowerCase();
+    paletteList.innerHTML = "";
+    commands
+      .filter((item) => !q || item.label.toLowerCase().includes(q) || item.href.toLowerCase().includes(q))
+      .slice(0, 16)
+      .forEach((item) => {
+        const link = document.createElement("a");
+        link.className = "wolfbbs-palette-item";
+        link.href = item.href;
+        link.innerHTML = "<strong>" + item.label + "</strong><span class=\"wolfbbs-palette-meta\">" + item.meta + " • " + item.href + "</span>";
+        paletteList.appendChild(link);
+      });
+    if (!paletteList.children.length) {
+      const empty = document.createElement("div");
+      empty.className = "wolfbbs-palette-item";
+      empty.innerHTML = "<strong>No matches</strong><span class=\"wolfbbs-palette-meta\">Try boards, doors, chat, admin, status.</span>";
+      paletteList.appendChild(empty);
+    }
+  }
+
+  function openPalette() {
+    overlay.classList.add("active");
+    renderPalette("");
+    paletteInput.value = "";
+    window.setTimeout(() => paletteInput.focus(), 10);
+  }
+
+  function closePalette() {
+    overlay.classList.remove("active");
+  }
+
+  paletteButton.addEventListener("click", openPalette);
+  paletteInput.addEventListener("input", () => renderPalette(paletteInput.value));
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) closePalette();
+  });
+  document.addEventListener("keydown", (event) => {
+    const tag = event.target && event.target.tagName ? event.target.tagName.toLowerCase() : "";
+    const editing = tag === "input" || tag === "textarea" || tag === "select" || event.target.isContentEditable;
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+      event.preventDefault();
+      openPalette();
+      return;
+    }
+    if (event.key === "Escape" && overlay.classList.contains("active")) {
+      event.preventDefault();
+      closePalette();
+      return;
+    }
+    if (!editing && event.key === "?") {
+      event.preventDefault();
+      openPalette();
+    }
+  });
 })();
 </script>`
 
@@ -1737,7 +2167,7 @@ func (a *webApp) handleHelp(w http.ResponseWriter, r *http.Request) {
 	nav := `<a href="/login">login</a> | <a href="/connect">connect</a>`
 	if user != nil {
 		roleLabel = rbac.NormalizeRole(user.Role)
-		nav = `<a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/settings">settings</a> | <a href="/status">status</a> | <a href="/config">config</a>`
+		nav = `<a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/radar">radar</a> | <a href="/clubhouse">clubhouse</a> | <a href="/doors">doors</a> | <a href="/settings">settings</a> | <a href="/status">status</a> | <a href="/config">config</a>`
 		if a.discover {
 			nav += ` | <a href="/discover">discover</a>`
 		}
@@ -1761,8 +2191,11 @@ func (a *webApp) handleHelp(w http.ResponseWriter, r *http.Request) {
 </ul>
 <h2>Web routes</h2>
 <ul>
-<li>/boards, /mail, /chat, /settings, /gateway, /status, /config</li>
-<li>/scores for door leaderboards</li>
+<li>/boards, /mail, /chat, /radar, /clubhouse, /doors, /settings, /gateway, /status, /config</li>
+<li>/radar for mission control: board pulse, live callers, discovery queue, and arcade heat</li>
+<li>/clubhouse for one-liner posting, rumors, BBS exchange, and social presence</li>
+<li>/doors for favorites, recommendations, recents, and policy-aware door directory</li>
+<li>/scores for global door leaderboards</li>
 <li>/healthz, /readyz, /metrics, /statusz for health/ops checks</li>
 </ul>
 	<h2>Admin routes (sysop only)</h2>
@@ -1936,6 +2369,7 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 		sort.Slice(conferences, func(i, j int) bool { return strings.ToLower(conferences[i]) < strings.ToLower(conferences[j]) })
 		rows := strings.Builder{}
 		messageBlock := pageMessageBlock(r)
+		dashboard := a.buildBoardsDashboard(user, boards)
 		motdBlock := ""
 		if strings.TrimSpace(a.motd) != "" {
 			motdBlock = `<p><strong>MOTD:</strong> ` + htmlEscape(a.motd) + `</p>`
@@ -1947,6 +2381,24 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 		discoverLink := ""
 		if a.discover {
 			discoverLink = ` | <a href="/discover">discover</a>`
+		}
+		recommendedDoorBlock := `<span class="wolfbbs-muted">No recommended door yet.</span>`
+		if dashboard.RecommendedDoor != "" {
+			recommendedDoorBlock = `<a href="/doors?mode=recommended">` + htmlEscape(dashboard.RecommendedDoor) + `</a>`
+		}
+		recentCallersBlock := strings.Builder{}
+		for _, row := range dashboard.RecentCallers {
+			recentCallersBlock.WriteString(`<li>` + htmlEscape(row) + `</li>`)
+		}
+		if recentCallersBlock.Len() == 0 {
+			recentCallersBlock.WriteString(`<li>No recent callers yet.</li>`)
+		}
+		oneLinerBlock := strings.Builder{}
+		for _, row := range dashboard.OneLiners {
+			oneLinerBlock.WriteString(`<li>` + htmlEscape(row) + `</li>`)
+		}
+		if oneLinerBlock.Len() == 0 {
+			oneLinerBlock.WriteString(`<li>No one-liners yet.</li>`)
 		}
 		for _, board := range boards {
 			msgs, _ := a.msgRepo.ListByBoard(board.ID)
@@ -1972,7 +2424,7 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 		}
 		quickJumpBlock := ""
 		if a.quickJump {
-			quickJumpBlock = `<form method="GET" action="/boards"><label>Quick Jump <input name="jump" size="24" placeholder="mail/chat/gateway/status/config"></label><button type="submit">Go</button></form>`
+			quickJumpBlock = `<form method="GET" action="/boards"><label>Quick Jump <input name="jump" size="24" placeholder="mail/radar/clubhouse/doors/status/config"></label><button type="submit">Go</button></form>`
 		}
 		confOptions := strings.Builder{}
 		selectedAll := ` selected`
@@ -1988,9 +2440,32 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 			confOptions.WriteString(`<option value="` + htmlEscape(conf) + `"` + selected + `>` + htmlEscape(conf) + `</option>`)
 		}
 		confFilterBlock := `<form method="GET" action="/boards"><label>Conference <select name="conference">` + confOptions.String() + `</select></label><button type="submit">Filter</button></form>`
+		discoverActionCard := `<a class="wolfbbs-action-card" href="/discover"><strong>Discover</strong><span>Catch up since last call</span></a>`
+		if !a.discover {
+			discoverActionCard = `<article class="wolfbbs-action-card"><strong>Discover</strong><span>Disabled by current feature flags</span></article>`
+		}
+		rumorBlock := ``
+		if a.rumorzMod != nil {
+			if rumor := strings.TrimSpace(a.rumorzMod.Current()); rumor != "" {
+				rumorBlock = `<p><strong>Rumorz:</strong> ` + htmlEscape(rumor) + `</p>`
+			}
+		}
+		dashboardBlock := `<section class="wolfbbs-kpi-grid">
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(dashboard.VisibleBoards) + `</strong><span>visible boards</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(dashboard.UnreadPosts) + `</strong><span>unread posts</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(dashboard.UnreadMail) + `</strong><span>unread mail</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(dashboard.OnlineUsers) + `</strong><span>chat online</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(dashboard.FavoriteDoors) + `</strong><span>favorite doors</span></article>
+</section>
+<section class="wolfbbs-grid">
+<article class="wolfbbs-card"><h2>Caller Cockpit</h2><p>Recommended door: ` + recommendedDoorBlock + `</p>` + rumorBlock + `<div class="wolfbbs-action-grid"><a class="wolfbbs-action-card" href="/mail"><strong>Inbox</strong><span>` + strconv.Itoa(dashboard.UnreadMail) + ` unread mail waiting</span></a>` + discoverActionCard + `<a class="wolfbbs-action-card" href="/doors"><strong>Door Cockpit</strong><span>Favorites, turns, trophies, policy</span></a><a class="wolfbbs-action-card" href="/radar"><strong>Caller Radar</strong><span>Board pulse, live callers, arcade heat</span></a><a class="wolfbbs-action-card" href="/clubhouse"><strong>Clubhouse</strong><span>One-liners, rumors, BBS exchange</span></a><a class="wolfbbs-action-card" href="/chat"><strong>Lobby Chat</strong><span>` + strconv.Itoa(dashboard.OnlineUsers) + ` callers online</span></a></div></article>
+<article class="wolfbbs-card"><h2>Last Callers</h2><ul>` + recentCallersBlock.String() + `</ul></article>
+<article class="wolfbbs-card"><h2>OneLinerz</h2><ul>` + oneLinerBlock.String() + `</ul></article>
+</section>`
 		page := fmt.Sprintf(`<html><body>
 <p>Signed in as %s</p>
-<p><a href="/mail">mail</a> | <a href="/settings">settings</a> | <a href="/chat">chat</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/gateway">gateway</a>%s | <a href="/help">help</a> | <a href="/logout">logout</a></p>
+<p><a href="/mail">mail</a> | <a href="/settings">settings</a> | <a href="/chat">chat</a> | <a href="/radar">radar</a> | <a href="/clubhouse">clubhouse</a> | <a href="/doors">doors</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/gateway">gateway</a>%s | <a href="/help">help</a> | <a href="/logout">logout</a></p>
+%s
 %s
 %s
 %s
@@ -2000,7 +2475,7 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 <h1>Message Boards</h1>
 <table border="1">
 <tr><th>ID</th><th>Board</th><th>Conf</th><th>Topics</th><th>New</th><th>Last</th><th>Last subject</th></tr>%s</table>
-</body></html>`, user.Handle, discoverLink, messageBlock, motdBlock, announcementBlock, quickJumpBlock, confFilterBlock, rows.String())
+</body></html>`, user.Handle, discoverLink, messageBlock, motdBlock, announcementBlock, quickJumpBlock, confFilterBlock, dashboardBlock, rows.String())
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(page))
 		return
@@ -2082,7 +2557,7 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 		announcementBlock = `<p><strong>Announcement:</strong> ` + htmlEscape(a.announcement) + `</p>`
 	}
 	page := `<html><body><h1>Board: ` + htmlEscape(board.Name) + `</h1>` +
-		`<p><a href="/boards">all boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/status">status</a> | <a href="/config">config</a>` + discoverLink + ` | <a href="/help">help</a> | <a href="/logout">logout</a></p>` +
+		`<p><a href="/boards">all boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/doors">doors</a> | <a href="/status">status</a> | <a href="/config">config</a>` + discoverLink + ` | <a href="/help">help</a> | <a href="/logout">logout</a></p>` +
 		messageBlock +
 		`<p><strong>Reader keys:</strong> open subject to read, use Reply form, and Report for abuse/moderation queue.</p>` +
 		`<p><strong>Conference:</strong> ` + htmlEscape(defaultConferenceValue(board.Conference)) + `</p>` +
@@ -2563,9 +3038,9 @@ func (a *webApp) handleDiscover(w http.ResponseWriter, r *http.Request) {
 		bbsHTML.WriteString(`<li>No BBS links curated yet.</li>`)
 	}
 
-	page := `<html><body>
+page := `<html><body>
 <h1>Since Your Last Call</h1>
-<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/settings">settings</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
+<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/radar">radar</a> | <a href="/clubhouse">clubhouse</a> | <a href="/doors">doors</a> | <a href="/settings">settings</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
 	<p>Transparent rules: replies-to-you, handle mentions, per-board new activity, and inbox mail. Max ` + strconv.Itoa(maxItems) + ` items.</p>
 	<p>Last seen: ` + digest.Since.Local().Format("2006-01-02 15:04") + `</p>
 	` + aiLine + `
@@ -2587,6 +3062,450 @@ func (a *webApp) handleDiscover(w http.ResponseWriter, r *http.Request) {
 <ul>` + oneLinerHTML.String() + `</ul>
 <h3>BBS List</h3>
 <ul>` + bbsHTML.String() + `</ul>
+</body></html>`
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(page))
+}
+
+func (a *webApp) handleRadar(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	snapshot := a.buildRadarSnapshot(user)
+	boardRows := strings.Builder{}
+	for _, row := range snapshot.BoardPulse {
+		boardRows.WriteString(`<tr><td><a href="/boards?board=` + strconv.FormatInt(row.BoardID, 10) + `">` + htmlEscape(row.BoardName) + `</a></td><td>` + htmlEscape(defaultConferenceValue(row.Conference)) + `</td><td>` + strconv.Itoa(row.NewCount) + `</td><td>` + strconv.Itoa(row.MessageCount) + `</td><td>` + htmlEscape(row.LastAt) + `</td><td>` + htmlEscape(row.LastSubject) + `</td></tr>`)
+	}
+	if boardRows.Len() == 0 {
+		boardRows.WriteString(`<tr><td colspan="6">No board pulse available yet.</td></tr>`)
+	}
+
+	activityRows := strings.Builder{}
+	for _, row := range snapshot.ActivityItems {
+		activityRows.WriteString(`<li>` + htmlEscape(row) + `</li>`)
+	}
+	if activityRows.Len() == 0 {
+		activityRows.WriteString(`<li>No new activity since your last call.</li>`)
+	}
+
+	liveRows := strings.Builder{}
+	for _, row := range snapshot.LiveCallers {
+		liveRows.WriteString(`<tr><td>` + htmlEscape(row.Handle) + `</td><td>` + htmlEscape(row.Node) + `</td><td>` + htmlEscape(row.Area) + `</td><td>` + htmlEscape(row.Since) + `</td><td>` + htmlEscape(row.Idle) + `</td><td>` + htmlEscape(row.Origin) + `</td><td>` + htmlEscape(row.From) + `</td></tr>`)
+	}
+	if liveRows.Len() == 0 {
+		liveRows.WriteString(`<tr><td colspan="7">No callers currently online.</td></tr>`)
+	}
+
+	recentRows := strings.Builder{}
+	for _, row := range snapshot.RecentCallers {
+		recentRows.WriteString(`<li><strong>` + htmlEscape(row.Handle) + `</strong> from ` + htmlEscape(row.From) + ` in ` + htmlEscape(row.Area) + ` <span class="wolfbbs-muted">` + htmlEscape(row.Duration) + `</span></li>`)
+	}
+	if recentRows.Len() == 0 {
+		recentRows.WriteString(`<li>No caller history captured yet.</li>`)
+	}
+
+	doorCards := strings.Builder{}
+	for _, row := range snapshot.RecommendedDoors {
+		meta := []string{strings.ToUpper(row.Door.Category), "HK " + strings.ToUpper(row.Door.Hotkey)}
+		if row.TurnsRemaining > 0 {
+			meta = append(meta, strconv.Itoa(row.TurnsRemaining)+" turns")
+		}
+		if row.TopScoreHandle != "" {
+			meta = append(meta, "champ "+row.TopScoreHandle)
+		}
+		doorCards.WriteString(`<article class="wolfbbs-card"><h3>` + htmlEscape(row.Door.Name) + `</h3><p>` + htmlEscape(row.Door.Description) + `</p><p class="wolfbbs-chip-row">`)
+		for _, chip := range meta {
+			doorCards.WriteString(`<span class="wolfbbs-chip">` + htmlEscape(chip) + `</span>`)
+		}
+		doorCards.WriteString(`</p><p><a href="/doors?mode=recommended">Open in Door Cockpit</a> | <a href="/scores?door=` + htmlEscape(row.Door.ID) + `">scores</a></p></article>`)
+	}
+	if doorCards.Len() == 0 {
+		doorCards.WriteString(`<article class="wolfbbs-card"><h3>No door heat yet</h3><p>Once callers begin launching doors, Radar will show trending runs and score chases here.</p></article>`)
+	}
+
+	trophyRows := strings.Builder{}
+	for _, row := range snapshot.RecentAchievements {
+		trophyRows.WriteString(`<li><strong>` + htmlEscape(strings.ToUpper(row.DoorID)) + `</strong> ` + htmlEscape(row.AchievementCode) + ` <span class="wolfbbs-muted">` + row.CreatedAt.Local().Format("2006-01-02 15:04") + `</span></li>`)
+	}
+	if trophyRows.Len() == 0 {
+		trophyRows.WriteString(`<li>No recent trophy activity.</li>`)
+	}
+
+	rumorLine := ""
+	if strings.TrimSpace(snapshot.Rumor) != "" {
+		rumorLine = `<p><strong>Rumorz:</strong> ` + htmlEscape(snapshot.Rumor) + `</p>`
+	}
+
+	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Caller Radar</title></head><body>
+<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/clubhouse">clubhouse</a> | <a href="/doors">doors</a> | <a href="/scores">scores</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
+` + pageMessageBlock(r) + `
+<h1>Caller Radar</h1>
+<p>Mission control for unread activity, live callers, door heat, and tonight's board pulse.</p>
+` + rumorLine + `
+<section class="wolfbbs-kpi-grid">
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(snapshot.UnreadPosts) + `</strong><span>unread posts</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(snapshot.UnreadMail) + `</strong><span>unread mail</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(snapshot.OnlineUsers) + `</strong><span>chat online</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(snapshot.LiveNodes) + `</strong><span>live nodes</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(snapshot.TrackedBoards) + `</strong><span>boards tracked</span></article>
+</section>
+<section class="wolfbbs-grid">
+<article><h2>Discovery Queue</h2><ul>` + activityRows.String() + `</ul><p><a href="/discover">Open full discover feed</a></p></article>
+<article><h2>Recent Trophy Activity</h2><ul>` + trophyRows.String() + `</ul><p><a href="/scores">Open scoreboards</a></p></article>
+</section>
+<h2>Board Pulse</h2>
+<table border="1">
+<tr><th>Board</th><th>Conf</th><th>New</th><th>Total</th><th>Last</th><th>Last subject</th></tr>` + boardRows.String() + `
+</table>
+<section class="wolfbbs-grid">
+<article><h2>Live Caller Radar</h2><table border="1"><tr><th>User</th><th>Node</th><th>Area</th><th>Since</th><th>Idle</th><th>Origin</th><th>From</th></tr>` + liveRows.String() + `</table></article>
+<article><h2>Recent Callers</h2><ul>` + recentRows.String() + `</ul><p><a href="/clubhouse">Open Clubhouse</a></p></article>
+</section>
+<h2>Arcade Heat</h2>
+<div class="wolfbbs-card-grid">` + doorCards.String() + `</div>
+</body></html>`
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(page))
+}
+
+func (a *webApp) handleClubhouse(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	switch r.Method {
+	case http.MethodPost:
+		if !a.requireCSRF(w, r) {
+			return
+		}
+		action := strings.ToLower(strings.TrimSpace(r.FormValue("action")))
+		switch action {
+		case "add_oneliner":
+			if a.oneLinerzMod == nil {
+				redirectWithError(w, r, "/clubhouse", "OneLinerz mod is unavailable.")
+				return
+			}
+			text := cleanOneLiner(r.FormValue("text"), 120)
+			if strings.TrimSpace(text) == "" {
+				redirectWithError(w, r, "/clubhouse", "One-liner text is required.")
+				return
+			}
+			a.oneLinerzMod.Add(user.Handle, text)
+			redirectWithNotice(w, r, "/clubhouse", "One-liner posted.")
+			return
+		case "add_bbs":
+			if a.bbsListMod == nil {
+				redirectWithError(w, r, "/clubhouse", "BBS list mod is unavailable.")
+				return
+			}
+			name := cleanOneLiner(r.FormValue("name"), 72)
+			host := cleanOneLiner(r.FormValue("host"), 120)
+			port, _ := strconv.Atoi(strings.TrimSpace(r.FormValue("port")))
+			if strings.TrimSpace(name) == "" || strings.TrimSpace(host) == "" || port <= 0 || port > 65535 {
+				redirectWithError(w, r, "/clubhouse", "Name, host, and a valid port are required.")
+				return
+			}
+			a.bbsListMod.Add(name, host, port)
+			redirectWithNotice(w, r, "/clubhouse", "BBS listing added to the exchange.")
+			return
+		default:
+			redirectWithError(w, r, "/clubhouse", "Unsupported clubhouse action.")
+			return
+		}
+	case http.MethodGet:
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	csrf := a.csrfHiddenInput(r)
+	oneLinerRows := strings.Builder{}
+	oneLiners := []mods.OneLiner{}
+	if a.oneLinerzMod != nil {
+		oneLiners = a.oneLinerzMod.List(12)
+	}
+	for _, row := range oneLiners {
+		oneLinerRows.WriteString(`<li>[` + row.At.Local().Format("15:04") + `] <strong>` + htmlEscape(row.Handle) + `</strong>: ` + htmlEscape(row.Text) + `</li>`)
+	}
+	if oneLinerRows.Len() == 0 {
+		oneLinerRows.WriteString(`<li>No one-liners posted yet.</li>`)
+	}
+
+	bbsRows := strings.Builder{}
+	bbsList := []mods.BBSListing{}
+	if a.bbsListMod != nil {
+		bbsList = a.bbsListMod.List(20)
+	}
+	for _, row := range bbsList {
+		bbsRows.WriteString(`<tr><td>` + htmlEscape(row.Name) + `</td><td>` + htmlEscape(row.Host) + `</td><td>` + strconv.Itoa(row.Port) + `</td></tr>`)
+	}
+	if bbsRows.Len() == 0 {
+		bbsRows.WriteString(`<tr><td colspan="3">No BBS exchange listings yet.</td></tr>`)
+	}
+
+	onlineRows := strings.Builder{}
+	onlineUsers := 0
+	if a.chatSvc != nil {
+		for _, row := range a.chatSvc.Online() {
+			onlineUsers++
+			onlineRows.WriteString(`<li><strong>` + htmlEscape(row.Nick) + `</strong> in ` + htmlEscape(row.Area) + ` <span class="wolfbbs-muted">idle ` + strconv.Itoa(row.IdleSec) + `s</span></li>`)
+		}
+	}
+	if onlineRows.Len() == 0 {
+		onlineRows.WriteString(`<li>No live presence reported by chat.</li>`)
+	}
+
+	rumorLine := "Rumor line unavailable."
+	if a.rumorzMod != nil && strings.TrimSpace(a.rumorzMod.Current()) != "" {
+		rumorLine = a.rumorzMod.Current()
+	}
+	recentCallers := []domain.CallerHistory{}
+	if a.adminRepo != nil {
+		recentCallers, _ = a.adminRepo.ListCallerHistory(6)
+	}
+	callerRows := strings.Builder{}
+	for _, row := range recentCallers {
+		callerRows.WriteString(`<li><strong>` + htmlEscape(row.Username) + `</strong> from ` + htmlEscape(remoteHostDisplay(row.RemoteAddr)) + ` <span class="wolfbbs-muted">` + row.LogoutAt.Local().Format("2006-01-02 15:04") + `</span></li>`)
+	}
+	if callerRows.Len() == 0 {
+		callerRows.WriteString(`<li>No recent callers yet.</li>`)
+	}
+
+	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Clubhouse</title></head><body>
+<p><a href="/boards">boards</a> | <a href="/radar">radar</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/doors">doors</a> | <a href="/scores">scores</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
+` + pageMessageBlock(r) + `
+<h1>Clubhouse</h1>
+<p>The social layer: post one-liners, browse the BBS exchange, check who's hanging around, and catch the latest rumor.</p>
+<section class="wolfbbs-kpi-grid">
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(oneLiners)) + `</strong><span>one-liners</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(bbsList)) + `</strong><span>bbs exchange links</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(onlineUsers) + `</strong><span>chat presences</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(recentCallers)) + `</strong><span>recent callers</span></article>
+</section>
+<section class="wolfbbs-grid">
+<article class="wolfbbs-card"><h2>Post a One-Liner</h2><form method="POST" action="/clubhouse"><input type="hidden" name="action" value="add_oneliner">` + csrf + `<label>Message <input name="text" maxlength="120" placeholder="keep it short, funny, or legendary"></label><button type="submit">Post</button></form><p class="wolfbbs-muted">Your handle is attached automatically.</p></article>
+<article class="wolfbbs-card"><h2>Add a BBS Listing</h2><form method="POST" action="/clubhouse" class="wolfbbs-inline-form"><input type="hidden" name="action" value="add_bbs">` + csrf + `<label>Name <input name="name" maxlength="72" placeholder="Another Cool BBS"></label><label>Host <input name="host" maxlength="120" placeholder="bbs.example.com"></label><label>Port <input name="port" inputmode="numeric" value="23"></label><button type="submit">Add</button></form><p class="wolfbbs-muted">Use this for legit neighboring boards only.</p></article>
+</section>
+<section class="wolfbbs-grid">
+<article><h2>OneLinerz Wall</h2><ul>` + oneLinerRows.String() + `</ul></article>
+<article><h2>Rumorz</h2><p>` + htmlEscape(rumorLine) + `</p><h3>Who's Around</h3><ul>` + onlineRows.String() + `</ul></article>
+</section>
+<h2>BBS Exchange</h2>
+<table border="1"><tr><th>Name</th><th>Host</th><th>Port</th></tr>` + bbsRows.String() + `</table>
+<h2>Recent Callers</h2>
+<ul>` + callerRows.String() + `</ul>
+</body></html>`
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(page))
+}
+
+func (a *webApp) handleDoors(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if a.doorRegistry == nil {
+		http.Error(w, "door registry unavailable", http.StatusInternalServerError)
+		return
+	}
+	if r.Method == http.MethodPost {
+		if !a.requireCSRF(w, r) {
+			return
+		}
+		action := strings.ToLower(strings.TrimSpace(r.FormValue("action")))
+		doorID := strings.TrimSpace(r.FormValue("door_id"))
+		switch action {
+		case "toggle_favorite":
+			if user.ID <= 0 || doorID == "" {
+				http.Redirect(w, r, "/doors", http.StatusFound)
+				return
+			}
+			_, _ = a.doorRegistry.ToggleFavorite(user.ID, doorID)
+		}
+		http.Redirect(w, r, "/doors", http.StatusFound)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	category := strings.TrimSpace(r.URL.Query().Get("category"))
+	mode := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("mode")))
+	if mode == "" {
+		mode = "all"
+	}
+
+	catalog := a.buildDoorCatalog(user)
+	recommended := topRecommendedDoors(catalog, 3)
+	filtered := filterDoorViews(catalog, q, category, mode)
+	categories := doorCategories(catalog)
+	totalAchievements := 0
+	totalFavorites := 0
+	totalRecent := 0
+	totalTurns := 0
+	for _, row := range catalog {
+		totalAchievements += row.PersonalAchievements
+		totalTurns += row.TurnsRemaining
+		if row.Favorite {
+			totalFavorites++
+		}
+		if row.Recent {
+			totalRecent++
+		}
+	}
+
+	csrf := a.csrfHiddenInput(r)
+	messageBlock := pageMessageBlock(r)
+	recommendedHTML := strings.Builder{}
+	for _, row := range recommended {
+		flags := []string{strings.ToUpper(row.Door.Category), "HK " + strings.ToUpper(row.Door.Hotkey)}
+		if row.Favorite {
+			flags = append(flags, "favorite")
+		}
+		if row.Recent {
+			flags = append(flags, "recent")
+		}
+		if row.TurnsRemaining > 0 {
+			flags = append(flags, strconv.Itoa(row.TurnsRemaining)+" turns")
+		}
+		recommendedHTML.WriteString(`<article class="wolfbbs-card">`)
+		recommendedHTML.WriteString(`<h3>` + htmlEscape(row.Door.Name) + `</h3>`)
+		recommendedHTML.WriteString(`<p>` + htmlEscape(row.Door.Description) + `</p>`)
+		recommendedHTML.WriteString(`<p class="wolfbbs-chip-row">`)
+		for _, flag := range flags {
+			recommendedHTML.WriteString(`<span class="wolfbbs-chip">` + htmlEscape(flag) + `</span>`)
+		}
+		recommendedHTML.WriteString(`</p>`)
+		recommendedHTML.WriteString(`</article>`)
+	}
+	if recommendedHTML.Len() == 0 {
+		recommendedHTML.WriteString(`<article class="wolfbbs-card"><h3>No recommendations yet</h3><p>Play a door from the directory and favorites/recent picks will start to shape your cockpit.</p></article>`)
+	}
+
+	activityRows := strings.Builder{}
+	for _, event := range a.mustDoorEvents("", user.ID, 8) {
+		activityRows.WriteString(`<li><strong>` + htmlEscape(strings.ToUpper(event.DoorID)) + `</strong> ` + htmlEscape(strings.ReplaceAll(event.EventType, "_", " ")) + ` <span class="wolfbbs-muted">` + event.CreatedAt.Local().Format("2006-01-02 15:04") + `</span></li>`)
+	}
+	if activityRows.Len() == 0 {
+		activityRows.WriteString(`<li>No personal door activity logged yet.</li>`)
+	}
+
+	achievementRows := strings.Builder{}
+	for _, row := range a.mustDoorAchievements(user.ID, 8) {
+		achievementRows.WriteString(`<li><strong>` + htmlEscape(strings.ToUpper(row.DoorID)) + `</strong> ` + htmlEscape(row.AchievementCode) + ` <span class="wolfbbs-muted">` + row.CreatedAt.Local().Format("2006-01-02 15:04") + `</span></li>`)
+	}
+	if achievementRows.Len() == 0 {
+		achievementRows.WriteString(`<li>No trophies yet. Most doors award achievements after the first meaningful session.</li>`)
+	}
+
+	categoryOptions := strings.Builder{}
+	selectedAll := ""
+	if strings.TrimSpace(category) == "" {
+		selectedAll = ` selected`
+	}
+	categoryOptions.WriteString(`<option value=""` + selectedAll + `>All categories</option>`)
+	for _, row := range categories {
+		selected := ""
+		if strings.EqualFold(row, category) {
+			selected = ` selected`
+		}
+		categoryOptions.WriteString(`<option value="` + htmlEscape(row) + `"` + selected + `>` + htmlEscape(strings.ToUpper(row)) + `</option>`)
+	}
+
+	modeOptions := []string{"all", "favorites", "recent", "recommended"}
+	modeLabels := map[string]string{
+		"all":         "All doors",
+		"favorites":   "Favorites",
+		"recent":      "Recent",
+		"recommended": "Recommended",
+	}
+	modeSelect := strings.Builder{}
+	for _, option := range modeOptions {
+		selected := ""
+		if option == mode {
+			selected = ` selected`
+		}
+		modeSelect.WriteString(`<option value="` + option + `"` + selected + `>` + modeLabels[option] + `</option>`)
+	}
+
+	directoryRows := strings.Builder{}
+	for _, row := range filtered {
+		flags := []string{}
+		if row.Favorite {
+			flags = append(flags, "favorite")
+		}
+		if row.Recent {
+			flags = append(flags, "recent")
+		}
+		if row.Door.NeedsNetwork {
+			flags = append(flags, "network")
+		}
+		if row.Door.NeedsFSWrite {
+			flags = append(flags, "fs-write")
+		}
+		if row.Door.RequiredRole != "" {
+			flags = append(flags, "role="+row.Door.RequiredRole)
+		}
+		flagHTML := `-`
+		if len(flags) > 0 {
+			flagHTML = `<span class="wolfbbs-chip-row">`
+			for _, flag := range flags {
+				flagHTML += `<span class="wolfbbs-chip">` + htmlEscape(flag) + `</span>`
+			}
+			flagHTML += `</span>`
+		}
+		topLine := `No score yet`
+		if row.TopScoreHandle != "" {
+			topLine = htmlEscape(row.TopScoreHandle) + ` • ` + strconv.FormatInt(row.TopScore, 10)
+		}
+		lastPlayed := `never`
+		if row.LastPlayed != "" {
+			lastPlayed = row.LastPlayed
+		}
+		directoryRows.WriteString(`<tr><td>` + htmlEscape(strings.ToUpper(row.Door.Hotkey)) + `</td><td><strong>` + htmlEscape(row.Door.Name) + `</strong><br><span class="wolfbbs-muted">` + htmlEscape(row.Door.Description) + `</span></td><td>` + htmlEscape(strings.ToUpper(row.Door.Category)) + `</td><td>` + strconv.Itoa(row.TurnsRemaining) + `</td><td>` + lastPlayed + `<br><span class="wolfbbs-muted">plays ` + strconv.Itoa(row.PlayCount) + ` • achievements ` + strconv.Itoa(row.PersonalAchievements) + `</span></td><td>` + topLine + `<br><span class="wolfbbs-muted">daily ` + strconv.Itoa(row.DailyActive) + ` • total ` + strconv.FormatInt(row.TotalPlays, 10) + `</span></td><td>` + flagHTML + `</td><td><form method="POST" action="/doors">` + csrf + `<input type="hidden" name="action" value="toggle_favorite"><input type="hidden" name="door_id" value="` + htmlEscape(row.Door.ID) + `"><button type="submit">` + map[bool]string{true: "Unfavorite", false: "Favorite"}[row.Favorite] + `</button></form><p><a href="/scores?door=` + htmlEscape(row.Door.ID) + `">Scores</a></p></td></tr>`)
+	}
+	if directoryRows.Len() == 0 {
+		directoryRows.WriteString(`<tr><td colspan="7">No doors matched the current filter.</td></tr>`)
+	}
+
+page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Door Cockpit</title></head><body>
+<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/radar">radar</a> | <a href="/clubhouse">clubhouse</a> | <a href="/doors">doors</a> | <a href="/scores">scores</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
+` + messageBlock + `
+<h1>Door Cockpit</h1>
+<p>One place for favorites, recommendations, trophies, turn budgets, and the full policy-aware door directory.</p>
+<section class="wolfbbs-kpi-grid">
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(catalog)) + `</strong><span>doors loaded</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(totalFavorites) + `</strong><span>favorites</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(totalRecent) + `</strong><span>recent plays</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(totalAchievements) + `</strong><span>achievements</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(totalTurns) + `</strong><span>turns available now</span></article>
+</section>
+<section class="wolfbbs-grid">
+<article><h2>Recommended For This Caller</h2><div class="wolfbbs-card-grid">` + recommendedHTML.String() + `</div></article>
+<article><h2>Recent Activity</h2><ul>` + activityRows.String() + `</ul></article>
+<article><h2>Trophy Progress</h2><ul>` + achievementRows.String() + `</ul></article>
+</section>
+<h2>Directory</h2>
+<form method="GET" action="/doors" class="wolfbbs-inline-form">
+<label>Search<input name="q" value="` + htmlEscape(q) + `" placeholder="name, id, category"></label>
+<label>Category<select name="category">` + categoryOptions.String() + `</select></label>
+<label>View<select name="mode">` + modeSelect.String() + `</select></label>
+<button type="submit">Apply</button>
+</form>
+<table border="1">
+<tr><th>HK</th><th>Door</th><th>Category</th><th>Turns</th><th>Your Runbook</th><th>Hall of Fame</th><th>Flags</th><th>Actions</th></tr>` + directoryRows.String() + `
+</table>
 </body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -2739,9 +3658,9 @@ func (a *webApp) handleStatusCenter(w http.ResponseWriter, r *http.Request) {
 		recoRows.WriteString(`<li>` + htmlEscape(row) + `</li>`)
 	}
 	page := `<html><body><h1>Status Center</h1>` +
-		`<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/config">config</a> | <a href="/settings">settings</a> | <a href="/help">help</a> | <a href="/logout">logout</a>` + adminLink + `</p>` +
+		`<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/radar">radar</a> | <a href="/clubhouse">clubhouse</a> | <a href="/doors">doors</a> | <a href="/config">config</a> | <a href="/settings">settings</a> | <a href="/help">help</a> | <a href="/logout">logout</a>` + adminLink + `</p>` +
 		`<p><strong>Summary:</strong> ` + strconv.Itoa(snapshot.Summary.Pass) + `/` + strconv.Itoa(snapshot.Summary.Total) + ` PASS, ` + strconv.Itoa(snapshot.Summary.Warn) + ` WARN | generated ` + snapshot.GeneratedAt.Local().Format("2006-01-02 15:04:05") + `</p>` +
-		`<p><a href="/statusz">Machine-readable status JSON (/statusz)</a></p>` +
+		`<p><a href="/statusz">Machine-readable status JSON (/statusz)</a> | <a href="/radar">Caller Radar</a> | <a href="/clubhouse">Clubhouse</a></p>` +
 		`<h2>Checks</h2><table border="1"><tr><th>Function</th><th>State</th><th>Details</th></tr>` + rows.String() + `</table>` +
 		`<h2>Recommendations</h2><ul>` + recoRows.String() + `</ul></body></html>`
 	w.WriteHeader(http.StatusOK)
@@ -2792,13 +3711,14 @@ func (a *webApp) handleConfigCenter(w http.ResponseWriter, r *http.Request) {
 		runtimeConfigPath = "env-only defaults"
 	}
 	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Config Center</title></head><body><h1>Config Center</h1>` +
-		`<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/status">status</a> | <a href="/settings">settings</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>` +
+		`<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/radar">radar</a> | <a href="/clubhouse">clubhouse</a> | <a href="/doors">doors</a> | <a href="/status">status</a> | <a href="/settings">settings</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>` +
 		`<p>Role: ` + htmlEscape(role) + `</p>` +
 		`<p><strong>Site:</strong> ` + htmlEscape(a.siteDisplayName()) + ` (` + htmlEscape(a.siteHost()) + `)</p>` +
 		`<h2>User Configuration</h2><ul>` +
 		`<li>Display + ANSI + pager + 24h clock: <a href="/settings">/settings</a></li>` +
 		`<li>Password + 2FA: <a href="/settings">/settings</a></li>` +
 		`<li>Personal inbox/outbox and posting workflow: <a href="/mail">/mail</a> and <a href="/boards">/boards</a></li>` +
+		`<li>Mission control + social layer: <a href="/radar">/radar</a> and <a href="/clubhouse">/clubhouse</a></li>` +
 		`</ul>` +
 		`<h2>Runtime Feature Flags (Current State)</h2><ul>` +
 		`<li>Discover: ` + boolToText(a.discover) + `</li>` +
@@ -4379,7 +5299,7 @@ func (a *webApp) handleAdminDoors(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *webApp) handleScores(w http.ResponseWriter, r *http.Request) {
-	_, ok := a.currentUser(r)
+	user, ok := a.currentUser(r)
 	if !ok {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
@@ -4389,30 +5309,54 @@ func (a *webApp) handleScores(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	filterDoor := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("door")))
-	lookup := a.userHandleLookup()
-	section := strings.Builder{}
-	section.WriteString(`<p><a href="/boards">boards</a> | <a href="/chat">chat</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/admin">admin</a> | <a href="/help">help</a></p>`)
-	section.WriteString(`<p><strong>Door filter:</strong> ` + htmlEscape(filterDoor) + `</p>`)
-	section.WriteString(`<table border="1"><tr><th>Door</th><th>User</th><th>Score</th><th>Type</th><th>When</th></tr>`)
+	snapshot := a.buildScoreboardSnapshot(user, filterDoor)
+	doorOptions := strings.Builder{}
+	doorOptions.WriteString(`<option value="">All doors</option>`)
 	for _, door := range a.doorRegistry.Doors() {
-		if filterDoor != "" && door.ID != filterDoor {
-			continue
+		selected := ""
+		if strings.EqualFold(door.ID, filterDoor) {
+			selected = ` selected`
 		}
-		scores, _ := a.doorRegistry.ListScores(door.ID, 10)
-		if len(scores) == 0 {
-			section.WriteString(`<tr><td>` + htmlEscape(door.Name) + `</td><td colspan="4">No scores yet</td></tr>`)
-			continue
-		}
-		for _, score := range scores {
-			handle := lookup[score.UserID]
-			if handle == "" {
-				handle = "uid:" + strconv.FormatInt(score.UserID, 10)
-			}
-			section.WriteString(`<tr><td>` + htmlEscape(door.Name) + `</td><td>` + htmlEscape(handle) + `</td><td>` + strconv.FormatInt(score.Value, 10) + `</td><td>` + htmlEscape(score.ScoreType) + `</td><td>` + score.CreatedAt.Format("2006-01-02 15:04:05") + `</td></tr>`)
-		}
+		doorOptions.WriteString(`<option value="` + htmlEscape(door.ID) + `"` + selected + `>` + htmlEscape(door.Name) + `</option>`)
 	}
-	section.WriteString(`</table>`)
-	page := `<html><body><h1>Door Scores & Trophies</h1>` + section.String() + `</body></html>`
+	championRows := strings.Builder{}
+	for _, row := range snapshot.ChampionRows {
+		championRows.WriteString(`<tr><td>` + htmlEscape(row.DoorName) + `</td><td>` + htmlEscape(row.Handle) + `</td><td>` + strconv.FormatInt(row.Score, 10) + `</td><td>` + htmlEscape(row.ScoreType) + `</td><td>` + htmlEscape(row.CreatedAt) + `</td></tr>`)
+	}
+	if championRows.Len() == 0 {
+		championRows.WriteString(`<tr><td colspan="5">No champion rows yet.</td></tr>`)
+	}
+	recentRows := strings.Builder{}
+	for _, row := range snapshot.RecentRows {
+		recentRows.WriteString(`<li><strong>` + htmlEscape(row.DoorName) + `:</strong> ` + htmlEscape(row.Handle) + ` posted ` + strconv.FormatInt(row.Score, 10) + ` ` + htmlEscape(row.ScoreType) + ` <span class="wolfbbs-muted">` + htmlEscape(row.CreatedAt) + `</span></li>`)
+	}
+	if recentRows.Len() == 0 {
+		recentRows.WriteString(`<li>No recent score activity yet.</li>`)
+	}
+	personalRows := strings.Builder{}
+	for _, row := range snapshot.PersonalRows {
+		personalRows.WriteString(`<li><strong>` + htmlEscape(row.DoorName) + `:</strong> ` + strconv.FormatInt(row.Score, 10) + ` ` + htmlEscape(row.ScoreType) + ` <span class="wolfbbs-muted">` + htmlEscape(row.CreatedAt) + `</span></li>`)
+	}
+	if personalRows.Len() == 0 {
+		personalRows.WriteString(`<li>No leaderboard entries for this caller yet.</li>`)
+	}
+	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Door Scores & Trophies</title></head><body><h1>Door Scores & Trophies</h1>
+<p><a href="/boards">boards</a> | <a href="/radar">radar</a> | <a href="/clubhouse">clubhouse</a> | <a href="/doors">doors</a> | <a href="/chat">chat</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a></p>
+<form method="GET" action="/scores" class="wolfbbs-inline-form"><label>Door <select name="door">` + doorOptions.String() + `</select></label><button type="submit">Filter</button></form>
+<p><strong>Door filter:</strong> ` + htmlEscape(filterDoor) + `</p>
+<section class="wolfbbs-kpi-grid">
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(snapshot.DoorsWithScores) + `</strong><span>doors with scores</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(snapshot.VisibleScoreRows) + `</strong><span>leaderboard rows</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(snapshot.PersonalAchievements) + `</strong><span>your trophies</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(snapshot.PersonalRows)) + `</strong><span>your score entries</span></article>
+</section>
+<section class="wolfbbs-grid">
+<article><h2>Current Champions</h2><table border="1"><tr><th>Door</th><th>User</th><th>Score</th><th>Type</th><th>When</th></tr>` + championRows.String() + `</table></article>
+<article><h2>Your Scorecard</h2><ul>` + personalRows.String() + `</ul><p><a href="/doors">Open Door Cockpit</a></p></article>
+</section>
+<h2>Recent Score Activity</h2>
+<ul>` + recentRows.String() + `</ul>
+</body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
 }
@@ -5290,7 +6234,7 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 	<body>
 		<h1>` + htmlEscape(a.siteDisplayName()) + ` Chat</h1>
 		<p>Logged in as ` + user.Handle + `</p>
-		<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/settings">settings</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
+		<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/settings">settings</a> | <a href="/doors">doors</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
 		<p><strong>Quick keys:</strong> Enter sends message, Ctrl+L clears chat pane, channel selector switches rooms instantly.</p>
 		<p><label>Channel:
 			<select id="channelSelect"></select>
@@ -6267,6 +7211,10 @@ func webQuickJumpPath(raw string) string {
 		return "/mail"
 	case "chat", "c":
 		return "/chat"
+	case "radar", "mission", "r":
+		return "/radar"
+	case "clubhouse", "community", "club":
+		return "/clubhouse"
 	case "gateway", "g":
 		return "/gateway"
 	case "settings", "prefs", "s":
@@ -6278,7 +7226,7 @@ func webQuickJumpPath(raw string) string {
 	case "discover", "newscan", "n":
 		return "/discover"
 	case "scores", "doors", "d":
-		return "/scores"
+		return "/doors"
 	case "admin", "a":
 		return "/admin"
 	default:
@@ -6309,6 +7257,483 @@ func (a *webApp) mustDoorEvents(doorID string, userID int64, limit int) []domain
 		return nil
 	}
 	return rows
+}
+
+func (a *webApp) mustDoorAchievements(userID int64, limit int) []domain.DoorAchievement {
+	if a.doorRegistry == nil {
+		return nil
+	}
+	rows, err := a.doorRegistry.ListAchievements(userID, "", limit)
+	if err != nil {
+		return nil
+	}
+	return rows
+}
+
+func (a *webApp) buildDoorCatalog(user *domain.User) []webDoorView {
+	if user == nil || a.doorRegistry == nil {
+		return nil
+	}
+	favoriteRows, _ := a.doorRegistry.ListFavorites(user.ID, 256)
+	recentRows, _ := a.doorRegistry.ListRecent(user.ID, 256)
+	favoriteSet := map[string]bool{}
+	recentMeta := map[string]domain.DoorUserMeta{}
+	for _, row := range favoriteRows {
+		favoriteSet[row.DoorID] = row.Favorite
+	}
+	for _, row := range recentRows {
+		recentMeta[row.DoorID] = row
+	}
+	handleByID := a.userHandleLookup()
+	now := time.Now()
+	catalog := make([]webDoorView, 0, len(a.doorRegistry.Doors()))
+	for _, door := range a.doorRegistry.Doors() {
+		view := webDoorView{Door: door}
+		if turns, err := a.doorRegistry.TurnsRemaining(user.ID, door.ID, now); err == nil && turns > 0 {
+			view.TurnsRemaining = turns
+		}
+		view.Favorite = favoriteSet[door.ID]
+		if meta, ok := recentMeta[door.ID]; ok {
+			view.Recent = true
+			view.PlayCount = meta.PlayCount
+			if meta.LastPlayedAt != nil && !meta.LastPlayedAt.IsZero() {
+				view.LastPlayed = meta.LastPlayedAt.Local().Format("2006-01-02 15:04")
+			}
+		}
+		if rows, err := a.doorRegistry.ListAchievements(user.ID, door.ID, 50); err == nil {
+			view.PersonalAchievements = len(rows)
+		}
+		if rows, err := a.doorRegistry.ListScores(door.ID, 1); err == nil && len(rows) > 0 {
+			view.TopScore = rows[0].Value
+			view.TopScoreHandle = handleByID[rows[0].UserID]
+		}
+		if stats, err := a.doorRegistry.GetUsageStats(door.ID); err == nil && stats != nil {
+			view.DailyActive = stats.DailyActive
+			view.MonthlyActive = stats.MonthlyActive
+			view.TotalPlays = stats.TotalPlays
+		}
+		score := 0
+		if view.Favorite {
+			score += 100
+		}
+		if view.Recent {
+			score += 65
+		}
+		score += minInt(view.PersonalAchievements, 5) * 7
+		score += minInt(view.PlayCount, 10) * 3
+		score += minInt(view.TurnsRemaining, 5) * 2
+		score += minInt(int(view.TotalPlays), 18)
+		score += minInt(view.DailyActive, 6) * 2
+		if score == 0 {
+			score = 5 + minInt(int(view.TotalPlays), 10) + minInt(view.DailyActive, 3)
+		}
+		view.RecommendedScore = score
+		catalog = append(catalog, view)
+	}
+	sort.Slice(catalog, func(i, j int) bool {
+		if catalog[i].Favorite != catalog[j].Favorite {
+			return catalog[i].Favorite
+		}
+		if strings.ToLower(catalog[i].Door.Category) != strings.ToLower(catalog[j].Door.Category) {
+			return strings.ToLower(catalog[i].Door.Category) < strings.ToLower(catalog[j].Door.Category)
+		}
+		return strings.ToLower(catalog[i].Door.Name) < strings.ToLower(catalog[j].Door.Name)
+	})
+	return catalog
+}
+
+func topRecommendedDoors(catalog []webDoorView, limit int) []webDoorView {
+	if limit <= 0 || len(catalog) == 0 {
+		return nil
+	}
+	rows := append([]webDoorView(nil), catalog...)
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].RecommendedScore != rows[j].RecommendedScore {
+			return rows[i].RecommendedScore > rows[j].RecommendedScore
+		}
+		if rows[i].TurnsRemaining != rows[j].TurnsRemaining {
+			return rows[i].TurnsRemaining > rows[j].TurnsRemaining
+		}
+		if rows[i].Favorite != rows[j].Favorite {
+			return rows[i].Favorite
+		}
+		return strings.ToLower(rows[i].Door.Name) < strings.ToLower(rows[j].Door.Name)
+	})
+	if len(rows) > limit {
+		rows = rows[:limit]
+	}
+	return rows
+}
+
+func filterDoorViews(catalog []webDoorView, q, category, mode string) []webDoorView {
+	q = strings.ToLower(strings.TrimSpace(q))
+	category = strings.ToLower(strings.TrimSpace(category))
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	out := make([]webDoorView, 0, len(catalog))
+	recommendedIDs := map[string]bool{}
+	for _, row := range topRecommendedDoors(catalog, len(catalog)) {
+		recommendedIDs[row.Door.ID] = true
+	}
+	for _, row := range catalog {
+		if category != "" && strings.ToLower(strings.TrimSpace(row.Door.Category)) != category {
+			continue
+		}
+		switch mode {
+		case "favorites":
+			if !row.Favorite {
+				continue
+			}
+		case "recent":
+			if !row.Recent {
+				continue
+			}
+		case "recommended":
+			if !recommendedIDs[row.Door.ID] {
+				continue
+			}
+		}
+		if q != "" {
+			haystack := strings.ToLower(strings.Join([]string{
+				row.Door.ID,
+				row.Door.Name,
+				row.Door.Category,
+				row.Door.Description,
+			}, " "))
+			if !strings.Contains(haystack, q) {
+				continue
+			}
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+func doorCategories(catalog []webDoorView) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(catalog))
+	for _, row := range catalog {
+		category := strings.ToLower(strings.TrimSpace(row.Door.Category))
+		if category == "" {
+			continue
+		}
+		if _, ok := seen[category]; ok {
+			continue
+		}
+		seen[category] = struct{}{}
+		out = append(out, category)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (a *webApp) buildBoardsDashboard(user *domain.User, boards []domain.Board) boardsDashboardSnapshot {
+	snapshot := boardsDashboardSnapshot{VisibleBoards: len(boards)}
+	if user == nil {
+		return snapshot
+	}
+	if a.msgRepo != nil {
+		for _, board := range boards {
+			msgs, err := a.msgRepo.ListByBoard(board.ID)
+			if err != nil {
+				continue
+			}
+			pointerID := int64(0)
+			if ptr, ptrErr := a.msgRepo.GetPointer(user.ID, board.ID); ptrErr == nil && ptr != nil {
+				pointerID = ptr.LastReadID
+			}
+			for _, msg := range msgs {
+				if msg.ID > pointerID {
+					snapshot.UnreadPosts++
+				}
+			}
+		}
+	}
+	if a.mailRepo != nil {
+		if inbox, err := a.mailRepo.ListInbox(user.ID, 100); err == nil {
+			for _, row := range inbox {
+				if row.ReadAt == nil {
+					snapshot.UnreadMail++
+				}
+			}
+		}
+	}
+	if a.chatSvc != nil {
+		snapshot.OnlineUsers = len(a.chatSvc.Online())
+	}
+	if a.doorRegistry != nil {
+		if favorites, err := a.doorRegistry.ListFavorites(user.ID, 100); err == nil {
+			snapshot.FavoriteDoors = len(favorites)
+		}
+		if picks := topRecommendedDoors(a.buildDoorCatalog(user), 1); len(picks) > 0 {
+			snapshot.RecommendedDoor = picks[0].Door.Name
+			snapshot.RecommendedDoorID = picks[0].Door.ID
+		}
+	}
+	if a.adminRepo != nil {
+		if callers, err := a.adminRepo.ListCallerHistory(4); err == nil {
+			for _, row := range callers {
+				snapshot.RecentCallers = append(snapshot.RecentCallers, row.Username+" from "+remoteHostDisplay(row.RemoteAddr))
+			}
+		}
+	}
+	if a.oneLinerzMod != nil {
+		for _, row := range a.oneLinerzMod.List(4) {
+			snapshot.OneLiners = append(snapshot.OneLiners, row.Handle+": "+cleanOneLiner(row.Text, 72))
+		}
+	}
+	return snapshot
+}
+
+func (a *webApp) buildRadarSnapshot(user *domain.User) radarSnapshot {
+	snapshot := radarSnapshot{}
+	if user == nil {
+		return snapshot
+	}
+	boards := []domain.Board{}
+	if a.boardRepo != nil {
+		if rows, err := a.boardRepo.List(); err == nil {
+			for i := range rows {
+				if a.canReadBoard(user, &rows[i]) {
+					boards = append(boards, rows[i])
+				}
+			}
+		}
+	}
+	dashboard := a.buildBoardsDashboard(user, boards)
+	snapshot.UnreadMail = dashboard.UnreadMail
+	snapshot.UnreadPosts = dashboard.UnreadPosts
+	snapshot.OnlineUsers = dashboard.OnlineUsers
+	snapshot.TrackedBoards = len(boards)
+	snapshot.BoardPulse = a.buildBoardPulse(user, boards, 8)
+	snapshot.RecommendedDoors = topRecommendedDoors(a.buildDoorCatalog(user), 4)
+	snapshot.RecentAchievements = a.mustDoorAchievements(user.ID, 6)
+	if a.rumorzMod != nil {
+		snapshot.Rumor = strings.TrimSpace(a.rumorzMod.Current())
+	}
+	if digest, err := discovery.BuildSinceLastCall(a.boardRepo, a.msgRepo, a.mailRepo, user, 6); err == nil {
+		for _, row := range digest.Items {
+			snapshot.ActivityItems = append(snapshot.ActivityItems, row.Line)
+		}
+	}
+	if a.adminRepo != nil {
+		if rows, err := a.adminRepo.ListNodeSessions(12); err == nil {
+			now := time.Now().UTC()
+			for _, row := range rows {
+				idle := now.Sub(row.LastActivity)
+				if idle < 0 {
+					idle = 0
+				}
+				snapshot.LiveCallers = append(snapshot.LiveCallers, callerRadarRow{
+					Handle: row.Username,
+					Node:   "Node " + strconv.Itoa(row.NodeID),
+					Area:   row.Area,
+					Since:  row.LoginAt.Local().Format("2006-01-02 15:04"),
+					Idle:   formatDurationCompact(idle),
+					Origin: strings.ToUpper(netutil.RemoteOrigin(row.RemoteAddr)),
+					From:   remoteHostDisplay(row.RemoteAddr),
+				})
+			}
+		}
+		if rows, err := a.adminRepo.ListCallerHistory(8); err == nil {
+			for _, row := range rows {
+				snapshot.RecentCallers = append(snapshot.RecentCallers, callerRadarRow{
+					Handle:   row.Username,
+					Node:     "Node " + strconv.Itoa(row.NodeID),
+					Area:     row.Area,
+					Since:    row.LogoutAt.Local().Format("2006-01-02 15:04"),
+					Origin:   strings.ToUpper(netutil.RemoteOrigin(row.RemoteAddr)),
+					From:     remoteHostDisplay(row.RemoteAddr),
+					Duration: formatDurationCompact(time.Duration(row.DurationSeconds) * time.Second),
+				})
+			}
+		}
+	}
+	if len(snapshot.LiveCallers) == 0 && a.chatSvc != nil {
+		for _, row := range a.chatSvc.Online() {
+			snapshot.LiveCallers = append(snapshot.LiveCallers, callerRadarRow{
+				Handle: row.Nick,
+				Node:   row.Node,
+				Area:   row.Area,
+				Since:  row.LoginAt.Local().Format("2006-01-02 15:04"),
+				Idle:   strconv.Itoa(row.IdleSec) + "s",
+				Origin: "UNKNOWN",
+				From:   "n/a",
+			})
+		}
+	}
+	snapshot.LiveNodes = len(snapshot.LiveCallers)
+	return snapshot
+}
+
+func (a *webApp) buildBoardPulse(user *domain.User, boards []domain.Board, limit int) []boardPulseRow {
+	if user == nil || len(boards) == 0 || a.msgRepo == nil {
+		return nil
+	}
+	now := time.Now().UTC()
+	out := make([]boardPulseRow, 0, len(boards))
+	for _, board := range boards {
+		msgs, err := a.msgRepo.ListByBoard(board.ID)
+		if err != nil {
+			continue
+		}
+		pointerID := int64(0)
+		if ptr, ptrErr := a.msgRepo.GetPointer(user.ID, board.ID); ptrErr == nil && ptr != nil {
+			pointerID = ptr.LastReadID
+		}
+		row := boardPulseRow{
+			BoardID:      board.ID,
+			BoardName:    board.Name,
+			Conference:   board.Conference,
+			MessageCount: len(msgs),
+		}
+		if len(msgs) > 0 {
+			last := msgs[len(msgs)-1]
+			row.LastAt = last.CreatedAt.Local().Format("2006-01-02 15:04")
+			row.LastSubject = cleanOneLiner(last.Subject, 72)
+			recencyBoost := 0
+			if delta := now.Sub(last.CreatedAt); delta < 24*time.Hour {
+				recencyBoost = 4
+			} else if delta < 72*time.Hour {
+				recencyBoost = 2
+			}
+			row.Heat += recencyBoost
+		}
+		for _, msg := range msgs {
+			if msg.ID > pointerID {
+				row.NewCount++
+			}
+		}
+		row.Heat += row.NewCount*3 + minInt(row.MessageCount, 12)
+		out = append(out, row)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Heat != out[j].Heat {
+			return out[i].Heat > out[j].Heat
+		}
+		if out[i].NewCount != out[j].NewCount {
+			return out[i].NewCount > out[j].NewCount
+		}
+		return strings.ToLower(out[i].BoardName) < strings.ToLower(out[j].BoardName)
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+func (a *webApp) buildScoreboardSnapshot(user *domain.User, filterDoor string) scoreboardSnapshot {
+	snapshot := scoreboardSnapshot{FilterDoor: filterDoor}
+	if a.doorRegistry == nil {
+		return snapshot
+	}
+	lookup := a.userHandleLookup()
+	personalBest := map[string]scoreChampion{}
+	for _, door := range a.doorRegistry.Doors() {
+		if filterDoor != "" && !strings.EqualFold(door.ID, filterDoor) {
+			continue
+		}
+		scores, err := a.doorRegistry.ListScores(door.ID, 20)
+		if err != nil || len(scores) == 0 {
+			continue
+		}
+		snapshot.DoorsWithScores++
+		snapshot.VisibleScoreRows += len(scores)
+		top := scores[0]
+		handle := lookup[top.UserID]
+		if handle == "" {
+			handle = "uid:" + strconv.FormatInt(top.UserID, 10)
+		}
+		snapshot.ChampionRows = append(snapshot.ChampionRows, scoreChampion{
+			DoorID:    door.ID,
+			DoorName:  door.Name,
+			Handle:    handle,
+			Score:     top.Value,
+			ScoreType: top.ScoreType,
+			CreatedAt: top.CreatedAt.Local().Format("2006-01-02 15:04"),
+		})
+		snapshot.RecentRows = append(snapshot.RecentRows, scoreChampion{
+			DoorID:    door.ID,
+			DoorName:  door.Name,
+			Handle:    handle,
+			Score:     top.Value,
+			ScoreType: top.ScoreType,
+			CreatedAt: top.CreatedAt.Local().Format("2006-01-02 15:04"),
+		})
+		if user == nil {
+			continue
+		}
+		for _, row := range scores {
+			if row.UserID != user.ID {
+				continue
+			}
+			entry := scoreChampion{
+				DoorID:    door.ID,
+				DoorName:  door.Name,
+				Handle:    user.Handle,
+				Score:     row.Value,
+				ScoreType: row.ScoreType,
+				CreatedAt: row.CreatedAt.Local().Format("2006-01-02 15:04"),
+			}
+			if best, ok := personalBest[door.ID]; !ok || entry.Score > best.Score {
+				personalBest[door.ID] = entry
+			}
+		}
+	}
+	for _, row := range personalBest {
+		snapshot.PersonalRows = append(snapshot.PersonalRows, row)
+	}
+	if user != nil {
+		snapshot.PersonalAchievements = len(a.mustDoorAchievements(user.ID, 100))
+	}
+	sort.Slice(snapshot.ChampionRows, func(i, j int) bool {
+		if snapshot.ChampionRows[i].Score != snapshot.ChampionRows[j].Score {
+			return snapshot.ChampionRows[i].Score > snapshot.ChampionRows[j].Score
+		}
+		return snapshot.ChampionRows[i].DoorName < snapshot.ChampionRows[j].DoorName
+	})
+	sort.Slice(snapshot.RecentRows, func(i, j int) bool {
+		return snapshot.RecentRows[i].CreatedAt > snapshot.RecentRows[j].CreatedAt
+	})
+	sort.Slice(snapshot.PersonalRows, func(i, j int) bool {
+		if snapshot.PersonalRows[i].Score != snapshot.PersonalRows[j].Score {
+			return snapshot.PersonalRows[i].Score > snapshot.PersonalRows[j].Score
+		}
+		return snapshot.PersonalRows[i].DoorName < snapshot.PersonalRows[j].DoorName
+	})
+	if len(snapshot.ChampionRows) > 12 {
+		snapshot.ChampionRows = snapshot.ChampionRows[:12]
+	}
+	if len(snapshot.RecentRows) > 10 {
+		snapshot.RecentRows = snapshot.RecentRows[:10]
+	}
+	if len(snapshot.PersonalRows) > 10 {
+		snapshot.PersonalRows = snapshot.PersonalRows[:10]
+	}
+	return snapshot
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func formatDurationCompact(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	d = d.Round(time.Second)
+	if d < time.Minute {
+		return strconv.Itoa(int(d.Seconds())) + "s"
+	}
+	if d < time.Hour {
+		return strconv.Itoa(int(d.Minutes())) + "m"
+	}
+	if d < 24*time.Hour {
+		return strconv.Itoa(int(d.Hours())) + "h"
+	}
+	return strconv.Itoa(int(d.Hours()/24)) + "d"
 }
 
 func parseAllowDomains(raw string) map[string]struct{} {

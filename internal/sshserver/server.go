@@ -189,6 +189,9 @@ func (s *Server) handleSession(sess gssh.Session) {
 	sessionTime24h := true
 	currentUser := "Guest"
 	currentAccount := &domain.User{Handle: "Guest", Role: "user", ANSIEnabled: true, TimeFormat24h: true, Theme: "retro-amber"}
+	doorCategoryIndex := 0
+	doorFavoritesOnly := false
+	doorRecentOnly := false
 	sessionID := ""
 	if ctx := sess.Context(); ctx != nil {
 		sessionID = strings.TrimSpace(ctx.SessionID())
@@ -764,6 +767,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 			favorites := make([]string, 0, len(favoriteRows))
 			recent := make([]string, 0, len(recentRows))
 			favMap := map[string]bool{}
+			recentMap := map[string]bool{}
 			for _, row := range favoriteRows {
 				if row.DoorID != "" {
 					favorites = append(favorites, strings.ToUpper(row.DoorID))
@@ -773,10 +777,39 @@ func (s *Server) handleSession(sess gssh.Session) {
 			for _, row := range recentRows {
 				if row.DoorID != "" {
 					recent = append(recent, strings.ToUpper(row.DoorID))
+					recentMap[row.DoorID] = true
 				}
 			}
+			allDoors := doorRegistry.Doors()
+			categoryChoices := []string{""}
+			categorySeen := map[string]struct{}{}
+			for _, door := range allDoors {
+				category := strings.ToLower(strings.TrimSpace(door.Category))
+				if category == "" {
+					continue
+				}
+				if _, ok := categorySeen[category]; ok {
+					continue
+				}
+				categorySeen[category] = struct{}{}
+				categoryChoices = append(categoryChoices, category)
+			}
+			sort.Strings(categoryChoices[1:])
+			if doorCategoryIndex >= len(categoryChoices) {
+				doorCategoryIndex = 0
+			}
+			currentCategory := categoryChoices[doorCategoryIndex]
 			items := make([]ui.DoorMenuItem, 0)
-			for _, door := range doorRegistry.Doors() {
+			for _, door := range allDoors {
+				if doorFavoritesOnly && !favMap[door.ID] {
+					continue
+				}
+				if doorRecentOnly && !recentMap[door.ID] {
+					continue
+				}
+				if currentCategory != "" && !strings.EqualFold(strings.TrimSpace(door.Category), currentCategory) {
+					continue
+				}
 				turns, err := doorRegistry.TurnsRemaining(userID, door.ID, time.Now())
 				if err != nil {
 					turns = 0
@@ -789,7 +822,15 @@ func (s *Server) handleSession(sess gssh.Session) {
 					Favorite:       favMap[door.ID],
 				})
 			}
-			renderFrame(sess, termWidth, renderWidth, ui.RenderDoorMenu(renderWidth, items, favorites, recent)+"\r\n", sessionANSI, sessionEncoding)
+			summary := ui.DoorMenuSummary{
+				Total:         len(allDoors),
+				Visible:       len(items),
+				Category:      currentCategory,
+				FavoritesOnly: doorFavoritesOnly,
+				RecentOnly:    doorRecentOnly,
+				Spotlight:     doorSpotlightLabel(items),
+			}
+			renderFrame(sess, termWidth, renderWidth, ui.RenderDoorMenu(renderWidth, items, favorites, recent, summary)+"\r\n", sessionANSI, sessionEncoding)
 			io.WriteString(sess, "Selection: ")
 			choice, err := readKey(reader)
 			if err != nil {
@@ -802,6 +843,21 @@ func (s *Server) handleSession(sess gssh.Session) {
 			}
 			if choice == "?" {
 				showHelpPanel(sess, reader, termWidth, renderWidth, s.siteName()+" Help", currentUser, nodeLabel, th, sessionTime24h, sessionANSI, sessionEncoding, ui.RenderDoorsHelp(renderWidth), touch)
+				state = stateDoors
+				break
+			}
+			if choice == "F" {
+				doorFavoritesOnly = !doorFavoritesOnly
+				state = stateDoors
+				break
+			}
+			if choice == "V" {
+				doorRecentOnly = !doorRecentOnly
+				state = stateDoors
+				break
+			}
+			if choice == "C" {
+				doorCategoryIndex = (doorCategoryIndex + 1) % len(categoryChoices)
 				state = stateDoors
 				break
 			}
@@ -1227,6 +1283,32 @@ func truncateText(value string, max int) string {
 		return value
 	}
 	return string(runes[:max])
+}
+
+func doorSpotlightLabel(items []ui.DoorMenuItem) string {
+	if len(items) == 0 {
+		return ""
+	}
+	best := items[0]
+	bestScore := -1
+	for _, row := range items {
+		score := 0
+		if row.Favorite {
+			score += 100
+		}
+		if row.TurnsRemaining > 0 {
+			score += row.TurnsRemaining * 3
+		}
+		if score > bestScore {
+			best = row
+			bestScore = score
+		}
+	}
+	label := best.Name + " [" + strings.ToUpper(best.Hotkey) + "]"
+	if best.TurnsRemaining > 0 {
+		label += fmt.Sprintf(" • %d turns", best.TurnsRemaining)
+	}
+	return label
 }
 
 func pagerWrite(out io.Writer, reader *bufio.Reader, text string) {
