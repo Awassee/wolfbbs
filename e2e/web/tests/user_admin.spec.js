@@ -425,6 +425,8 @@ test("sysop setup/files/doors/system surfaces and actions stay healthy", async (
 
   await adminPage.goto("/admin/setup");
   await expect(adminPage.locator("h1")).toContainText("Setup & Install");
+  await expect(adminPage.locator("body")).toContainText("Launch Checklist");
+  await expect(adminPage.locator("body")).toContainText("Common Gotchas");
   let csrf = await csrfFrom(adminPage);
   await postForm(adminPage, "/admin/setup", { csrf_token: csrf, action: "seed_default_boards" });
   await postForm(adminPage, "/admin/setup", { csrf_token: csrf, action: "ensure_mailbot" });
@@ -588,6 +590,8 @@ test("support, discovery, reset, and activitypub surfaces behave like real user 
   await page.goto("/help");
   await expect(page.locator("h1")).toContainText(/Help/i);
   await expect(page.locator("body")).toContainText("Current role: guest");
+  await expect(page.locator("body")).toContainText("Use the right surface");
+  await expect(page.locator("body")).toContainText("docs/START_HERE.md");
 
   await page.goto("/tour");
   await expect(page.locator("h1")).toContainText("Guided Tour");
@@ -597,6 +601,7 @@ test("support, discovery, reset, and activitypub surfaces behave like real user 
   await page.goto("/help");
   await expect(page.locator("body")).toContainText("Current role: user");
   await expect(page.locator("body")).toContainText("/scores");
+  await expect(page.locator("body")).toContainText("If you're a caller");
 
   await page.goto("/discover");
   await expect(page.locator("h1")).toContainText("Since Your Last Call");

@@ -39,6 +39,12 @@ cd wolfbbs
 bash install.sh
 ```
 
+If you are unsure which path to use:
+
+- use the bootstrap installer for the fastest working system
+- use the release tarball for a cleaner handoff or packaged install
+- use a clone when you expect to inspect or change code
+
 ## 2. Let the installer finish
 
 The installer:
@@ -63,8 +69,9 @@ After install, open the printed admin URL and do this in order:
 
 1. Visit `/admin/setup`
 2. Visit `/admin/config`
-3. Review the board name, hostname, and runtime flags
-4. Create any extra users or moderators in `/admin/users`
+3. Seed default boards and confirm the mailbot bootstrap action
+4. Review the board name, hostname, and runtime flags
+5. Create any extra users or moderators in `/admin/users`
 
 The installer prints:
 
@@ -83,8 +90,18 @@ Use these checks immediately after setup:
 3. Open `/chat` and send a message in `#lobby`.
 4. Open `/doors` and launch a built-in door.
 5. Open `/scores` to confirm score surfaces render.
+6. Run `bash install.sh --doctor` and make sure the report is understandable.
 
-## 5. Daily management
+## 5. Decide what you hand to real users
+
+Before inviting callers, make sure you know which surfaces are public:
+
+- SSH is the main nostalgic caller path
+- `/chat` and IRC share the same live conversation layer
+- `/boards`, `/bulletins`, `/directory`, and `/doors` are the core browser surfaces
+- `/admin/*` is for sysops only
+
+## 6. Daily management
 
 ```bash
 bash install.sh --status
@@ -99,7 +116,7 @@ Fast local rebuild while iterating:
 bash install.sh --rapid-upgrade
 ```
 
-## 6. Uninstall
+## 7. Uninstall
 
 Keep data:
 
@@ -113,8 +130,10 @@ Remove data too:
 bash install.sh --uninstall --purge --yes
 ```
 
-## 7. Read next
+## 8. Read next
 
+- [Start Here](START_HERE.md)
 - [Install Guide](INSTALL.md)
+- [Operations Guide](OPERATIONS.md)
 - [Product Guide](PRODUCT_GUIDE.md)
 - [Datasheet](DATASHEET.md)

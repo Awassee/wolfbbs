@@ -28,6 +28,20 @@ For most users, the right path is:
 4. tune behavior in `/admin/config`
 5. connect over SSH and web to verify the caller experience
 
+## What The Installer Handles For You
+
+The normal installer path is intentionally consumer-oriented. It:
+
+- detects the host platform
+- installs supported prerequisites when needed
+- prepares Docker runtime support
+- creates a managed runtime layout under the install prefix
+- writes the `.env`
+- starts services
+- prints exact first-login and verification steps
+
+You should not need to download dependencies manually or remember a long flag list for a normal install.
+
 ## Quick Install (turnkey paste-and-go)
 
 Linux:
@@ -65,6 +79,16 @@ What you have at the end:
 - a bootstrap sysop account
 - printed connection URLs and ports
 - a managed install prefix with runtime config and upgrade commands
+
+## What To Expect On First Login
+
+The installer prints a first-login block. Use it in this order:
+
+1. sign in to `/admin`
+2. finish `/admin/setup`
+3. review `/admin/config`
+4. create at least one non-sysop user
+5. verify SSH, web chat, boards, and doors
 
 ## Install From GitHub Release Bundle
 
@@ -136,6 +160,19 @@ Use this sequence:
 4. open `/boards`, `/chat`, `/doors`, and `/scores`
 5. connect via SSH and verify the ANSI menus
 6. run `bash install.sh --doctor`
+
+## Which Command Should I Run?
+
+| Situation | Command |
+| --- | --- |
+| first install from a clone | `bash install.sh` |
+| first install without cloning first | bootstrap command from `README.md` |
+| show endpoints and current state | `bash install.sh --status` |
+| check health without changing anything | `bash install.sh --doctor` |
+| repair a broken install | `bash install.sh --repair` |
+| pull latest shipped images | `bash install.sh --upgrade` |
+| rebuild local source changes quickly | `bash install.sh --rapid-upgrade` |
+| fully remove the running install | `bash install.sh --uninstall --purge --yes` |
 
 ## What the Installer Does
 
@@ -247,8 +284,10 @@ Artifacts are written to `dist/<version>/`.
 
 Current product-facing docs included in release bundles:
 
+- `docs/START_HERE.md`
 - `docs/QUICKSTART.md`
 - `docs/INSTALL.md`
+- `docs/OPERATIONS.md`
 - `docs/PRODUCT_GUIDE.md`
 - `docs/DATASHEET.md`
 - `docs/feature-reference.md`

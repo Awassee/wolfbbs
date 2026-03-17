@@ -132,7 +132,7 @@ for platform in "${PLATFORMS[@]}"; do
   done
 
   cp README.md docker-compose.yml .env.example install.sh bootstrap.sh "$bundle_root/"
-  cp docs/QUICKSTART.md docs/INSTALL.md docs/PRODUCT_GUIDE.md docs/DATASHEET.md docs/ACCEPTANCE_SPEC.md docs/feature-reference.md docs/irc-compat.md docs/doors.md docs/chat.md docs/admin.md "$bundle_root/docs/"
+  cp docs/START_HERE.md docs/QUICKSTART.md docs/INSTALL.md docs/OPERATIONS.md docs/PRODUCT_GUIDE.md docs/DATASHEET.md docs/ACCEPTANCE_SPEC.md docs/feature-reference.md docs/irc-compat.md docs/doors.md docs/chat.md docs/admin.md "$bundle_root/docs/"
   cp scripts/verify.sh scripts/build.sh "$bundle_root/scripts/"
   chmod +x "$bundle_root/install.sh" "$bundle_root/bootstrap.sh" "$bundle_root/scripts/verify.sh" "$bundle_root/scripts/build.sh"
   chmod +x "$bundle_root/bin/"*
@@ -147,11 +147,11 @@ Contents:
 - install.sh: installer and upgrade entrypoint
 - bootstrap.sh: one-line downloader/bootstrap entrypoint
 - docker-compose.yml + .env.example: default stack runtime
-- docs/: quickstart, install, product guide, datasheet, acceptance, feature reference, irc compatibility, doors, chat, and admin references
+- docs/: start-here, quickstart, install, operations, product guide, datasheet, acceptance, feature reference, irc compatibility, doors, chat, and admin references
 - scripts/: verify and build helpers
 
 Quick start:
-1. Review docs/QUICKSTART.md and docs/PRODUCT_GUIDE.md
+1. Review docs/START_HERE.md and docs/PRODUCT_GUIDE.md
 2. Copy .env.example to a local .env if needed
 3. Run ./install.sh or launch binaries from bin/
 EOF
@@ -166,7 +166,7 @@ EOF
     echo "$bundle_name"
     echo "  tarball: $(basename "$tarball")"
     echo "  binaries: ${#targets[@]}"
-    echo "  docs: QUICKSTART, INSTALL, PRODUCT_GUIDE, DATASHEET, ACCEPTANCE_SPEC, feature-reference, irc-compat, doors, chat, admin"
+    echo "  docs: START_HERE, QUICKSTART, INSTALL, OPERATIONS, PRODUCT_GUIDE, DATASHEET, ACCEPTANCE_SPEC, feature-reference, irc-compat, doors, chat, admin"
   } >>"$manifest_file"
   rm -rf "$stage_dir"
 done

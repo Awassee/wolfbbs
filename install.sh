@@ -411,6 +411,14 @@ print_first_login_wizard() {
   local bbs_name="${BBS_NAME:-$DEFAULT_BBS_NAME}"
   local admin_handle="$BOOTSTRAP_ADMIN_HANDLE"
   local admin_password="$BOOTSTRAP_ADMIN_PASSWORD"
+  local admin_users_url=""
+  local boards_url=""
+  local chat_url=""
+  local doors_url=""
+  local scores_url=""
+  local docs_root=""
+  local start_here_doc=""
+  local ops_doc=""
   if [[ -z "$host" ]]; then
     host="localhost"
   fi
@@ -420,6 +428,11 @@ print_first_login_wizard() {
   local admin_login_url="http://${host}:${WEB_PORT}/admin/login"
   local admin_setup_url="http://${host}:${WEB_PORT}/admin/setup"
   local admin_system_url="http://${host}:${WEB_PORT}/admin/system"
+  admin_users_url="http://${host}:${WEB_PORT}/admin/users"
+  boards_url="http://${host}:${WEB_PORT}/boards"
+  chat_url="http://${host}:${WEB_PORT}/chat"
+  doors_url="http://${host}:${WEB_PORT}/doors"
+  scores_url="http://${host}:${WEB_PORT}/scores"
 
   if [[ -z "$admin_handle" && -f "$ENV_FILE" ]]; then
     admin_handle="$(read_env_value "WOLFBBS_BOOTSTRAP_ADMIN_HANDLE" "$ENV_FILE")"
@@ -439,6 +452,9 @@ print_first_login_wizard() {
       bbs_name="$env_name"
     fi
   fi
+  docs_root="${WORK_DIR}/docs"
+  start_here_doc="${docs_root}/START_HERE.md"
+  ops_doc="${docs_root}/OPERATIONS.md"
 
   echo
   echo "=================== First Login Wizard ==================="
@@ -461,14 +477,29 @@ print_first_login_wizard() {
   echo "   - Open ${admin_setup_url}"
   echo "   - Confirm health checks and baseline config"
   echo "   - Change bootstrap password after first login"
+  echo "   - Seed default boards and verify bootstrap actions"
   echo
   echo "3) Verify caller access paths:"
   echo "   - SSH BBS: ssh ${host} -p ${SSH_PORT}"
-  echo "   - Web Chat: http://${host}:${WEB_PORT}/chat"
+  echo "   - Web Chat: ${chat_url}"
   echo "   - IRC: ${host}:${IRC_PORT}"
   echo
   echo "4) Check runtime status dashboard:"
   echo "   - ${admin_system_url}"
+  echo
+  echo "5) Walk the public product once before inviting users:"
+  echo "   - Boards: ${boards_url}"
+  echo "   - Doors: ${doors_url}"
+  echo "   - Scores: ${scores_url}"
+  echo "   - Users: ${admin_users_url}"
+  if [[ -f "$start_here_doc" ]]; then
+    echo
+    echo "6) Read the operator guides in this checkout:"
+    echo "   - Start here: ${start_here_doc}"
+    if [[ -f "$ops_doc" ]]; then
+      echo "   - Operations: ${ops_doc}"
+    fi
+  fi
   echo "=========================================================="
   echo
 }
@@ -580,16 +611,16 @@ show_interactive_action_menu() {
   while true; do
     echo "┌──────────────────────────── WolfBBS Action Menu ────────────────────────────┐"
     menu_line "Setup"
-    menu_line "1) Easy install / first setup        Recommended default path"
-    menu_line "2) Rapid upgrade                     Rebuild and restart local code"
-    menu_line "3) Upgrade                           Pull latest images and restart"
-    menu_line "4) Repair                            Fix deps/env and verify stack"
+    menu_line "1) Easy install / first setup        Recommended for first-time operators"
+    menu_line "2) Rapid upgrade                     Rebuild and restart this checkout"
+    menu_line "3) Upgrade                           Pull latest shipped images"
+    menu_line "4) Repair                            Fix deps/env and verify the stack"
     menu_divider
     menu_line "Run"
     menu_line "5) Start services                    Bring the stack up"
     menu_line "6) Stop services                     Bring the stack down"
     menu_line "7) Restart services                  Restart all services"
-    menu_line "8) Status                            Show endpoints and health"
+    menu_line "8) Status                            Show endpoints, probes, next steps"
     menu_line "9) Logs                              Tail recent service logs"
     menu_divider
     menu_line "Maintenance"
@@ -597,6 +628,9 @@ show_interactive_action_menu() {
     menu_line "11) Uninstall + purge                Remove services and data volumes"
     menu_line "12) Doctor diagnostics               Safe preflight and health checks"
     menu_line "13) Dependencies only                Install/check prerequisites only"
+    menu_divider
+    menu_line "Docs"
+    menu_line "Read docs/START_HERE.md for first launch and docs/OPERATIONS.md for day-two ops"
     menu_line "q) Quit"
     echo "└──────────────────────────────────────────────────────────────────────────────┘"
     printf "Selection [1]: "
@@ -1917,6 +1951,16 @@ status_view() {
     fi
   else
     echo "  WARN nc not found; skipping TCP probes"
+  fi
+  echo "Recommended next actions:"
+  echo "  1) Finish /admin/setup if this is a first install or recent rebuild"
+  echo "  2) Review /admin/config for runtime flags and host identity"
+  echo "  3) Walk /boards, /chat, /doors, and /scores as a real user"
+  echo "  4) Use bash install.sh --doctor before changing ports or proxies"
+  if [[ -d "${WORK_DIR}/docs" ]]; then
+    echo "Operator guides:"
+    [[ -f "${WORK_DIR}/docs/START_HERE.md" ]] && echo "  - ${WORK_DIR}/docs/START_HERE.md"
+    [[ -f "${WORK_DIR}/docs/OPERATIONS.md" ]] && echo "  - ${WORK_DIR}/docs/OPERATIONS.md"
   fi
 }
 

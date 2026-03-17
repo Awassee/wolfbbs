@@ -1271,6 +1271,67 @@ hr{
 .wolfbbs-card{
   padding:16px 18px;
 }
+.wolfbbs-primer{
+  position:relative;
+  overflow:hidden;
+  padding:18px 20px;
+  margin:14px 0 18px;
+  background:
+    radial-gradient(circle at top right, rgba(15,79,168,.16), transparent 34%),
+    linear-gradient(180deg,#fbfdff,#f2f7ff);
+}
+.wolfbbs-primer::after{
+  content:"";
+  position:absolute;
+  inset:auto -30px -60px auto;
+  width:180px;
+  height:180px;
+  background:radial-gradient(circle, rgba(15,79,168,.12), transparent 70%);
+}
+.wolfbbs-primer-eyebrow{
+  display:inline-flex;
+  margin-bottom:8px;
+  color:#355f94;
+  font-size:.78rem;
+  font-weight:800;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+}
+.wolfbbs-primer-title{
+  display:block;
+  margin-bottom:8px;
+  color:#17385e;
+  font-size:1.08rem;
+}
+.wolfbbs-primer p{
+  margin:0 0 10px;
+  color:#28415d;
+}
+.wolfbbs-primer ul{
+  margin:10px 0 0 18px;
+}
+.wolfbbs-primer-actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  margin-top:12px;
+}
+.wolfbbs-primer-actions a{
+  display:inline-flex;
+  align-items:center;
+  min-height:32px;
+  padding:6px 12px;
+  border-radius:999px;
+  border:1px solid #c3d4ea;
+  background:#f5faff;
+  color:#0f3f83;
+  font-size:.9rem;
+  font-weight:700;
+}
+.wolfbbs-primer-actions a:hover{
+  background:#eaf3ff;
+  text-decoration:none;
+}
 .wolfbbs-action-grid{
   display:grid;
   grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
@@ -1457,6 +1518,128 @@ hr{
 
   const title = (document.querySelector("h1") && document.querySelector("h1").textContent.trim()) || document.title || "WolfBBS";
   const currentPath = location.pathname + location.search;
+  const primerRegistry = {
+    "/help": {
+      eyebrow: "Start here",
+      title: "Use WolfBBS by intent",
+      body: "This page is the route map. If you run the board, finish /admin/setup before treating the product as ready. If you are a caller, start with boards, chat, and doors.",
+      bullets: [
+        "Use /admin/setup before /admin/config when launching a fresh board.",
+        "Use /chat or IRC for the same live conversation layer.",
+        "Use SSH when you want the full ANSI board feel."
+      ],
+      actions: [
+        { label: "Admin setup", href: "/admin/setup" },
+        { label: "Boards", href: "/boards" },
+        { label: "Chat", href: "/chat" }
+      ]
+    },
+    "/admin/setup": {
+      eyebrow: "Launch path",
+      title: "Finish setup in this order",
+      body: "Identity and safety first, bootstrap actions second, then validate the real caller surfaces.",
+      bullets: [
+        "Save Step 1 and Step 2 before inviting users.",
+        "Seed boards and create a real non-sysop account.",
+        "Check /status and /admin/system after bootstrap."
+      ],
+      actions: [
+        { label: "Admin config", href: "/admin/config" },
+        { label: "Users", href: "/admin/users" },
+        { label: "Status", href: "/status" }
+      ]
+    },
+    "/admin/config": {
+      eyebrow: "Runtime controls",
+      title: "Use config after setup, not instead of it",
+      body: "This page is for runtime flags, identity details, and service exposure after the baseline setup wizard is complete.",
+      bullets: [
+        "Keep public-facing changes deliberate.",
+        "Verify status after changing ports, proxies, or optional services."
+      ],
+      actions: [
+        { label: "Setup wizard", href: "/admin/setup" },
+        { label: "System", href: "/admin/system" },
+        { label: "Help", href: "/help" }
+      ]
+    },
+    "/boards": {
+      eyebrow: "Caller home base",
+      title: "Boards are the long-form center of gravity",
+      body: "Use boards for persistent discussion, unread scanning, and threaded replies. Pair this page with mail for private follow-up and radar for what changed.",
+      actions: [
+        { label: "Mail", href: "/mail" },
+        { label: "Radar", href: "/radar" },
+        { label: "Bulletins", href: "/bulletins" }
+      ]
+    },
+    "/chat": {
+      eyebrow: "Shared live chat",
+      title: "Web chat and IRC are the same conversation layer",
+      body: "Use this page for quick live interaction. The default room is #lobby, and IRC users see the same channel state.",
+      actions: [
+        { label: "Clubhouse", href: "/clubhouse" },
+        { label: "Help", href: "/help" },
+        { label: "Status", href: "/status" }
+      ]
+    },
+    "/doors": {
+      eyebrow: "Games and stickiness",
+      title: "Doors keep callers coming back",
+      body: "Use favorites, recommendations, and score links to turn the door list into a daily destination instead of a dead catalog.",
+      actions: [
+        { label: "Scores", href: "/scores" },
+        { label: "Clubhouse", href: "/clubhouse" },
+        { label: "Boards", href: "/boards" }
+      ]
+    },
+    "/status": {
+      eyebrow: "Health snapshot",
+      title: "Use status as the fast confidence check",
+      body: "This is the quick answer to whether the board looks healthy. For sysop detail, follow through to the WFC dashboard and setup pages.",
+      actions: [
+        { label: "Admin system", href: "/admin/system" },
+        { label: "Admin setup", href: "/admin/setup" },
+        { label: "Help", href: "/help" }
+      ]
+    },
+    "/mail": {
+      eyebrow: "Private conversation",
+      title: "Use mail for direct follow-up",
+      body: "Boards are public, mail is direct. This is the right place for operator feedback, replies, and caller-to-caller private messages.",
+      actions: [
+        { label: "Boards", href: "/boards" },
+        { label: "Directory", href: "/directory" },
+        { label: "Help", href: "/help" }
+      ]
+    },
+    "/radar": {
+      eyebrow: "Mission control",
+      title: "Radar shows what changed since the last call",
+      body: "Use this view when you want a single-screen snapshot of pulse, callers, recommended doors, and recent activity.",
+      actions: [
+        { label: "Boards", href: "/boards" },
+        { label: "Chat", href: "/chat" },
+        { label: "Clubhouse", href: "/clubhouse" }
+      ]
+    },
+    "/clubhouse": {
+      eyebrow: "Social layer",
+      title: "Clubhouse is where the board feels alive",
+      body: "Use one-liners, BBS exchange, and social presence here to keep momentum between longer board posts.",
+      actions: [
+        { label: "Chat", href: "/chat" },
+        { label: "Bulletins", href: "/bulletins" },
+        { label: "Directory", href: "/directory" }
+      ]
+    }
+  };
+  function primerForPath(pathname) {
+    if (primerRegistry[pathname]) return primerRegistry[pathname];
+    if (pathname.startsWith("/admin/setup")) return primerRegistry["/admin/setup"];
+    if (pathname.startsWith("/admin/config")) return primerRegistry["/admin/config"];
+    return null;
+  }
   const navLinks = [];
   const navSeen = new Set();
   Array.from(document.querySelectorAll("a[href]")).forEach((anchor) => {
@@ -1492,6 +1675,52 @@ hr{
       }
     }
   } catch (_) {}
+
+  const primer = primerForPath(location.pathname);
+  if (primer) {
+    const panel = document.createElement("section");
+    panel.className = "wolfbbs-primer wolfbbs-card";
+    const eyebrow = document.createElement("span");
+    eyebrow.className = "wolfbbs-primer-eyebrow";
+    eyebrow.textContent = primer.eyebrow || "Guide";
+    panel.appendChild(eyebrow);
+    const heading = document.createElement("strong");
+    heading.className = "wolfbbs-primer-title";
+    heading.textContent = primer.title || title;
+    panel.appendChild(heading);
+    if (primer.body) {
+      const body = document.createElement("p");
+      body.textContent = primer.body;
+      panel.appendChild(body);
+    }
+    if (Array.isArray(primer.bullets) && primer.bullets.length) {
+      const list = document.createElement("ul");
+      primer.bullets.forEach((item) => {
+        const li = document.createElement("li");
+        li.textContent = item;
+        list.appendChild(li);
+      });
+      panel.appendChild(list);
+    }
+    if (Array.isArray(primer.actions) && primer.actions.length) {
+      const actions = document.createElement("div");
+      actions.className = "wolfbbs-primer-actions";
+      primer.actions.forEach((item) => {
+        const link = document.createElement("a");
+        link.href = item.href;
+        link.textContent = item.label;
+        actions.appendChild(link);
+      });
+      panel.appendChild(actions);
+    }
+    const h1 = document.querySelector("h1");
+    const recentRail = document.querySelector(".wolfbbs-recent-rail");
+    if (recentRail && recentRail.parentNode) {
+      recentRail.parentNode.insertBefore(panel, recentRail.nextSibling);
+    } else if (h1 && h1.parentNode) {
+      h1.parentNode.insertBefore(panel, h1.nextSibling);
+    }
+  }
 
   const headings = Array.from(document.querySelectorAll("h2, h3"));
   if (headings.length >= 2) {
@@ -2260,6 +2489,12 @@ func (a *webApp) handleHelp(w http.ResponseWriter, r *http.Request) {
 	user, _ := a.currentUser(r)
 	roleLabel := "guest"
 	nav := `<a href="/login">login</a> | <a href="/connect">connect</a>`
+	roleGuideTitle := "If you're visiting for the first time"
+	roleGuide := `<ol>` +
+		`<li>Start with <a href="/connect">/connect</a> or <a href="/tour">/tour</a> to understand the board before signing in.</li>` +
+		`<li>Use <a href="/help">/help</a> to learn the route map and caller surface layout.</li>` +
+		`<li>When you want the real experience, sign in and try SSH plus <a href="/boards">/boards</a> and <a href="/chat">/chat</a>.</li>` +
+		`</ol>`
 	if user != nil {
 		roleLabel = rbac.NormalizeRole(user.Role)
 		nav = `<a href="/boards">boards</a> | <a href="/bulletins">bulletins</a> | <a href="/directory">directory</a> | <a href="/finder">finder</a> | <a href="/newfiles">newfiles</a> | <a href="/feedback">feedback</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/radar">radar</a> | <a href="/clubhouse">clubhouse</a> | <a href="/doors">doors</a> | <a href="/settings">settings</a> | <a href="/status">status</a> | <a href="/config">config</a>`
@@ -2268,14 +2503,52 @@ func (a *webApp) handleHelp(w http.ResponseWriter, r *http.Request) {
 		}
 		if a.hasRole(user, roleAdmin) {
 			nav += ` | <a href="/admin">admin</a>`
+			roleGuideTitle = "If you're the sysop"
+			roleGuide = `<ol>` +
+				`<li>Finish <a href="/admin/setup">/admin/setup</a> before treating the board as ready for callers.</li>` +
+				`<li>Review <a href="/admin/config">/admin/config</a> for runtime flags, identity, and exposed services.</li>` +
+				`<li>Seed boards, create a non-sysop account in <a href="/admin/users">/admin/users</a>, then test <a href="/boards">/boards</a>, <a href="/chat">/chat</a>, <a href="/doors">/doors</a>, and SSH.</li>` +
+				`<li>Use <a href="/status">/status</a> and <a href="/admin/system">/admin/system</a> as the daily health view.</li>` +
+				`</ol>`
+		} else {
+			roleGuideTitle = "If you're a caller"
+			roleGuide = `<ol>` +
+				`<li>Start with <a href="/boards">/boards</a> for long-form discussion, <a href="/chat">/chat</a> for live conversation, and <a href="/doors">/doors</a> for game and score surfaces.</li>` +
+				`<li>Use <a href="/mail">/mail</a> for private conversation and <a href="/directory">/directory</a> to find other callers.</li>` +
+				`<li>Try SSH when you want the full ANSI board experience.</li>` +
+				`</ol>`
 		}
 		nav += ` | <a href="/logout">logout</a>`
+	}
+	discoverItem := ""
+	if a.discover {
+		discoverItem = `<li>/discover for since-your-last-call scanning and saved search flow</li>`
+	}
+	sysopSection := ""
+	if user != nil && a.hasRole(user, roleAdmin) {
+		sysopSection = `<h2>Common sysop jobs</h2>
+<ul>
+<li>First-run setup: <a href="/admin/setup">/admin/setup</a> then <a href="/admin/config">/admin/config</a></li>
+<li>User and role management: <a href="/admin/users">/admin/users</a></li>
+<li>Service and runtime health: <a href="/status">/status</a>, <a href="/admin/system">/admin/system</a>, <a href="/admin/errors">/admin/errors</a></li>
+<li>Policy surfaces: <a href="/admin/chat">/admin/chat</a>, <a href="/admin/doors">/admin/doors</a>, <a href="/admin/files">/admin/files</a></li>
+</ul>`
 	}
 
 	page := `<html><body>
 <h1>` + htmlEscape(a.siteDisplayName()) + ` Help</h1>
 <p>` + nav + `</p>
 <p>Current role: ` + htmlEscape(roleLabel) + `</p>
+<h2>` + roleGuideTitle + `</h2>
+` + roleGuide + `
+<h2>Use the right surface</h2>
+<table border="1">
+<tr><th>Surface</th><th>Best for</th><th>Why it exists</th></tr>
+<tr><td>SSH / ANSI</td><td>callers and nostalgic operators</td><td>The full board feel: menus, boards, mail, files, doors, and classic flow.</td></tr>
+<tr><td>Web companion</td><td>everyday users and browser-first callers</td><td>Boards, chat, directory, scores, and setup without a terminal client.</td></tr>
+<tr><td>IRC</td><td>existing chat communities</td><td>Shares the same live chat layer as the web UI.</td></tr>
+<tr><td>Admin web</td><td>sysops and moderators</td><td>Setup, config, users, health, runtime policy, and audit.</td></tr>
+</table>
 <h2>Terminal (SSH) quick keys</h2>
 <ul>
 <li>Main menu: M/P/F/C/G/D/N/S/A/L/W, Q quits, ? opens contextual help.</li>
@@ -2296,8 +2569,17 @@ func (a *webApp) handleHelp(w http.ResponseWriter, r *http.Request) {
 <li>/clubhouse for one-liner posting, rumors, BBS exchange, and social presence</li>
 <li>/doors for favorites, recommendations, recents, and policy-aware door directory</li>
 <li>/scores for global door leaderboards</li>
+` + discoverItem + `
 <li>/healthz, /readyz, /metrics, /statusz for health/ops checks</li>
 </ul>
+<h2>First-run verification path</h2>
+<ol>
+<li>Open <a href="/admin/setup">/admin/setup</a> if you are the sysop.</li>
+<li>Open <a href="/boards">/boards</a> and make sure seeded or starter content exists.</li>
+<li>Open <a href="/chat">/chat</a> and send a message in <code>#lobby</code>.</li>
+<li>Open <a href="/doors">/doors</a> and <a href="/scores">/scores</a> to verify game and score surfaces.</li>
+<li>Check <a href="/status">/status</a> or <a href="/admin/system">/admin/system</a> before inviting users.</li>
+</ol>
 	<h2>Admin routes (sysop only)</h2>
 	<ul>
 	<li>/admin/users, /admin/boards, /admin/mail, /admin/files, /admin/gateways</li>
@@ -2305,10 +2587,14 @@ func (a *webApp) handleHelp(w http.ResponseWriter, r *http.Request) {
 	<li>Setup wizard path: /admin/setup?step=1 (Identity), step=2 (Safety), step=3 (Experience), step=4 (Bootstrap)</li>
 	<li>Runtime service settings (telnet/ws/wss/content/connectors): /admin/config</li>
 	</ul>
+` + sysopSection + `
 <h2>Reference docs</h2>
 <ul>
+<li><code>docs/START_HERE.md</code></li>
+<li><code>docs/OPERATIONS.md</code></li>
 <li><code>docs/help-guides.md</code></li>
 <li><code>docs/INSTALL.md</code></li>
+<li><code>docs/PRODUCT_GUIDE.md</code></li>
 <li><code>docs/config-reference.md</code></li>
 <li><code>docs/feature-reference.md</code></li>
 </ul>
@@ -4631,6 +4917,20 @@ func (a *webApp) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
 		`<li><a href="/admin/setup?step=3">Step 3: Experience</a></li>` +
 		`<li><a href="/admin/setup?step=4">Step 4: Bootstrap</a></li>` +
 		`</ol>`
+	launchChecklist := `<h2>Launch Checklist</h2>` +
+		`<ol>` +
+		`<li>Save Step 1 and Step 2 before treating the board as caller-ready.</li>` +
+		`<li>Run the bootstrap actions below to seed boards and verify service accounts.</li>` +
+		`<li>Create a real caller or moderator in <a href="/admin/users">/admin/users</a>.</li>` +
+		`<li>Walk <a href="/boards">/boards</a>, <a href="/chat">/chat</a>, <a href="/doors">/doors</a>, and <a href="/scores">/scores</a> as if you were a real user.</li>` +
+		`<li>Check <a href="/status">/status</a> and <a href="/admin/system">/admin/system</a> before inviting callers.</li>` +
+		`</ol>`
+	commonGotchas := `<h2>Common Gotchas</h2>` +
+		`<ul>` +
+		`<li><strong>Secure cookie</strong> should only be enabled when the board is actually behind HTTPS.</li>` +
+		`<li><strong>Read-only mode</strong> is for maintenance, not normal launch.</li>` +
+		`<li><strong>Guest tour</strong>, discover, and quick jump are experience choices, not hard requirements.</li>` +
+		`</ul>`
 	page := `<html><body><h1>Setup & Install</h1><p><a href="/admin">back</a> | <a href="/admin/system">system</a> | <a href="/help">help</a></p>` +
 		`<p>Use this screen to verify base services and bootstrap sysop dependencies after install/upgrade.</p>` +
 		`<p>UI-first setup: keep installer flags minimal; set board identity and runtime policy here.</p>` +
@@ -4638,6 +4938,8 @@ func (a *webApp) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
 		`<p>` + htmlEscape(wizardHint) + `</p>` +
 		progress +
 		`<p><strong>Tip:</strong> use the step links above, then save once after each section change.</p>` +
+		launchChecklist +
+		commonGotchas +
 		noticeBlock +
 		`<h2>Guided Setup Profile</h2><form method="POST"><input type="hidden" name="action" value="save_setup_profile">` + csrf +
 		`<fieldset><legend><strong>Step 1: Basic</strong></legend>` +
@@ -4666,8 +4968,16 @@ func (a *webApp) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
 		`<h2>Step 4: Bootstrap Actions</h2>` +
 		`<form method="POST"><input type="hidden" name="action" value="seed_default_boards">` + csrf + `<button type="submit">Seed Default Boards</button></form>` +
 		`<form method="POST"><input type="hidden" name="action" value="ensure_mailbot">` + csrf + `<button type="submit">Ensure Mailbot Account</button></form>` +
+		`<h2>After Bootstrap</h2><ul>` +
+		`<li><a href="/admin/users">/admin/users</a> for caller and moderator creation</li>` +
+		`<li><a href="/boards">/boards</a> and <a href="/chat">/chat</a> for real-user validation</li>` +
+		`<li><a href="/doors">/doors</a> and <a href="/scores">/scores</a> for game surfaces</li>` +
+		`<li><a href="/status">/status</a> and <a href="/admin/system">/admin/system</a> for post-launch verification</li>` +
+		`</ul>` +
 		`<h2>Install and Ops Shortcuts</h2>` +
 		`<ul>` +
+		`<li>Start here: <code>docs/START_HERE.md</code></li>` +
+		`<li>Operations guide: <code>docs/OPERATIONS.md</code></li>` +
 		`<li>Installer docs: <code>docs/INSTALL.md</code></li>` +
 		`<li>Health: <a href="/healthz">/healthz</a> and <a href="/readyz">/readyz</a></li>` +
 		`<li>Metrics: <a href="/metrics">/metrics</a></li>` +

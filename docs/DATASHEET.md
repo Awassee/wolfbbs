@@ -149,6 +149,8 @@ Release bundles include:
 
 - Repo: [Awassee/wolfbbs](https://github.com/Awassee/wolfbbs)
 - Releases: [GitHub Releases](https://github.com/Awassee/wolfbbs/releases)
+- Start here: [START_HERE.md](START_HERE.md)
 - Quickstart: [QUICKSTART.md](QUICKSTART.md)
 - Install guide: [INSTALL.md](INSTALL.md)
+- Operations guide: [OPERATIONS.md](OPERATIONS.md)
 - Product guide: [PRODUCT_GUIDE.md](PRODUCT_GUIDE.md)

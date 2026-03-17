@@ -199,8 +199,10 @@ bash install.sh --logs
 
 ## Documentation Map
 
+- [Start Here](START_HERE.md)
 - [Quickstart](QUICKSTART.md)
 - [Install Guide](INSTALL.md)
+- [Operations Guide](OPERATIONS.md)
 - [Datasheet](DATASHEET.md)
 - [Feature Reference](feature-reference.md)
 - [Admin Guide](admin.md)

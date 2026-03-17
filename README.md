@@ -45,6 +45,14 @@ curl -fsSL https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh |
 curl -fsSL https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh | bash -s -- --install-brew
 ```
 
+## Choose Your Path
+
+| If you want to... | Use this | Why |
+| --- | --- | --- |
+| get WolfBBS running as fast as possible | bootstrap installer | installs dependencies, pulls the app, and starts the stack |
+| inspect or modify the code locally | clone the repo | best for operators who also want a working tree |
+| download a packaged bundle | GitHub Release tarball | best for controlled installs and offline handoff |
+
 ## Install In Minutes
 
 Interactive local flow:
@@ -63,15 +71,25 @@ cd wolfbbs_<version>_<os>_<arch>
 bash install.sh --yes
 ```
 
+## Which Surface Should You Use?
+
+| Role | Best starting point | What it is for |
+| --- | --- | --- |
+| sysop | `/admin/setup` | identity, safety baseline, bootstrap actions, first health checks |
+| moderator | `/chat`, `/boards`, `/admin/chat` | live moderation and day-to-day community visibility |
+| caller | SSH, `/boards`, `/chat`, `/doors` | the actual board experience |
+| visitor | `/connect`, `/tour`, `/help` | orientation before committing to an account |
+
 ## First Launch Checklist
 
 After install, WolfBBS prints the connection summary and bootstrap sysop credentials. The recommended first-run flow is:
 
 1. Open `/admin/setup` to complete identity, safety, and bootstrap checks.
 2. Open `/admin/config` to tune site text, runtime flags, services, and operator preferences.
-3. Connect over SSH and verify the caller-facing ANSI flow.
-4. Open `/chat`, `/boards`, `/doors`, and `/scores` to confirm the public experience.
-5. Create additional users or moderators from `/admin/users`.
+3. Seed default boards and confirm the mailbot bootstrap action.
+4. Create at least one non-sysop user or moderator from `/admin/users`.
+5. Connect over SSH and verify the caller-facing ANSI flow.
+6. Open `/boards`, `/chat`, `/doors`, and `/scores` to confirm the public experience.
 
 Default local endpoints:
 
@@ -107,8 +125,10 @@ Then in the SSH main menu press `/` and enter `/app upgrade`.
 
 ## Product Guides
 
+- [Start Here](docs/START_HERE.md): fastest route from install to a usable board
 - [Quickstart](docs/QUICKSTART.md): fastest path from download to first login
 - [Install Guide](docs/INSTALL.md): install modes, flags, lifecycle, and packaging
+- [Operations Guide](docs/OPERATIONS.md): daily operator tasks, recovery, and upgrades
 - [Product Guide](docs/PRODUCT_GUIDE.md): what WolfBBS includes and how to use it
 - [Datasheet](docs/DATASHEET.md): deployment summary, capabilities, ports, and operator facts
 - [Feature Reference](docs/feature-reference.md): route, binary, and surface inventory
@@ -119,6 +139,18 @@ Then in the SSH main menu press `/` and enter `/app upgrade`.
 - `Community`: IRC bridge, one-liners, clubhouse, directory, discovery queue, scoreboards, file picks
 - `Operators`: admin setup wizard, config center, users, boards, files, doors, gateways, audit, health, diagnostics
 - `Distribution`: release bundles, bootstrap installer, upgrade flows, smoke verification, packaging checksums
+
+## What Success Looks Like In 15 Minutes
+
+You should be able to say yes to all of these:
+
+1. I can sign into `/admin`.
+2. `/admin/setup` and `/admin/config` reflect my board name and host.
+3. SSH login works and the ANSI menu feels right.
+4. `/chat` works and mirrors to IRC if IRC is enabled.
+5. `/boards` has seeded or starter content.
+6. `/doors` and `/scores` render without dead ends.
+7. `bash install.sh --doctor` returns a usable health report.
 
 ## Build, Test, And Package
 
@@ -163,7 +195,9 @@ This writes `docs/manual-acceptance-latest.md` with PASS, FAIL, and SKIPPED resu
 
 ## Technical Documentation
 
+- `docs/START_HERE.md`
 - `docs/ACCEPTANCE_SPEC.md`
+- `docs/OPERATIONS.md`
 - `docs/manual-acceptance.md`
 - `docs/screens.md`
 - `docs/admin.md`

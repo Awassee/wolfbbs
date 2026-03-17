@@ -516,6 +516,15 @@ func TestAdminSetupConfigAndErrorScreens(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), "Basic") || !strings.Contains(rr.Body.String(), "Critical") || !strings.Contains(rr.Body.String(), "Expert") {
 		t.Fatalf("missing setup sections: %s", rr.Body.String())
 	}
+	if !strings.Contains(rr.Body.String(), "Launch Checklist") {
+		t.Fatalf("missing launch checklist: %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "Common Gotchas") {
+		t.Fatalf("missing common gotchas: %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "After Bootstrap") {
+		t.Fatalf("missing after bootstrap section: %s", rr.Body.String())
+	}
 
 	form := url.Values{}
 	form.Set("action", "seed_default_boards")
@@ -744,6 +753,64 @@ func TestAdminSetupConfigAndErrorScreens(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "sample runtime failure") {
 		t.Fatalf("missing runtime error row: %s", rr.Body.String())
+	}
+}
+
+func TestHelpPageIncludesRoleGuidanceAndReferences(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	if _, err := authSvc.Register("sysop", "password123"); err != nil {
+		t.Fatalf("register sysop: %v", err)
+	}
+	if err := authSvc.SetRole("sysop", roleAdmin); err != nil {
+		t.Fatalf("set role: %v", err)
+	}
+	app := &webApp{
+		authSvc:  authSvc,
+		userRepo: userRepo,
+		sessions: map[string]sessionState{},
+	}
+
+	guestReq := httptest.NewRequest(http.MethodGet, "/help", nil)
+	guestRR := httptest.NewRecorder()
+	app.handleHelp(guestRR, guestReq)
+	if guestRR.Code != http.StatusOK {
+		t.Fatalf("guest help status = %d", guestRR.Code)
+	}
+	guestBody := guestRR.Body.String()
+	for _, needle := range []string{
+		"If you're visiting for the first time",
+		"Use the right surface",
+		"First-run verification path",
+		"docs/START_HERE.md",
+		"docs/OPERATIONS.md",
+	} {
+		if !strings.Contains(guestBody, needle) {
+			t.Fatalf("guest help missing %q in body: %s", needle, guestBody)
+		}
+	}
+
+	sid, ok := app.createSession("sysop")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+	adminReq := httptest.NewRequest(http.MethodGet, "/help", nil)
+	adminReq.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	adminRR := httptest.NewRecorder()
+	app.handleHelp(adminRR, adminReq)
+	if adminRR.Code != http.StatusOK {
+		t.Fatalf("admin help status = %d", adminRR.Code)
+	}
+	adminBody := adminRR.Body.String()
+	for _, needle := range []string{
+		"If you're the sysop",
+		"Common sysop jobs",
+		"/admin/setup",
+		"/admin/system",
+	} {
+		if !strings.Contains(adminBody, needle) {
+			t.Fatalf("admin help missing %q in body: %s", needle, adminBody)
+		}
 	}
 }
 
