@@ -1,0 +1,37 @@
+{
+  "id": "global-war-command",
+  "display_name": "Global War Command",
+  "short_description": "Turn-based world domination and alliance strategy.",
+  "category": "strategy",
+  "version": "1.0.0",
+  "entry_type": "native",
+  "entrypoint": "native:global-war-command",
+  "hotkey": "J",
+  "concurrency_mode": "shared",
+  "requires": {
+    "ansi": true,
+    "min_cols": 80,
+    "min_rows": 25
+  },
+  "capabilities": {
+    "needs_network": false,
+    "needs_filesystem_write": false,
+    "needs_sound": false
+  },
+  "data_retention": {
+    "messages_days": 30,
+    "logs_days": 90
+  },
+  "admin_defaults": {
+    "enabled": true,
+    "daily_turns": 35,
+    "time_bank_max": 180,
+    "reset_hour": 0,
+    "max_run_seconds": 180,
+    "max_output_rate": 4096
+  },
+  "required_role": "user",
+  "help_text": "Global War Command: command map territories and treaty strategy.",
+  "rules_text": "Treaty abuse and out-of-band collusion are moderated.",
+  "args": []
+}

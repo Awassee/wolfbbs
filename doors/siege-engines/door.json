@@ -1,0 +1,37 @@
+{
+  "id": "siege-engines",
+  "display_name": "Siege Engines",
+  "short_description": "ANSI artillery duels with angle, power, and wind.",
+  "category": "arcade",
+  "version": "1.0.0",
+  "entry_type": "native",
+  "entrypoint": "native:siege-engines",
+  "hotkey": "M",
+  "concurrency_mode": "shared",
+  "requires": {
+    "ansi": true,
+    "min_cols": 80,
+    "min_rows": 25
+  },
+  "capabilities": {
+    "needs_network": false,
+    "needs_filesystem_write": false,
+    "needs_sound": false
+  },
+  "data_retention": {
+    "messages_days": 30,
+    "logs_days": 90
+  },
+  "admin_defaults": {
+    "enabled": true,
+    "daily_turns": 25,
+    "time_bank_max": 140,
+    "reset_hour": 0,
+    "max_run_seconds": 180,
+    "max_output_rate": 4096
+  },
+  "required_role": "user",
+  "help_text": "Siege Engines: tune angle and power for precision shots.",
+  "rules_text": "Duel etiquette applies; repeated stalls may forfeit a match.",
+  "args": []
+}

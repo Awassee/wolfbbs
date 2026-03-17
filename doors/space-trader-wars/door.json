@@ -1,0 +1,37 @@
+{
+  "id": "space-trader-wars",
+  "display_name": "Space Trader Wars",
+  "short_description": "Trade, travel, and tactical combat across sector lanes.",
+  "category": "strategy",
+  "version": "1.0.0",
+  "entry_type": "native",
+  "entrypoint": "native:space-trader-wars",
+  "hotkey": "A",
+  "concurrency_mode": "per_user",
+  "requires": {
+    "ansi": true,
+    "min_cols": 80,
+    "min_rows": 25
+  },
+  "capabilities": {
+    "needs_network": false,
+    "needs_filesystem_write": false,
+    "needs_sound": false
+  },
+  "data_retention": {
+    "messages_days": 30,
+    "logs_days": 90
+  },
+  "admin_defaults": {
+    "enabled": true,
+    "daily_turns": 40,
+    "time_bank_max": 200,
+    "reset_hour": 0,
+    "max_run_seconds": 180,
+    "max_output_rate": 4096
+  },
+  "required_role": "user",
+  "help_text": "Space Trader Wars: use single-letter commands to trade goods, travel sectors, and upgrade your ship.",
+  "rules_text": "No griefing, no automation, and respect newbie protection windows in PvP zones.",
+  "args": []
+}
