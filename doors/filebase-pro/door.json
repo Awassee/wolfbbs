@@ -1,0 +1,37 @@
+{
+  "id": "filebase-pro",
+  "display_name": "FileBase Pro",
+  "short_description": "Tagged file areas with checksums and new-file scans.",
+  "category": "utility",
+  "version": "1.0.0",
+  "entry_type": "native",
+  "entrypoint": "native:filebase-pro",
+  "hotkey": "X",
+  "concurrency_mode": "shared",
+  "requires": {
+    "ansi": true,
+    "min_cols": 80,
+    "min_rows": 25
+  },
+  "capabilities": {
+    "needs_network": false,
+    "needs_filesystem_write": true,
+    "needs_sound": false
+  },
+  "data_retention": {
+    "messages_days": 30,
+    "logs_days": 90
+  },
+  "admin_defaults": {
+    "enabled": true,
+    "daily_turns": 0,
+    "time_bank_max": 0,
+    "reset_hour": 0,
+    "max_run_seconds": 120,
+    "max_output_rate": 4096
+  },
+  "required_role": "user",
+  "help_text": "FileBase Pro: browse tagged files and see new uploads since last call.",
+  "rules_text": "Uploads require checksums and duplicate detection before listing.",
+  "args": []
+}

@@ -1,0 +1,37 @@
+{
+  "id": "dragon-tavern-legends",
+  "display_name": "Dragon Tavern Legends",
+  "short_description": "Daily tavern RPG with forest fights and duels.",
+  "category": "rpg",
+  "version": "1.0.0",
+  "entry_type": "native",
+  "entrypoint": "native:dragon-tavern-legends",
+  "hotkey": "B",
+  "concurrency_mode": "per_user",
+  "requires": {
+    "ansi": true,
+    "min_cols": 80,
+    "min_rows": 25
+  },
+  "capabilities": {
+    "needs_network": false,
+    "needs_filesystem_write": false,
+    "needs_sound": false
+  },
+  "data_retention": {
+    "messages_days": 30,
+    "logs_days": 90
+  },
+  "admin_defaults": {
+    "enabled": true,
+    "daily_turns": 40,
+    "time_bank_max": 200,
+    "reset_hour": 0,
+    "max_run_seconds": 180,
+    "max_output_rate": 4096
+  },
+  "required_role": "user",
+  "help_text": "Dragon Tavern Legends: complete daily fights, visit the tavern, and improve your loadout.",
+  "rules_text": "Duels are limited per day and must remain sportsmanlike.",
+  "args": []
+}

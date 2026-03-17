@@ -1,0 +1,7 @@
+e2e/web/node_modules/
+e2e/web/playwright-report/
+e2e/web/test-results/
+.pytest_cache/
+.wolfbbs/offline/
+dist/
+install.log
