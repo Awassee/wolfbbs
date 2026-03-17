@@ -21,19 +21,19 @@
 Linux:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/bootstrap.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh | bash
 ```
 
 macOS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/bootstrap.sh | bash -s -- --install-brew
+curl -fsSL https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh | bash -s -- --install-brew
 ```
 
 Interactive menu mode (no flags):
 
 ```bash
-git clone https://github.com/seanheiney/wolfbbs-public.git wolfbbs && cd wolfbbs && bash install.sh
+git clone https://github.com/Awassee/wolfbbs.git wolfbbs && cd wolfbbs && bash install.sh
 ```
 
 The guided menu path is the recommended consumer install flow. It opens a menu first, then an easy-install screen where you can accept defaults or edit install directory, ports, and source repo without remembering flags.
@@ -51,7 +51,7 @@ What the bootstrap does:
 
 If you prefer a packaged download instead of cloning the repo, download the archive matching your platform from:
 
-- [GitHub Releases](https://github.com/seanheiney/wolfbbs-public/releases)
+- [GitHub Releases](https://github.com/Awassee/wolfbbs/releases)
 
 Then unpack and run the installer from the bundle root:
 
@@ -64,7 +64,7 @@ bash install.sh --yes
 If HTTPS clone is blocked in your environment, use SSH clone instead:
 
 ```bash
-git clone git@github.com:seanheiney/wolfbbs-public.git wolfbbs && cd wolfbbs && bash install.sh --yes
+git clone git@github.com:Awassee/wolfbbs.git wolfbbs && cd wolfbbs && bash install.sh --yes
 ```
 
 ## Optional Quick Install (`curl | bash`)
@@ -72,25 +72,25 @@ git clone git@github.com:seanheiney/wolfbbs-public.git wolfbbs && cd wolfbbs && 
 Use this only when the repo's raw GitHub URL is publicly reachable:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/bootstrap.sh" | bash
+curl -fsSL "https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh" | bash
 ```
 
 macOS variant:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/bootstrap.sh" | bash -s -- --install-brew
+curl -fsSL "https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh" | bash -s -- --install-brew
 ```
 
 Dry-run preflight:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/bootstrap.sh" | bash -s -- --yes --install-brew --dry-run
+curl -fsSL "https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh" | bash -s -- --yes --install-brew --dry-run
 ```
 
 Install from a fork/custom repository:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/bootstrap.sh" | bash -s -- --yes --repo your-org/your-repo
+curl -fsSL "https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh" | bash -s -- --yes --repo your-org/your-repo
 ```
 
 ## Install From Local Clone

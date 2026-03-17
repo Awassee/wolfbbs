@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-INSTALLER_URL="${WOLFBBS_BOOTSTRAP_INSTALLER_URL:-https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/install.sh}"
+INSTALLER_URL="${WOLFBBS_BOOTSTRAP_INSTALLER_URL:-https://raw.githubusercontent.com/Awassee/wolfbbs/main/install.sh}"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/wolfbbs-bootstrap.XXXXXX")"
 INSTALLER_PATH="${TMP_DIR}/install.sh"
 

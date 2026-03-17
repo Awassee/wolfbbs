@@ -7,32 +7,32 @@ Use this if you want the shortest path from download to a working board.
 Paste this:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/bootstrap.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh | bash
 ```
 
 macOS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/bootstrap.sh | bash -s -- --install-brew
+curl -fsSL https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh | bash -s -- --install-brew
 ```
 
 Or download a release bundle or clone the repo from:
 
-- [GitHub Releases](https://github.com/seanheiney/wolfbbs-public/releases)
-- [Public repo](https://github.com/seanheiney/wolfbbs-public)
+- [GitHub Releases](https://github.com/Awassee/wolfbbs/releases)
+- [Public repo](https://github.com/Awassee/wolfbbs)
 
 ## 2. Run the installer
 
 Guided menu mode:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/bootstrap.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh | bash
 ```
 
 Clone + local installer:
 
 ```bash
-git clone https://github.com/seanheiney/wolfbbs-public.git wolfbbs
+git clone https://github.com/Awassee/wolfbbs.git wolfbbs
 cd wolfbbs
 bash install.sh
 ```

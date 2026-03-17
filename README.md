@@ -5,30 +5,30 @@ WolfBBS is an SSH-first BBS with a Wildcat-inspired ANSI/TUI flow, web admin/cha
 ## Quick install (Linux)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/bootstrap.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh | bash
 ```
 
 ## Quick install (macOS)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/bootstrap.sh | bash -s -- --install-brew
+curl -fsSL https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh | bash -s -- --install-brew
 ```
 
 ## Easiest local flow (interactive menu)
 
 ```bash
-git clone https://github.com/seanheiney/wolfbbs-public.git wolfbbs && cd wolfbbs && bash install.sh
+git clone https://github.com/Awassee/wolfbbs.git wolfbbs && cd wolfbbs && bash install.sh
 ```
 
 The canonical public repo is:
 
-- [seanheiney/wolfbbs-public](https://github.com/seanheiney/wolfbbs-public)
+- [Awassee/wolfbbs](https://github.com/Awassee/wolfbbs)
 
 ## GitHub release bundles
 
 If you want a packaged download instead of cloning source, use the platform tarballs on the GitHub Releases page:
 
-- [GitHub Releases](https://github.com/seanheiney/wolfbbs-public/releases)
+- [GitHub Releases](https://github.com/Awassee/wolfbbs/releases)
 
 After downloading the matching archive for your platform:
 
@@ -41,7 +41,7 @@ bash install.sh --yes
 Turnkey bootstrap with extra flags:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/seanheiney/wolfbbs-public/main/bootstrap.sh" | bash -s -- --yes
+curl -fsSL "https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh" | bash -s -- --yes
 ```
 
 Easy-button self-heal / manage commands:

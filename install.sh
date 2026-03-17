@@ -9,7 +9,7 @@ DEFAULT_IRC_PORT=6667
 DEFAULT_IRC_TLS_PORT=6697
 DEFAULT_MAILIN_PORT=8091
 DEFAULT_CHECKOUT_SUBDIR="app"
-DEFAULT_REPO_SLUG="seanheiney/wolfbbs-public"
+DEFAULT_REPO_SLUG="Awassee/wolfbbs"
 DEFAULT_REPO_URL="https://github.com/${DEFAULT_REPO_SLUG}.git"
 DEFAULT_BBS_NAME="WolfBBS"
 DEFAULT_SETUP_PROFILE="basic"
@@ -540,12 +540,12 @@ Options:
   -h, --help                show this help
 
 Environment shortcuts:
-  WOLFBBS_GH=<owner/repo>         e.g. seanheiney/wolfbbs-public
-  WOLFBBS_REPO_URL=<git-url>      e.g. https://github.com/seanheiney/wolfbbs-public.git
+  WOLFBBS_GH=<owner/repo>         e.g. Awassee/wolfbbs
+  WOLFBBS_REPO_URL=<git-url>      e.g. https://github.com/Awassee/wolfbbs.git
   WOLFBBS_BBS_NAME=<name>         optional installer identity override (prefer /admin/setup)
   WOLFBBS_HOSTNAME=<host>         optional installer hostname override (prefer /admin/setup)
   WOLFBBS_SETUP_PROFILE=<profile> basic|critical|expert baseline (prefer /admin/setup)
-  WOLFBBS_REPO_URL defaults to:   https://github.com/seanheiney/wolfbbs-public.git
+  WOLFBBS_REPO_URL defaults to:   https://github.com/Awassee/wolfbbs.git
 USAGE
 }
 
@@ -1461,8 +1461,8 @@ ensure_compose_file() {
   echo "Could not find docker-compose.yml or compose.yml."
   echo "Run from repository root, or pass --repo/--repo-url."
   echo "Examples:"
-  echo "  bash install.sh --with-docker --repo seanheiney/wolfbbs-public --yes"
-  echo "  WOLFBBS_GH=seanheiney/wolfbbs-public bash install.sh --with-docker --yes"
+  echo "  bash install.sh --with-docker --repo Awassee/wolfbbs --yes"
+  echo "  WOLFBBS_GH=Awassee/wolfbbs bash install.sh --with-docker --yes"
   exit 1
 }
 
