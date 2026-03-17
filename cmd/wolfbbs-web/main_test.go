@@ -2572,6 +2572,313 @@ func TestBoardsDashboardAndDoorCockpit(t *testing.T) {
 	}
 }
 
+func TestLegacyModernClassicRoutes(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	boardRepo := repository.NewInMemoryBoardRepository()
+	msgRepo := repository.NewInMemoryMessageRepository()
+	mailRepo := repository.NewInMemoryPrivateMailRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
+	doorRepo := repository.NewInMemoryDoorRepository()
+	authSvc := auth.NewService(userRepo)
+
+	caller, err := authSvc.Register("caller", "password123")
+	if err != nil {
+		t.Fatalf("register caller: %v", err)
+	}
+	friend, err := authSvc.Register("friend", "password123")
+	if err != nil {
+		t.Fatalf("register friend: %v", err)
+	}
+	sysop, err := authSvc.Register("sysop", "password123")
+	if err != nil {
+		t.Fatalf("register sysop: %v", err)
+	}
+	if err := authSvc.SetRole(sysop.Handle, roleAdmin); err != nil {
+		t.Fatalf("set sysop role: %v", err)
+	}
+	if err := authSvc.SetVerified(friend.Handle, true); err != nil {
+		t.Fatalf("verify friend: %v", err)
+	}
+	if err := boardRepo.Create(&domain.Board{Name: "General", Description: "Main", Conference: "Public", CreatedBy: sysop.ID}); err != nil {
+		t.Fatalf("create board: %v", err)
+	}
+	if err := boardRepo.Create(&domain.Board{Name: "Ops", Description: "Staff notes", Conference: "Ops", CreatedBy: sysop.ID}); err != nil {
+		t.Fatalf("create second board: %v", err)
+	}
+	post := &domain.Message{
+		BoardID:   1,
+		AuthorID:  caller.ID,
+		Subject:   "Classic thread kickoff",
+		Body:      "Hello from caller.",
+		CreatedAt: time.Now().UTC().Add(-2 * time.Hour),
+	}
+	if err := msgRepo.CreateMessage(post); err != nil {
+		t.Fatalf("create post: %v", err)
+	}
+	reply := &domain.Message{
+		BoardID:   1,
+		AuthorID:  friend.ID,
+		ParentID:  post.ID,
+		Subject:   "Re: Classic thread kickoff",
+		Body:      "caller, this is a tracked reply.",
+		CreatedAt: time.Now().UTC().Add(-time.Hour),
+	}
+	if err := msgRepo.CreateMessage(reply); err != nil {
+		t.Fatalf("create reply: %v", err)
+	}
+	if err := msgRepo.CreateMessage(&domain.Message{
+		BoardID:   2,
+		AuthorID:  sysop.ID,
+		Subject:   "Sysop note",
+		Body:      "Operational chatter only.",
+		CreatedAt: time.Now().UTC().Add(-45 * time.Minute),
+	}); err != nil {
+		t.Fatalf("create second board message: %v", err)
+	}
+	if err := mailRepo.CreateMail(&domain.PrivateMail{
+		FromUserID: friend.ID,
+		ToUserID:   caller.ID,
+		Subject:    "Ping caller",
+		Body:       "mail body",
+		CreatedAt:  time.Now().UTC().Add(-90 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed inbox mail: %v", err)
+	}
+	if err := mailRepo.CreateMail(&domain.PrivateMail{
+		FromUserID: caller.ID,
+		ToUserID:   friend.ID,
+		Subject:    "Re: Ping caller",
+		Body:       "thanks",
+		CreatedAt:  time.Now().UTC().Add(-80 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed outbox mail: %v", err)
+	}
+	if err := adminRepo.UpsertNodeSession(&domain.NodeSession{
+		SessionID:    "friend-live",
+		NodeID:       2,
+		Username:     friend.Handle,
+		Area:         "Chat",
+		RemoteAddr:   "198.51.100.9:2222",
+		LoginAt:      time.Now().UTC().Add(-15 * time.Minute),
+		LastActivity: time.Now().UTC().Add(-2 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed node session: %v", err)
+	}
+	if err := adminRepo.AddCallerHistory(&domain.CallerHistory{
+		SessionID:       "friend-old",
+		NodeID:          2,
+		Username:        friend.Handle,
+		Area:            "Boards",
+		RemoteAddr:      "198.51.100.9:2222",
+		LoginAt:         time.Now().UTC().Add(-40 * time.Minute),
+		LogoutAt:        time.Now().UTC().Add(-20 * time.Minute),
+		DurationSeconds: 1200,
+	}); err != nil {
+		t.Fatalf("seed caller history: %v", err)
+	}
+	if err := adminRepo.CreateFileArea(&domain.FileArea{Name: "Uploads", Path: "/tmp/uploads"}); err != nil {
+		t.Fatalf("create file area: %v", err)
+	}
+	if err := adminRepo.UpsertFileEntry(&domain.FileEntry{
+		AreaID:      1,
+		Name:        "retro-pack.zip",
+		Path:        "/tmp/uploads/retro-pack.zip",
+		Description: "Classic file archive",
+		Tags:        []string{"zip", "retro"},
+		SizeBytes:   1024,
+		UploaderID:  friend.ID,
+		UploadedAt:  time.Now().UTC().Add(-30 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed file entry: %v", err)
+	}
+	if err := adminRepo.SetFileRating(caller.ID, 1, 5); err != nil {
+		t.Fatalf("rate file: %v", err)
+	}
+	if err := adminRepo.SaveFileFilter(&domain.FileFilter{
+		UserID: caller.ID,
+		Name:   "retro",
+		Query:  "retro",
+		Tags:   []string{"zip"},
+	}); err != nil {
+		t.Fatalf("save file filter: %v", err)
+	}
+	if err := adminRepo.EnqueueDownload(caller.ID, 1); err != nil {
+		t.Fatalf("enqueue file: %v", err)
+	}
+
+	oneLinerz := mods.NewOneLinerzMod(20)
+	oneLinerz.Add(friend.Handle, "Still dialing in from the frontier.")
+	rumorz := mods.NewRumorzMod([]string{"Rumor has it the sysop reads feedback before coffee."})
+
+	app := &webApp{
+		authSvc:       authSvc,
+		userRepo:      userRepo,
+		boardRepo:     boardRepo,
+		msgRepo:       msgRepo,
+		mailRepo:      mailRepo,
+		adminRepo:     adminRepo,
+		doorRepo:      doorRepo,
+		sessions:      map[string]sessionState{},
+		discover:      true,
+		classicSearch: true,
+		savedSearches: map[string][]string{},
+		oneLinerzMod:  oneLinerz,
+		rumorzMod:     rumorz,
+	}
+	sid, ok := app.createSession(caller.Handle)
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/bulletins", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.handleBulletins(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("bulletins status = %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"Bulletin Center", "Spotlight", "Classic thread kickoff", "retro-pack.zip", "Still dialing in from the frontier."} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("bulletins missing %q: %s", want, body)
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/directory?handle=friend", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleDirectory(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("directory status = %d", rr.Code)
+	}
+	body = rr.Body.String()
+	for _, want := range []string{"Caller Directory", "Caller Card: friend", "Send mail", "Caller Stats"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("directory missing %q: %s", want, body)
+		}
+	}
+	req = httptest.NewRequest(http.MethodGet, "/directory?role=user&verified=verified&online=1", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleDirectory(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("directory filtered status = %d", rr.Code)
+	}
+	body = rr.Body.String()
+	for _, want := range []string{"visible callers", "Origin", "WAN"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("directory filtered missing %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "/directory?handle=sysop") {
+		t.Fatalf("directory filtered view should not include sysop row: %s", body)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/boards?mode=mentions&q=General", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleBoards(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("boards status = %d", rr.Code)
+	}
+	body = rr.Body.String()
+	for _, want := range []string{"Personal Board Queue", "Mentions", "General"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("boards missing %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, `<tr><td>2</td><td><a href="/boards?board=2">Ops</a></td>`) {
+		t.Fatalf("boards mentions filter should not include Ops table row: %s", body)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/finder?q=caller&save=1&board=1&author=friend&tracker=reply", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleFinder(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("finder status = %d", rr.Code)
+	}
+	body = rr.Body.String()
+	for _, want := range []string{"Message Finder", "Thread Tracker", "Classic thread kickoff", "Saved Queries", "all tracker items", "Conf"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("finder missing %q: %s", want, body)
+		}
+	}
+	if len(app.savedSearchList(caller.Handle)) == 0 {
+		t.Fatal("expected saved finder query")
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/newfiles?tag=zip&sort=rating&since=30d", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleNewFiles(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("newfiles status = %d", rr.Code)
+	}
+	body = rr.Body.String()
+	for _, want := range []string{"New Files Desk", "retro-pack.zip", "Download Desk", "Top Rated Picks", "visible uploads", "saved filters"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("newfiles missing %q: %s", want, body)
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/mail?to=friend&box=unread&q=Ping&template=door_invite", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleMail(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("mail status = %d", rr.Code)
+	}
+	body = rr.Body.String()
+	for _, want := range []string{"Recent Correspondents", "Address Book", `value="friend"`, "Meet me in the Door Hub", "all mail"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("mail missing %q: %s", want, body)
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/mail?id=1", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleMail(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("mail reader status = %d", rr.Code)
+	}
+	body = rr.Body.String()
+	for _, want := range []string{"Quick Reply", "Send Reply", "Ping caller"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("mail reader missing %q: %s", want, body)
+		}
+	}
+
+	form := url.Values{}
+	form.Set("category", "bug")
+	form.Set("subject", "Screen issue")
+	form.Set("body", "A classic bug report for the sysop.")
+	form.Set("csrf_token", app.sessions[sid].csrf)
+	req = httptest.NewRequest(http.MethodPost, "/feedback", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleFeedback(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("feedback post status = %d", rr.Code)
+	}
+	sysopInbox, err := mailRepo.ListInbox(sysop.ID, 20)
+	if err != nil {
+		t.Fatalf("load sysop inbox: %v", err)
+	}
+	found := false
+	for _, row := range sysopInbox {
+		if strings.Contains(row.Subject, "Screen issue") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected feedback mail in sysop inbox, got %+v", sysopInbox)
+	}
+}
+
 func TestHandleRootRedirectTargets(t *testing.T) {
 	userRepo := repository.NewInMemoryUserRepository()
 	authSvc := auth.NewService(userRepo)
@@ -2771,6 +3078,21 @@ func TestWebQuickJumpPath(t *testing.T) {
 	}
 	if got := webQuickJumpPath("doors"); got != "/doors" {
 		t.Fatalf("expected /doors, got %q", got)
+	}
+	if got := webQuickJumpPath("bulletins"); got != "/bulletins" {
+		t.Fatalf("expected /bulletins, got %q", got)
+	}
+	if got := webQuickJumpPath("directory"); got != "/directory" {
+		t.Fatalf("expected /directory, got %q", got)
+	}
+	if got := webQuickJumpPath("finder"); got != "/finder" {
+		t.Fatalf("expected /finder, got %q", got)
+	}
+	if got := webQuickJumpPath("newfiles"); got != "/newfiles" {
+		t.Fatalf("expected /newfiles, got %q", got)
+	}
+	if got := webQuickJumpPath("feedback"); got != "/feedback" {
+		t.Fatalf("expected /feedback, got %q", got)
 	}
 	if got := webQuickJumpPath("radar"); got != "/radar" {
 		t.Fatalf("expected /radar, got %q", got)

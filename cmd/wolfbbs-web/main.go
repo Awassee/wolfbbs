@@ -164,18 +164,18 @@ type scoreChampion struct {
 }
 
 type radarSnapshot struct {
-	UnreadMail        int
-	UnreadPosts       int
-	OnlineUsers       int
-	LiveNodes         int
-	TrackedBoards     int
-	ActivityItems     []string
-	BoardPulse        []boardPulseRow
-	LiveCallers       []callerRadarRow
-	RecentCallers     []callerRadarRow
-	RecommendedDoors  []webDoorView
+	UnreadMail         int
+	UnreadPosts        int
+	OnlineUsers        int
+	LiveNodes          int
+	TrackedBoards      int
+	ActivityItems      []string
+	BoardPulse         []boardPulseRow
+	LiveCallers        []callerRadarRow
+	RecentCallers      []callerRadarRow
+	RecommendedDoors   []webDoorView
 	RecentAchievements []domain.DoorAchievement
-	Rumor             string
+	Rumor              string
 }
 
 type scoreboardSnapshot struct {
@@ -186,6 +186,96 @@ type scoreboardSnapshot struct {
 	ChampionRows         []scoreChampion
 	RecentRows           []scoreChampion
 	PersonalRows         []scoreChampion
+}
+
+type bulletinSnapshot struct {
+	SystemWire     []string
+	DigestItems    []string
+	HotBoards      []string
+	RecentCallers  []string
+	OneLiners      []string
+	RecentFiles    []string
+	FeaturedThread string
+	DownloadPick   string
+}
+
+type directoryRow struct {
+	Handle    string
+	Role      string
+	Verified  bool
+	Theme     string
+	LastLogin string
+	Online    bool
+	Area      string
+	Origin    string
+}
+
+type directoryProfile struct {
+	Handle           string
+	Role             string
+	Theme            string
+	Verified         bool
+	LastLogin        string
+	Online           bool
+	OnlineArea       string
+	OnlineOrigin     string
+	Posts            int
+	Mentions         int
+	Replies          int
+	MailSent         int
+	MailReceived     int
+	FavoriteDoor     string
+	Achievements     int
+	RecentCallerRows []string
+}
+
+type messageSearchHit struct {
+	BoardID    int64
+	BoardName  string
+	Conference string
+	MessageID  int64
+	Subject    string
+	Author     string
+	AuthorID   int64
+	CreatedAt  string
+	Snippet    string
+}
+
+type newFilesSnapshot struct {
+	RecentUploads []domain.FileEntry
+	TopRated      []domain.FileEntry
+	SavedFilters  []domain.FileFilter
+	Queue         []domain.DownloadQueueItem
+	QueueNames    map[int64]string
+	AreaNames     map[int64]string
+}
+
+type threadTrackerItem struct {
+	Kind      string
+	BoardID   int64
+	MessageID int64
+	BoardName string
+	Subject   string
+	CreatedAt string
+}
+
+type boardMenuRow struct {
+	Board        domain.Board
+	MessageCount int
+	NewCount     int
+	MyPosts      int
+	Mentions     int
+	LastAt       string
+	LastSubject  string
+}
+
+type boardQueueSnapshot struct {
+	UnreadRows    []boardMenuRow
+	MyRows        []boardMenuRow
+	MentionRows   []boardMenuRow
+	UnreadBoards  int
+	MyBoards      int
+	MentionBoards int
 }
 
 type sessionState struct {
@@ -564,6 +654,11 @@ func main() {
 	http.Handle("/statusz", app.authRequired(http.HandlerFunc(app.handleStatusJSON)))
 	http.Handle("/config", app.authRequired(http.HandlerFunc(app.handleConfigCenter)))
 	http.Handle("/discover", app.authRequired(http.HandlerFunc(app.handleDiscover)))
+	http.Handle("/bulletins", app.authRequired(http.HandlerFunc(app.handleBulletins)))
+	http.Handle("/directory", app.authRequired(http.HandlerFunc(app.handleDirectory)))
+	http.Handle("/feedback", app.authRequired(http.HandlerFunc(app.handleFeedback)))
+	http.Handle("/finder", app.authRequired(http.HandlerFunc(app.handleFinder)))
+	http.Handle("/newfiles", app.authRequired(http.HandlerFunc(app.handleNewFiles)))
 	http.Handle("/radar", app.authRequired(http.HandlerFunc(app.handleRadar)))
 	http.Handle("/clubhouse", app.authRequired(http.HandlerFunc(app.handleClubhouse)))
 	http.Handle("/doors", app.authRequired(http.HandlerFunc(app.handleDoors)))
@@ -2167,7 +2262,7 @@ func (a *webApp) handleHelp(w http.ResponseWriter, r *http.Request) {
 	nav := `<a href="/login">login</a> | <a href="/connect">connect</a>`
 	if user != nil {
 		roleLabel = rbac.NormalizeRole(user.Role)
-		nav = `<a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/radar">radar</a> | <a href="/clubhouse">clubhouse</a> | <a href="/doors">doors</a> | <a href="/settings">settings</a> | <a href="/status">status</a> | <a href="/config">config</a>`
+		nav = `<a href="/boards">boards</a> | <a href="/bulletins">bulletins</a> | <a href="/directory">directory</a> | <a href="/finder">finder</a> | <a href="/newfiles">newfiles</a> | <a href="/feedback">feedback</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/radar">radar</a> | <a href="/clubhouse">clubhouse</a> | <a href="/doors">doors</a> | <a href="/settings">settings</a> | <a href="/status">status</a> | <a href="/config">config</a>`
 		if a.discover {
 			nav += ` | <a href="/discover">discover</a>`
 		}
@@ -2191,7 +2286,12 @@ func (a *webApp) handleHelp(w http.ResponseWriter, r *http.Request) {
 </ul>
 <h2>Web routes</h2>
 <ul>
-<li>/boards, /mail, /chat, /radar, /clubhouse, /doors, /settings, /gateway, /status, /config</li>
+<li>/boards, /bulletins, /directory, /finder, /newfiles, /feedback, /mail, /chat, /radar, /clubhouse, /doors, /settings, /gateway, /status, /config</li>
+<li>/bulletins for system wire, hot boards, download pick, and classic bulletin-reading flow</li>
+<li>/directory for caller lookup, caller cards, and direct compose links</li>
+<li>/finder for cross-board search and thread tracker</li>
+<li>/newfiles for recent uploads, queue desk, and top-rated file picks</li>
+<li>/feedback for classic mail-to-sysop feedback flow</li>
 <li>/radar for mission control: board pulse, live callers, discovery queue, and arcade heat</li>
 <li>/clubhouse for one-liner posting, rumors, BBS exchange, and social presence</li>
 <li>/doors for favorites, recommendations, recents, and policy-aware door directory</li>
@@ -2212,6 +2312,497 @@ func (a *webApp) handleHelp(w http.ResponseWriter, r *http.Request) {
 <li><code>docs/config-reference.md</code></li>
 <li><code>docs/feature-reference.md</code></li>
 </ul>
+</body></html>`
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(page))
+}
+
+func (a *webApp) handleBulletins(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	snapshot := a.buildBulletinSnapshot(user)
+	systemRows := strings.Builder{}
+	for _, row := range snapshot.SystemWire {
+		systemRows.WriteString(`<li>` + htmlEscape(row) + `</li>`)
+	}
+	if systemRows.Len() == 0 {
+		systemRows.WriteString(`<li>No system bulletins are active.</li>`)
+	}
+	digestRows := strings.Builder{}
+	for _, row := range snapshot.DigestItems {
+		digestRows.WriteString(`<li>` + htmlEscape(row) + `</li>`)
+	}
+	if digestRows.Len() == 0 {
+		digestRows.WriteString(`<li>No newscan highlights right now.</li>`)
+	}
+	hotBoardRows := strings.Builder{}
+	for _, row := range snapshot.HotBoards {
+		hotBoardRows.WriteString(`<li>` + htmlEscape(row) + `</li>`)
+	}
+	if hotBoardRows.Len() == 0 {
+		hotBoardRows.WriteString(`<li>No board pulse data yet.</li>`)
+	}
+	callerRows := strings.Builder{}
+	for _, row := range snapshot.RecentCallers {
+		callerRows.WriteString(`<li>` + htmlEscape(row) + `</li>`)
+	}
+	if callerRows.Len() == 0 {
+		callerRows.WriteString(`<li>No recent callers yet.</li>`)
+	}
+	oneLinerRows := strings.Builder{}
+	for _, row := range snapshot.OneLiners {
+		oneLinerRows.WriteString(`<li>` + htmlEscape(row) + `</li>`)
+	}
+	if oneLinerRows.Len() == 0 {
+		oneLinerRows.WriteString(`<li>No one-liners yet.</li>`)
+	}
+	fileRows := strings.Builder{}
+	for _, row := range snapshot.RecentFiles {
+		fileRows.WriteString(`<li>` + htmlEscape(row) + `</li>`)
+	}
+	if fileRows.Len() == 0 {
+		fileRows.WriteString(`<li>No new files indexed yet.</li>`)
+	}
+	featuredThread := snapshot.FeaturedThread
+	if strings.TrimSpace(featuredThread) == "" {
+		featuredThread = "No featured thread yet."
+	}
+	downloadPick := snapshot.DownloadPick
+	if strings.TrimSpace(downloadPick) == "" {
+		downloadPick = "No download pick yet."
+	}
+	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Bulletin Center</title></head><body>
+<p><a href="/boards">boards</a> | <a href="/directory">directory</a> | <a href="/finder">finder</a> | <a href="/newfiles">newfiles</a> | <a href="/feedback">feedback</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/doors">doors</a> | <a href="/status">status</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
+` + pageMessageBlock(r) + `
+<h1>Bulletin Center</h1>
+<p>Classic bulletin-reading, rebuilt as a live dashboard. Start here for system wire, hot boards, file picks, and tonight's pulse.</p>
+<section class="wolfbbs-grid">
+<article class="wolfbbs-card"><h2>System Wire</h2><ul>` + systemRows.String() + `</ul></article>
+<article class="wolfbbs-card"><h2>Spotlight</h2><p><strong>Featured thread:</strong> ` + htmlEscape(featuredThread) + `</p><p><strong>Download pick:</strong> ` + htmlEscape(downloadPick) + `</p></article>
+</section>
+<section class="wolfbbs-grid">
+<article><h2>Hot Board Pulse</h2><ul>` + hotBoardRows.String() + `</ul><p><a href="/finder">Open finder</a></p></article>
+<article><h2>Newscan Headlines</h2><ul>` + digestRows.String() + `</ul><p><a href="/discover">Open discover</a></p></article>
+</section>
+<section class="wolfbbs-grid">
+<article><h2>Recent Callers</h2><ul>` + callerRows.String() + `</ul></article>
+<article><h2>OneLinerz Wall</h2><ul>` + oneLinerRows.String() + `</ul></article>
+<article><h2>New Files</h2><ul>` + fileRows.String() + `</ul><p><a href="/newfiles">Open new files desk</a></p></article>
+</section>
+</body></html>`
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(page))
+}
+
+func (a *webApp) handleDirectory(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	onlineOnly := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("online")), "1")
+	verifiedFilter := normalizeDirectoryVerifiedFilter(r.URL.Query().Get("verified"))
+	roleFilter := normalizeDirectoryRoleFilter(r.URL.Query().Get("role"))
+	targetHandle := strings.TrimSpace(r.URL.Query().Get("handle"))
+	if targetHandle == "" {
+		targetHandle = user.Handle
+	}
+	rows := a.buildDirectoryRows(query, onlineOnly, verifiedFilter, roleFilter)
+	onlineCount := 0
+	verifiedCount := 0
+	staffCount := 0
+	for _, row := range rows {
+		if row.Online {
+			onlineCount++
+		}
+		if row.Verified {
+			verifiedCount++
+		}
+		if roleWeight[rbac.NormalizeRole(row.Role)] >= roleWeight[roleModerator] {
+			staffCount++
+		}
+	}
+	var profile *directoryProfile
+	if targetHandle != "" {
+		if target, err := a.authSvc.GetUser(targetHandle); err == nil && target != nil {
+			profile = a.buildDirectoryProfile(user, target)
+		}
+	}
+	profileBlock := ``
+	if profile != nil {
+		recentRows := strings.Builder{}
+		for _, row := range profile.RecentCallerRows {
+			recentRows.WriteString(`<li>` + htmlEscape(row) + `</li>`)
+		}
+		if recentRows.Len() == 0 {
+			recentRows.WriteString(`<li>No caller history rows for this handle yet.</li>`)
+		}
+		profileBlock = `<section class="wolfbbs-grid">
+<article class="wolfbbs-card"><h2>Caller Card: ` + htmlEscape(profile.Handle) + `</h2><p><strong>Role:</strong> ` + htmlEscape(profile.Role) + ` | <strong>Theme:</strong> ` + htmlEscape(profile.Theme) + ` | <strong>Verified:</strong> ` + boolToText(profile.Verified) + `</p><p><strong>Last login:</strong> ` + htmlEscape(profile.LastLogin) + `</p><p><strong>Online now:</strong> ` + boolToText(profile.Online) + ``
+		if profile.Online {
+			profileBlock += ` in ` + htmlEscape(profile.OnlineArea) + ` from ` + htmlEscape(profile.OnlineOrigin)
+		}
+		profileBlock += `</p><p><a href="/mail?to=` + url.QueryEscape(profile.Handle) + `">Send mail</a> | <a href="/finder?q=` + url.QueryEscape(profile.Handle) + `">Search posts</a></p></article>
+<article class="wolfbbs-card"><h2>Caller Stats</h2><ul><li>Posts: ` + strconv.Itoa(profile.Posts) + `</li><li>Mentions: ` + strconv.Itoa(profile.Mentions) + `</li><li>Replies: ` + strconv.Itoa(profile.Replies) + `</li><li>Mail sent: ` + strconv.Itoa(profile.MailSent) + `</li><li>Mail received: ` + strconv.Itoa(profile.MailReceived) + `</li><li>Favorite door: ` + htmlEscape(profile.FavoriteDoor) + `</li><li>Achievements: ` + strconv.Itoa(profile.Achievements) + `</li></ul></article>
+<article class="wolfbbs-card"><h2>Recent Calls</h2><ul>` + recentRows.String() + `</ul></article>
+</section>`
+	}
+	tableRows := strings.Builder{}
+	for _, row := range rows {
+		tableRows.WriteString(`<tr><td><a href="/directory?handle=` + url.QueryEscape(row.Handle) + `">` + htmlEscape(row.Handle) + `</a></td><td>` + htmlEscape(row.Role) + `</td><td>` + boolToText(row.Verified) + `</td><td>` + htmlEscape(row.Theme) + `</td><td>` + htmlEscape(row.LastLogin) + `</td><td>` + boolToText(row.Online) + `</td><td>` + htmlEscape(row.Area) + `</td><td>` + htmlEscape(row.Origin) + `</td><td><a href="/mail?to=` + url.QueryEscape(row.Handle) + `">mail</a></td></tr>`)
+	}
+	if tableRows.Len() == 0 {
+		tableRows.WriteString(`<tr><td colspan="9">No callers matched the filter.</td></tr>`)
+	}
+	roleOptions := []string{"any", roleUser, roleModerator, roleAdmin}
+	roleOptionRows := strings.Builder{}
+	for _, row := range roleOptions {
+		selected := ""
+		if row == roleFilter {
+			selected = ` selected`
+		}
+		label := row
+		if row == "any" {
+			label = "any role"
+		}
+		roleOptionRows.WriteString(`<option value="` + htmlEscape(row) + `"` + selected + `>` + htmlEscape(label) + `</option>`)
+	}
+	verifiedOptions := []string{"any", "verified", "unverified"}
+	verifiedOptionRows := strings.Builder{}
+	for _, row := range verifiedOptions {
+		selected := ""
+		if row == verifiedFilter {
+			selected = ` selected`
+		}
+		label := row
+		if row == "any" {
+			label = "any verification"
+		}
+		verifiedOptionRows.WriteString(`<option value="` + htmlEscape(row) + `"` + selected + `>` + htmlEscape(label) + `</option>`)
+	}
+	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Caller Directory</title></head><body>
+<p><a href="/boards">boards</a> | <a href="/bulletins">bulletins</a> | <a href="/finder">finder</a> | <a href="/feedback">feedback</a> | <a href="/mail">mail</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
+` + pageMessageBlock(r) + `
+<h1>Caller Directory</h1>
+<p>Classic userlist, rebuilt with live presence, caller cards, and direct compose links.</p>
+<section class="wolfbbs-kpi-grid">
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(rows)) + `</strong><span>visible callers</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(onlineCount) + `</strong><span>online now</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(verifiedCount) + `</strong><span>verified</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(staffCount) + `</strong><span>staff in view</span></article>
+</section>
+<form method="GET" action="/directory" class="wolfbbs-inline-form"><label>Search <input name="q" value="` + htmlEscape(query) + `" placeholder="handle, role, theme"></label><label>Role <select name="role">` + roleOptionRows.String() + `</select></label><label>Verified <select name="verified">` + verifiedOptionRows.String() + `</select></label><label><input type="checkbox" name="online" value="1"`
+	if onlineOnly {
+		page += ` checked`
+	}
+	page += `> online only</label><button type="submit">Filter</button></form>
+` + profileBlock + `
+<table border="1"><tr><th>Handle</th><th>Role</th><th>Verified</th><th>Theme</th><th>Last Login</th><th>Online</th><th>Area</th><th>Origin</th><th>Action</th></tr>` + tableRows.String() + `</table>
+</body></html>`
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(page))
+}
+
+func (a *webApp) handleFeedback(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	sysop := a.primarySysopUser()
+	if sysop == nil {
+		http.Error(w, "sysop mailbox unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if r.Method == http.MethodPost {
+		if !a.requireCSRF(w, r) {
+			return
+		}
+		category := strings.TrimSpace(r.FormValue("category"))
+		subject := strings.TrimSpace(r.FormValue("subject"))
+		body := strings.TrimSpace(r.FormValue("body"))
+		if subject == "" || body == "" {
+			redirectWithError(w, r, "/feedback", "Subject and body are required.")
+			return
+		}
+		if category == "" {
+			category = "general"
+		}
+		fullSubject := "[feedback/" + cleanOneLiner(strings.ToLower(category), 16) + "] " + cleanOneLiner(subject, 72)
+		if err := a.mailRepo.CreateMail(&domain.PrivateMail{
+			FromUserID: user.ID,
+			ToUserID:   sysop.ID,
+			Subject:    fullSubject,
+			Body:       body,
+		}); err != nil {
+			redirectWithError(w, r, "/feedback", "Could not send feedback mail.")
+			return
+		}
+		if a.eventBus != nil {
+			a.eventBus.Publish("feedback.sent", map[string]string{"from": user.Handle, "to": sysop.Handle, "category": category})
+		}
+		redirectWithNotice(w, r, "/feedback", "Feedback delivered to "+sysop.Handle+".")
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	csrf := a.csrfHiddenInput(r)
+	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Feedback to Sysop</title></head><body>
+<p><a href="/boards">boards</a> | <a href="/bulletins">bulletins</a> | <a href="/directory">directory</a> | <a href="/finder">finder</a> | <a href="/mail">mail</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
+` + pageMessageBlock(r) + `
+<h1>Feedback to Sysop</h1>
+<p>Classic feedback module, rebuilt as direct internal mail to <strong>` + htmlEscape(sysop.Handle) + `</strong>.</p>
+<form method="POST" action="/feedback">
+` + csrf + `
+<label>Category <select name="category"><option value="bug">bug</option><option value="idea">idea</option><option value="abuse">abuse</option><option value="praise">praise</option><option value="general" selected>general</option></select></label><br>
+<label>Subject <input name="subject" size="64" placeholder="What should the sysop know?"></label><br>
+<label>Body<br><textarea name="body" rows="12" cols="80" placeholder="Describe the issue, request, or old-school rant."></textarea></label><br>
+<button type="submit">Send Feedback</button>
+</form>
+</body></html>`
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(page))
+}
+
+func (a *webApp) handleFinder(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	boardFilterID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("board")), 10, 64)
+	authorFilter := strings.TrimSpace(r.URL.Query().Get("author"))
+	trackerFilter := normalizeTrackerFilter(r.URL.Query().Get("tracker"))
+	if strings.TrimSpace(r.URL.Query().Get("save")) == "1" && query != "" && a.classicSearch {
+		a.addSavedSearch(user.Handle, query)
+	}
+	results := a.searchMessageHits(user, query, boardFilterID, authorFilter, 30)
+	tracker := a.buildThreadTracker(user, trackerFilter, 12)
+	saved := a.savedSearchList(user.Handle)
+	boardOptions := a.visibleBoardsFor(user)
+	matchedBoards := map[int64]struct{}{}
+	resultRows := strings.Builder{}
+	for _, row := range results {
+		matchedBoards[row.BoardID] = struct{}{}
+		resultRows.WriteString(`<tr><td><a href="/boards?board=` + strconv.FormatInt(row.BoardID, 10) + `&id=` + strconv.FormatInt(row.MessageID, 10) + `">` + htmlEscape(row.Subject) + `</a></td><td>` + htmlEscape(row.BoardName) + `</td><td>` + htmlEscape(row.Conference) + `</td><td>` + htmlEscape(row.Author) + `</td><td>` + htmlEscape(row.CreatedAt) + `</td><td>` + htmlEscape(row.Snippet) + `</td></tr>`)
+	}
+	if resultRows.Len() == 0 {
+		resultRows.WriteString(`<tr><td colspan="6">No matches yet.</td></tr>`)
+	}
+	trackerRows := strings.Builder{}
+	for _, row := range tracker {
+		label := row.Kind
+		switch row.Kind {
+		case "post":
+			label = "your post"
+		case "mention":
+			label = "mention"
+		case "reply":
+			label = "reply to you"
+		}
+		trackerRows.WriteString(`<li><strong>` + htmlEscape(label) + `:</strong> <a href="/boards?board=` + strconv.FormatInt(row.BoardID, 10) + `&id=` + strconv.FormatInt(row.MessageID, 10) + `">` + htmlEscape(row.BoardName) + ` / ` + htmlEscape(row.Subject) + `</a> <span class="wolfbbs-muted">` + htmlEscape(row.CreatedAt) + `</span></li>`)
+	}
+	if trackerRows.Len() == 0 {
+		trackerRows.WriteString(`<li>No tracked thread activity yet.</li>`)
+	}
+	savedRows := strings.Builder{}
+	for _, row := range saved {
+		savedRows.WriteString(`<li><a href="/finder?q=` + url.QueryEscape(row) + `">` + htmlEscape(row) + `</a></li>`)
+	}
+	if savedRows.Len() == 0 {
+		savedRows.WriteString(`<li>No saved finder queries yet.</li>`)
+	}
+	boardOptionRows := strings.Builder{}
+	boardOptionRows.WriteString(`<option value="">All boards</option>`)
+	for _, board := range boardOptions {
+		selected := ""
+		if board.ID == boardFilterID {
+			selected = ` selected`
+		}
+		boardOptionRows.WriteString(`<option value="` + strconv.FormatInt(board.ID, 10) + `"` + selected + `>` + htmlEscape(board.Name) + `</option>`)
+	}
+	trackerOptions := []string{"all", "post", "mention", "reply"}
+	trackerOptionRows := strings.Builder{}
+	for _, row := range trackerOptions {
+		selected := ""
+		if row == trackerFilter {
+			selected = ` selected`
+		}
+		label := row
+		if row == "all" {
+			label = "all tracker items"
+		}
+		if row == "post" {
+			label = "your posts"
+		}
+		if row == "reply" {
+			label = "replies to you"
+		}
+		trackerOptionRows.WriteString(`<option value="` + htmlEscape(row) + `"` + selected + `>` + htmlEscape(label) + `</option>`)
+	}
+	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Message Finder</title></head><body>
+<p><a href="/boards">boards</a> | <a href="/bulletins">bulletins</a> | <a href="/directory">directory</a> | <a href="/newfiles">newfiles</a> | <a href="/feedback">feedback</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
+` + pageMessageBlock(r) + `
+<h1>Message Finder</h1>
+<p>Cross-board search plus a personal thread tracker for replies, mentions, and your recent posts.</p>
+<section class="wolfbbs-kpi-grid">
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(results)) + `</strong><span>matches</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(matchedBoards)) + `</strong><span>boards touched</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(tracker)) + `</strong><span>tracker items</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(saved)) + `</strong><span>saved queries</span></article>
+</section>
+<form method="GET" action="/finder" class="wolfbbs-inline-form"><label>Query <input name="q" value="` + htmlEscape(query) + `" placeholder="subject or text"></label><label>Board <select name="board">` + boardOptionRows.String() + `</select></label><label>Author <input name="author" value="` + htmlEscape(authorFilter) + `" placeholder="handle"></label><label>Tracker <select name="tracker">` + trackerOptionRows.String() + `</select></label><button type="submit">Search</button><button type="submit" name="save" value="1">Save Query</button></form>
+<section class="wolfbbs-grid">
+<article><h2>Thread Tracker</h2><ul>` + trackerRows.String() + `</ul></article>
+<article><h2>Saved Queries</h2><ul>` + savedRows.String() + `</ul></article>
+</section>
+<h2>Results</h2>
+<table border="1"><tr><th>Subject</th><th>Board</th><th>Conf</th><th>Author</th><th>When</th><th>Snippet</th></tr>` + resultRows.String() + `</table>
+</body></html>`
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(page))
+}
+
+func (a *webApp) handleNewFiles(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if !a.canReadFiles(user, "browse") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	sinceFilter := normalizeFileSinceFilter(r.URL.Query().Get("since"))
+	tagFilter := strings.TrimSpace(r.URL.Query().Get("tag"))
+	sortMode := normalizeFileSortMode(r.URL.Query().Get("sort"))
+	snapshot := a.buildNewFilesSnapshot(user, sinceFilter, tagFilter, sortMode)
+	csrf := a.csrfHiddenInput(r)
+	areaIDs := map[int64]struct{}{}
+	recentRows := strings.Builder{}
+	for _, row := range snapshot.RecentUploads {
+		areaIDs[row.AreaID] = struct{}{}
+		recentRows.WriteString(`<tr><td>` + htmlEscape(snapshot.AreaNames[row.AreaID]) + `</td><td>` + htmlEscape(row.Name) + `</td><td>` + htmlEscape(strings.Join(row.Tags, ",")) + `</td><td>` + row.UploadedAt.Local().Format("2006-01-02 15:04") + `</td><td>` + fmt.Sprintf("%.2f", row.RatingAvg) + ` (` + strconv.Itoa(row.RatingCount) + `)</td><td><form method="POST" action="/gateway">` + csrf + `<input type="hidden" name="return_to" value="/newfiles"><input type="hidden" name="action" value="queue_add"><input type="hidden" name="file_id" value="` + strconv.FormatInt(row.ID, 10) + `"><button type="submit">queue</button></form></td></tr>`)
+	}
+	if recentRows.Len() == 0 {
+		recentRows.WriteString(`<tr><td colspan="6">No recent uploads yet.</td></tr>`)
+	}
+	topRows := strings.Builder{}
+	for _, row := range snapshot.TopRated {
+		topRows.WriteString(`<li><strong>` + htmlEscape(row.Name) + `</strong> in ` + htmlEscape(snapshot.AreaNames[row.AreaID]) + ` <span class="wolfbbs-muted">rating ` + fmt.Sprintf("%.2f", row.RatingAvg) + ` (` + strconv.Itoa(row.RatingCount) + `)</span></li>`)
+	}
+	if topRows.Len() == 0 {
+		topRows.WriteString(`<li>No rated uploads yet.</li>`)
+	}
+	filterRows := strings.Builder{}
+	for _, row := range snapshot.SavedFilters {
+		target := `/newfiles`
+		params := url.Values{}
+		if len(row.Tags) > 0 {
+			params.Set("tag", row.Tags[0])
+		}
+		if params.Encode() != "" {
+			target += `?` + params.Encode()
+		}
+		filterRows.WriteString(`<li><a href="` + htmlEscape(target) + `">` + htmlEscape(row.Name) + `</a> - ` + htmlEscape(row.Query) + ` [` + htmlEscape(strings.Join(row.Tags, ",")) + `]</li>`)
+	}
+	if filterRows.Len() == 0 {
+		filterRows.WriteString(`<li>No saved file filters yet.</li>`)
+	}
+	queueRows := strings.Builder{}
+	for _, row := range snapshot.Queue {
+		name := snapshot.QueueNames[row.FileID]
+		if name == "" {
+			name = "file #" + strconv.FormatInt(row.FileID, 10)
+		}
+		queueRows.WriteString(`<tr><td>` + htmlEscape(name) + `</td><td>` + row.CreatedAt.Local().Format("2006-01-02 15:04") + `</td><td><form method="POST" action="/gateway">` + csrf + `<input type="hidden" name="return_to" value="/newfiles"><input type="hidden" name="action" value="queue_remove"><input type="hidden" name="file_id" value="` + strconv.FormatInt(row.FileID, 10) + `"><button type="submit">remove</button></form></td></tr>`)
+	}
+	if queueRows.Len() == 0 {
+		queueRows.WriteString(`<tr><td colspan="3">Queue is empty.</td></tr>`)
+	}
+	sinceOptionRows := strings.Builder{}
+	for _, row := range []string{"24h", "7d", "30d", "all"} {
+		selected := ""
+		if row == sinceFilter {
+			selected = ` selected`
+		}
+		label := row
+		if row == "24h" {
+			label = "last 24 hours"
+		}
+		if row == "7d" {
+			label = "last 7 days"
+		}
+		if row == "30d" {
+			label = "last 30 days"
+		}
+		if row == "all" {
+			label = "all uploads"
+		}
+		sinceOptionRows.WriteString(`<option value="` + htmlEscape(row) + `"` + selected + `>` + htmlEscape(label) + `</option>`)
+	}
+	sortOptionRows := strings.Builder{}
+	for _, row := range []string{"latest", "rating", "name"} {
+		selected := ""
+		if row == sortMode {
+			selected = ` selected`
+		}
+		label := row
+		if row == "latest" {
+			label = "latest first"
+		}
+		if row == "rating" {
+			label = "top rated"
+		}
+		if row == "name" {
+			label = "name"
+		}
+		sortOptionRows.WriteString(`<option value="` + htmlEscape(row) + `"` + selected + `>` + htmlEscape(label) + `</option>`)
+	}
+	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>New Files Desk</title></head><body>
+<p><a href="/boards">boards</a> | <a href="/bulletins">bulletins</a> | <a href="/finder">finder</a> | <a href="/directory">directory</a> | <a href="/gateway?view=files">full filebase</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
+` + pageMessageBlock(r) + `
+<h1>New Files Desk</h1>
+<p>Modern new-files scan with queue management, saved filters, and top-rated picks.</p>
+<section class="wolfbbs-kpi-grid">
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(snapshot.RecentUploads)) + `</strong><span>visible uploads</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(areaIDs)) + `</strong><span>areas represented</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(snapshot.Queue)) + `</strong><span>queued downloads</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(snapshot.SavedFilters)) + `</strong><span>saved filters</span></article>
+</section>
+<form method="GET" action="/newfiles" class="wolfbbs-inline-form"><label>Window <select name="since">` + sinceOptionRows.String() + `</select></label><label>Tag <input name="tag" value="` + htmlEscape(tagFilter) + `" placeholder="zip, ansi, docs"></label><label>Sort <select name="sort">` + sortOptionRows.String() + `</select></label><button type="submit">Filter</button></form>
+<section class="wolfbbs-grid">
+<article><h2>Top Rated Picks</h2><ul>` + topRows.String() + `</ul></article>
+<article><h2>Saved Filters</h2><ul>` + filterRows.String() + `</ul><p><a href="/gateway?view=files">Open full FileBase browser</a></p></article>
+</section>
+<h2>Recent Uploads</h2>
+<table border="1"><tr><th>Area</th><th>Name</th><th>Tags</th><th>Uploaded</th><th>Rating</th><th>Action</th></tr>` + recentRows.String() + `</table>
+<h2>Download Desk</h2>
+<p><a href="/gateway?view=files&batch=1">Download queue as ZIP</a></p>
+<table border="1"><tr><th>File</th><th>Queued</th><th>Action</th></tr>` + queueRows.String() + `</table>
 </body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -2367,9 +2958,12 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 			conferences = append(conferences, row)
 		}
 		sort.Slice(conferences, func(i, j int) bool { return strings.ToLower(conferences[i]) < strings.ToLower(conferences[j]) })
+		boardQuery := strings.TrimSpace(r.URL.Query().Get("q"))
+		boardMode := normalizeBoardMode(r.URL.Query().Get("mode"))
 		rows := strings.Builder{}
 		messageBlock := pageMessageBlock(r)
 		dashboard := a.buildBoardsDashboard(user, boards)
+		boardRows, boardQueue := a.buildBoardMenuRows(user, boards, boardQuery, boardMode)
 		motdBlock := ""
 		if strings.TrimSpace(a.motd) != "" {
 			motdBlock = `<p><strong>MOTD:</strong> ` + htmlEscape(a.motd) + `</p>`
@@ -2400,31 +2994,15 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 		if oneLinerBlock.Len() == 0 {
 			oneLinerBlock.WriteString(`<li>No one-liners yet.</li>`)
 		}
-		for _, board := range boards {
-			msgs, _ := a.msgRepo.ListByBoard(board.ID)
-			pointerID := int64(0)
-			if ptr, ptrErr := a.msgRepo.GetPointer(user.ID, board.ID); ptrErr == nil && ptr != nil {
-				pointerID = ptr.LastReadID
-			}
-			newCount := 0
-			for _, msg := range msgs {
-				if msg.ID > pointerID {
-					newCount++
-				}
-			}
-			lastAt := ""
-			lastSub := ""
-			if len(msgs) > 0 {
-				last := msgs[len(msgs)-1]
-				lastAt = last.CreatedAt.Format("2006-01-02 15:04")
-				lastSub = last.Subject
-			}
-			rows.WriteString(fmt.Sprintf(`<tr><td>%d</td><td><a href="/boards?board=%d">%s</a></td><td>%s</td><td>%d</td><td>%d</td><td>%s</td><td>%s</td></tr>`,
-				board.ID, board.ID, board.Name, htmlEscape(defaultConferenceValue(board.Conference)), len(msgs), newCount, lastAt, htmlEscape(lastSub)))
+		for _, row := range boardRows {
+			rows.WriteString(`<tr><td>` + strconv.FormatInt(row.Board.ID, 10) + `</td><td><a href="/boards?board=` + strconv.FormatInt(row.Board.ID, 10) + `">` + htmlEscape(row.Board.Name) + `</a></td><td>` + htmlEscape(defaultConferenceValue(row.Board.Conference)) + `</td><td>` + strconv.Itoa(row.MessageCount) + `</td><td>` + strconv.Itoa(row.NewCount) + `</td><td>` + strconv.Itoa(row.MyPosts) + `</td><td>` + strconv.Itoa(row.Mentions) + `</td><td>` + htmlEscape(row.LastAt) + `</td><td>` + htmlEscape(row.LastSubject) + `</td></tr>`)
+		}
+		if rows.Len() == 0 {
+			rows.WriteString(`<tr><td colspan="9">No boards matched the current filters.</td></tr>`)
 		}
 		quickJumpBlock := ""
 		if a.quickJump {
-			quickJumpBlock = `<form method="GET" action="/boards"><label>Quick Jump <input name="jump" size="24" placeholder="mail/radar/clubhouse/doors/status/config"></label><button type="submit">Go</button></form>`
+			quickJumpBlock = `<form method="GET" action="/boards"><label>Quick Jump <input name="jump" size="24" placeholder="bulletins/directory/finder/newfiles/feedback"></label><button type="submit">Go</button></form>`
 		}
 		confOptions := strings.Builder{}
 		selectedAll := ` selected`
@@ -2439,7 +3017,20 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 			}
 			confOptions.WriteString(`<option value="` + htmlEscape(conf) + `"` + selected + `>` + htmlEscape(conf) + `</option>`)
 		}
-		confFilterBlock := `<form method="GET" action="/boards"><label>Conference <select name="conference">` + confOptions.String() + `</select></label><button type="submit">Filter</button></form>`
+		modeOptions := []string{"all", "unread", "mine", "mentions"}
+		modeOptionRows := strings.Builder{}
+		for _, row := range modeOptions {
+			selected := ""
+			if row == boardMode {
+				selected = ` selected`
+			}
+			label := row
+			if row == "all" {
+				label = "all boards"
+			}
+			modeOptionRows.WriteString(`<option value="` + htmlEscape(row) + `"` + selected + `>` + htmlEscape(label) + `</option>`)
+		}
+		confFilterBlock := `<form method="GET" action="/boards" class="wolfbbs-inline-form"><label>Search <input name="q" value="` + htmlEscape(boardQuery) + `" placeholder="board, description, subject"></label><label>Conference <select name="conference">` + confOptions.String() + `</select></label><label>Mode <select name="mode">` + modeOptionRows.String() + `</select></label><button type="submit">Filter</button></form>`
 		discoverActionCard := `<a class="wolfbbs-action-card" href="/discover"><strong>Discover</strong><span>Catch up since last call</span></a>`
 		if !a.discover {
 			discoverActionCard = `<article class="wolfbbs-action-card"><strong>Discover</strong><span>Disabled by current feature flags</span></article>`
@@ -2461,20 +3052,24 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 <article class="wolfbbs-card"><h2>Caller Cockpit</h2><p>Recommended door: ` + recommendedDoorBlock + `</p>` + rumorBlock + `<div class="wolfbbs-action-grid"><a class="wolfbbs-action-card" href="/mail"><strong>Inbox</strong><span>` + strconv.Itoa(dashboard.UnreadMail) + ` unread mail waiting</span></a>` + discoverActionCard + `<a class="wolfbbs-action-card" href="/doors"><strong>Door Cockpit</strong><span>Favorites, turns, trophies, policy</span></a><a class="wolfbbs-action-card" href="/radar"><strong>Caller Radar</strong><span>Board pulse, live callers, arcade heat</span></a><a class="wolfbbs-action-card" href="/clubhouse"><strong>Clubhouse</strong><span>One-liners, rumors, BBS exchange</span></a><a class="wolfbbs-action-card" href="/chat"><strong>Lobby Chat</strong><span>` + strconv.Itoa(dashboard.OnlineUsers) + ` callers online</span></a></div></article>
 <article class="wolfbbs-card"><h2>Last Callers</h2><ul>` + recentCallersBlock.String() + `</ul></article>
 <article class="wolfbbs-card"><h2>OneLinerz</h2><ul>` + oneLinerBlock.String() + `</ul></article>
+</section>
+<section class="wolfbbs-grid">
+<article class="wolfbbs-card"><h2>Legacy Classics</h2><div class="wolfbbs-action-grid"><a class="wolfbbs-action-card" href="/bulletins"><strong>Bulletin Center</strong><span>system wire, hot boards, download pick</span></a><a class="wolfbbs-action-card" href="/directory"><strong>Caller Directory</strong><span>user list, profile cards, direct mail links</span></a><a class="wolfbbs-action-card" href="/finder"><strong>Message Finder</strong><span>cross-board search and thread tracker</span></a><a class="wolfbbs-action-card" href="/newfiles"><strong>New Files Desk</strong><span>recent uploads, top-rated files, queue</span></a><a class="wolfbbs-action-card" href="/feedback"><strong>Feedback to Sysop</strong><span>classic feedback module, rebuilt</span></a></div></article>
+<article class="wolfbbs-card"><h2>Personal Board Queue</h2><div class="wolfbbs-grid"><section><h3>Unread Scan</h3>` + boardQueueList(boardQueue.UnreadRows, "Unread queue is clear.") + `</section><section><h3>Your Threads</h3>` + boardQueueList(boardQueue.MyRows, "No personal threads tracked yet.") + `</section><section><h3>Mentions</h3>` + boardQueueList(boardQueue.MentionRows, "No mentions waiting.") + `</section></div></article>
 </section>`
 		page := fmt.Sprintf(`<html><body>
 <p>Signed in as %s</p>
-<p><a href="/mail">mail</a> | <a href="/settings">settings</a> | <a href="/chat">chat</a> | <a href="/radar">radar</a> | <a href="/clubhouse">clubhouse</a> | <a href="/doors">doors</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/gateway">gateway</a>%s | <a href="/help">help</a> | <a href="/logout">logout</a></p>
+<p><a href="/bulletins">bulletins</a> | <a href="/directory">directory</a> | <a href="/finder">finder</a> | <a href="/newfiles">newfiles</a> | <a href="/feedback">feedback</a> | <a href="/mail">mail</a> | <a href="/settings">settings</a> | <a href="/chat">chat</a> | <a href="/radar">radar</a> | <a href="/clubhouse">clubhouse</a> | <a href="/doors">doors</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/gateway">gateway</a>%s | <a href="/help">help</a> | <a href="/logout">logout</a></p>
 %s
 %s
 %s
 %s
 %s
 %s
-<p><strong>Tip:</strong> Select a board to read, then open a message ID to reply/report. Use conference filter to keep scans short.</p>
+<p><strong>Tip:</strong> Select a board to read, then open a message ID to reply/report. Use search, conference, and mode filters to work your unread and mention queues.</p>
 <h1>Message Boards</h1>
 <table border="1">
-<tr><th>ID</th><th>Board</th><th>Conf</th><th>Topics</th><th>New</th><th>Last</th><th>Last subject</th></tr>%s</table>
+<tr><th>ID</th><th>Board</th><th>Conf</th><th>Topics</th><th>New</th><th>Mine</th><th>Mentions</th><th>Last</th><th>Last subject</th></tr>%s</table>
 </body></html>`, user.Handle, discoverLink, messageBlock, motdBlock, announcementBlock, quickJumpBlock, confFilterBlock, dashboardBlock, rows.String())
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(page))
@@ -2649,6 +3244,9 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	boxFilter := normalizeMailBox(r.URL.Query().Get("box"))
+	searchQuery := strings.TrimSpace(r.URL.Query().Get("q"))
+	templateName := normalizeMailTemplate(r.URL.Query().Get("template"))
 
 	if id := strings.TrimSpace(r.URL.Query().Get("id")); id != "" {
 		mailID, _ := strconv.ParseInt(id, 10, 64)
@@ -2671,12 +3269,28 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 		} else {
 			to = handleByID[item.ToUserID]
 		}
+		replyTo := to
+		if item.FromUserID != user.ID {
+			replyTo = handleByID[item.FromUserID]
+		}
+		replySubject := item.Subject
+		if !strings.HasPrefix(strings.ToLower(replySubject), "re:") {
+			replySubject = "Re: " + replySubject
+		}
+		replyBody := quoteBody(item.Body)
+		replyBlock := ``
+		if a.canSendMail(user) && replyTo != "" {
+			replyBlock = `<h2>Quick Reply</h2><form method="POST" action="/mail">` + a.csrfHiddenInput(r) +
+				`<label>To <input name="to" size="40" value="` + htmlEscape(replyTo) + `"></label><br>` +
+				`<label>Subject <input name="subject" size="60" value="` + htmlEscape(replySubject) + `"></label><br>` +
+				`<label>Body<br><textarea name="body" rows="10" cols="80">` + htmlEscape(replyBody) + `</textarea></label><br><button type="submit">Send Reply</button></form>`
+		}
 		page := `<html><body><h1>Mail #` + strconv.FormatInt(item.ID, 10) + `</h1><p><a href="/mail">back</a> | <a href="/boards">boards</a> | <a href="/help">help</a></p>` +
 			`<p><strong>From:</strong> ` + htmlEscape(handleByID[item.FromUserID]) + `<br>` +
 			`<strong>To:</strong> ` + htmlEscape(to) + `<br>` +
 			`<strong>Subject:</strong> ` + htmlEscape(item.Subject) + `<br>` +
 			`<strong>Sent:</strong> ` + item.CreatedAt.Format("2006-01-02 15:04:05") + `</p>` +
-			`<pre>` + htmlEscape(item.Body) + `</pre></body></html>`
+			`<pre>` + htmlEscape(item.Body) + `</pre>` + replyBlock + `</body></html>`
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(page))
 		return
@@ -2685,8 +3299,26 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 	inbox, _ := a.mailRepo.ListInbox(user.ID, 100)
 	outbox, _ := a.mailRepo.ListOutbox(user.ID, 100)
 	handleByID := a.userHandleLookup()
-	inRows := strings.Builder{}
+	prefillTo := strings.TrimSpace(r.URL.Query().Get("to"))
+	prefillSubject := strings.TrimSpace(r.URL.Query().Get("subject"))
+	prefillBody := strings.TrimSpace(r.URL.Query().Get("body"))
+	if templateSubject, templateBody := mailTemplatePrefill(templateName); templateSubject != "" || templateBody != "" {
+		if prefillSubject == "" {
+			prefillSubject = templateSubject
+		}
+		if prefillBody == "" {
+			prefillBody = templateBody
+		}
+	}
+	unreadCount := 0
 	for _, row := range inbox {
+		if row.ReadAt == nil {
+			unreadCount++
+		}
+	}
+	visibleInbox, visibleOutbox := filterMailRows(inbox, outbox, handleByID, boxFilter, searchQuery)
+	inRows := strings.Builder{}
+	for _, row := range visibleInbox {
 		status := "unread"
 		if row.ReadAt != nil {
 			status = "read"
@@ -2698,7 +3330,7 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 		inRows.WriteString(`<tr><td colspan="5">Inbox is empty.</td></tr>`)
 	}
 	outRows := strings.Builder{}
-	for _, row := range outbox {
+	for _, row := range visibleOutbox {
 		target := handleByID[row.ToUserID]
 		if row.ExternalTo != nil {
 			target = *row.ExternalTo
@@ -2715,13 +3347,62 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 	if a.discover {
 		discoverLink = ` | <a href="/discover">discover</a>`
 	}
-	page := `<html><body><h1>Private Mail</h1><p><a href="/boards">boards</a> | <a href="/chat">chat</a> | <a href="/status">status</a> | <a href="/config">config</a>` + discoverLink + ` | <a href="/help">help</a> | <a href="/logout">logout</a></p>` +
+	addressRows := strings.Builder{}
+	for _, row := range a.recentCorrespondents(user, inbox, outbox, 10) {
+		addressRows.WriteString(`<li><a href="/mail?to=` + url.QueryEscape(row) + `">` + htmlEscape(row) + `</a></li>`)
+	}
+	if addressRows.Len() == 0 {
+		addressRows.WriteString(`<li>No recent correspondents yet.</li>`)
+	}
+	localRows := strings.Builder{}
+	for _, row := range a.localMailPicks(user.Handle, 10) {
+		localRows.WriteString(`<li><a href="/mail?to=` + url.QueryEscape(row) + `">` + htmlEscape(row) + `</a> | <a href="/directory?handle=` + url.QueryEscape(row) + `">profile</a></li>`)
+	}
+	if localRows.Len() == 0 {
+		localRows.WriteString(`<li>No local caller picks yet.</li>`)
+	}
+	boxOptionRows := strings.Builder{}
+	for _, row := range []string{"all", "inbox", "unread", "outbox"} {
+		selected := ""
+		if row == boxFilter {
+			selected = ` selected`
+		}
+		label := row
+		if row == "all" {
+			label = "all mail"
+		}
+		boxOptionRows.WriteString(`<option value="` + htmlEscape(row) + `"` + selected + `>` + htmlEscape(label) + `</option>`)
+	}
+	templateOptionRows := strings.Builder{}
+	for _, row := range []string{"none", "short_note", "door_invite", "follow_up"} {
+		selected := ""
+		if row == templateName {
+			selected = ` selected`
+		}
+		label := row
+		switch row {
+		case "none":
+			label = "blank compose"
+		case "short_note":
+			label = "short note"
+		case "door_invite":
+			label = "door invite"
+		case "follow_up":
+			label = "follow-up"
+		}
+		templateOptionRows.WriteString(`<option value="` + htmlEscape(row) + `"` + selected + `>` + htmlEscape(label) + `</option>`)
+	}
+	page := `<html><body><h1>Private Mail</h1><p><a href="/boards">boards</a> | <a href="/bulletins">bulletins</a> | <a href="/directory">directory</a> | <a href="/finder">finder</a> | <a href="/feedback">feedback</a> | <a href="/chat">chat</a> | <a href="/status">status</a> | <a href="/config">config</a>` + discoverLink + ` | <a href="/help">help</a> | <a href="/logout">logout</a></p>` +
 		messageBlock +
+		`<section class="wolfbbs-kpi-grid"><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(inbox)) + `</strong><span>inbox</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(unreadCount) + `</strong><span>unread</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(outbox)) + `</strong><span>outbox</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(a.recentCorrespondents(user, inbox, outbox, 10))) + `</strong><span>recent correspondents</span></article></section>` +
+		`<form method="GET" action="/mail" class="wolfbbs-inline-form"><label>Box <select name="box">` + boxOptionRows.String() + `</select></label><label>Search <input name="q" value="` + htmlEscape(searchQuery) + `" placeholder="subject, body, handle"></label><button type="submit">Filter</button></form>` +
+		`<form method="GET" action="/mail" class="wolfbbs-inline-form"><label>Template <select name="template">` + templateOptionRows.String() + `</select></label><label>To <input name="to" value="` + htmlEscape(prefillTo) + `" placeholder="optional recipient"></label><button type="submit">Load Template</button></form>` +
 		`<p><strong>Tip:</strong> Use handle for local mail, email address for external relay (if enabled by policy).</p>` +
 		`<h2>Compose</h2><form method="POST" action="/mail">` + csrf +
-		`<label>To (handle or email): <input name="to" size="40"></label><br>` +
-		`<label>Subject: <input name="subject" size="60"></label><br>` +
-		`<label>Body:<br><textarea name="body" rows="10" cols="80"></textarea></label><br><button type="submit">Send</button></form>` +
+		`<label>To (handle or email): <input name="to" size="40" value="` + htmlEscape(prefillTo) + `"></label><br>` +
+		`<label>Subject: <input name="subject" size="60" value="` + htmlEscape(prefillSubject) + `"></label><br>` +
+		`<label>Body:<br><textarea name="body" rows="10" cols="80">` + htmlEscape(prefillBody) + `</textarea></label><br><button type="submit">Send</button></form>` +
+		`<section class="wolfbbs-grid"><article><h2>Recent Correspondents</h2><ul>` + addressRows.String() + `</ul></article><article><h2>Address Book</h2><ul>` + localRows.String() + `</ul></article></section>` +
 		`<h2>Inbox</h2><table border="1"><tr><th>ID</th><th>From</th><th>Subject</th><th>Sent</th><th>Status</th></tr>` + inRows.String() + `</table>` +
 		`<h2>Outbox</h2><table border="1"><tr><th>ID</th><th>To</th><th>Subject</th><th>Sent</th></tr>` + outRows.String() + `</table>` +
 		`</body></html>`
@@ -3038,7 +3719,7 @@ func (a *webApp) handleDiscover(w http.ResponseWriter, r *http.Request) {
 		bbsHTML.WriteString(`<li>No BBS links curated yet.</li>`)
 	}
 
-page := `<html><body>
+	page := `<html><body>
 <h1>Since Your Last Call</h1>
 <p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/radar">radar</a> | <a href="/clubhouse">clubhouse</a> | <a href="/doors">doors</a> | <a href="/settings">settings</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
 	<p>Transparent rules: replies-to-you, handle mentions, per-board new activity, and inbox mail. Max ` + strconv.Itoa(maxItems) + ` items.</p>
@@ -3479,7 +4160,7 @@ func (a *webApp) handleDoors(w http.ResponseWriter, r *http.Request) {
 		directoryRows.WriteString(`<tr><td colspan="7">No doors matched the current filter.</td></tr>`)
 	}
 
-page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Door Cockpit</title></head><body>
+	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Door Cockpit</title></head><body>
 <p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/radar">radar</a> | <a href="/clubhouse">clubhouse</a> | <a href="/doors">doors</a> | <a href="/scores">scores</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
 ` + messageBlock + `
 <h1>Door Cockpit</h1>
@@ -7211,6 +7892,16 @@ func webQuickJumpPath(raw string) string {
 		return "/mail"
 	case "chat", "c":
 		return "/chat"
+	case "bulletins", "bulletin", "news", "b":
+		return "/bulletins"
+	case "directory", "users", "dir", "u":
+		return "/directory"
+	case "finder", "search", "find":
+		return "/finder"
+	case "newfiles", "files", "nf":
+		return "/newfiles"
+	case "feedback", "fb":
+		return "/feedback"
 	case "radar", "mission", "r":
 		return "/radar"
 	case "clubhouse", "community", "club":
@@ -7710,6 +8401,785 @@ func (a *webApp) buildScoreboardSnapshot(user *domain.User, filterDoor string) s
 		snapshot.PersonalRows = snapshot.PersonalRows[:10]
 	}
 	return snapshot
+}
+
+func (a *webApp) buildBulletinSnapshot(user *domain.User) bulletinSnapshot {
+	snapshot := bulletinSnapshot{
+		FeaturedThread: a.featuredThreadLine(),
+		DownloadPick:   a.filebaseDownloadPick(),
+		RecentCallers:  a.latestLogins(8),
+	}
+	if strings.TrimSpace(a.motd) != "" {
+		snapshot.SystemWire = append(snapshot.SystemWire, "MOTD: "+cleanOneLiner(a.motd, 100))
+	}
+	if strings.TrimSpace(a.announcement) != "" {
+		snapshot.SystemWire = append(snapshot.SystemWire, "Announcement: "+cleanOneLiner(a.announcement, 100))
+	}
+	if a.rumorzMod != nil {
+		if rumor := strings.TrimSpace(a.rumorzMod.Current()); rumor != "" {
+			snapshot.SystemWire = append(snapshot.SystemWire, "Rumorz: "+cleanOneLiner(rumor, 100))
+		}
+	}
+	if user != nil {
+		if digest, err := discovery.BuildSinceLastCall(a.boardRepo, a.msgRepo, a.mailRepo, user, 8); err == nil {
+			for _, row := range digest.Items {
+				snapshot.DigestItems = append(snapshot.DigestItems, row.Line)
+			}
+		}
+		boards := a.visibleBoardsFor(user)
+		for _, row := range a.buildBoardPulse(user, boards, 6) {
+			snapshot.HotBoards = append(snapshot.HotBoards, fmt.Sprintf("%s (%d new, %d total)", row.BoardName, row.NewCount, row.MessageCount))
+		}
+	}
+	if a.oneLinerzMod != nil {
+		for _, row := range a.oneLinerzMod.List(6) {
+			snapshot.OneLiners = append(snapshot.OneLiners, row.Handle+": "+cleanOneLiner(row.Text, 72))
+		}
+	}
+	if a.adminRepo != nil {
+		entries, _ := a.adminRepo.ListFileEntries(0, "", nil, 6)
+		areaNames := map[int64]string{}
+		if areas, err := a.adminRepo.ListFileAreas(); err == nil {
+			for _, area := range areas {
+				areaNames[area.ID] = area.Name
+			}
+		}
+		for _, row := range entries {
+			areaName := areaNames[row.AreaID]
+			if areaName == "" {
+				areaName = "Area " + strconv.FormatInt(row.AreaID, 10)
+			}
+			snapshot.RecentFiles = append(snapshot.RecentFiles, fmt.Sprintf("%s / %s", areaName, cleanOneLiner(row.Name, 56)))
+		}
+	}
+	return snapshot
+}
+
+func (a *webApp) visibleBoardsFor(user *domain.User) []domain.Board {
+	if user == nil || a.boardRepo == nil {
+		return nil
+	}
+	boards, err := a.boardRepo.List()
+	if err != nil {
+		return nil
+	}
+	out := make([]domain.Board, 0, len(boards))
+	for i := range boards {
+		if a.canReadBoard(user, &boards[i]) {
+			out = append(out, boards[i])
+		}
+	}
+	return out
+}
+
+func (a *webApp) buildBoardMenuRows(user *domain.User, boards []domain.Board, query, mode string) ([]boardMenuRow, boardQueueSnapshot) {
+	if user == nil || a.msgRepo == nil {
+		return nil, boardQueueSnapshot{}
+	}
+	query = strings.ToLower(strings.TrimSpace(query))
+	mode = normalizeBoardMode(mode)
+	allRows := make([]boardMenuRow, 0, len(boards))
+	for _, board := range boards {
+		msgs, err := a.msgRepo.ListByBoard(board.ID)
+		if err != nil {
+			continue
+		}
+		pointerID := int64(0)
+		if ptr, ptrErr := a.msgRepo.GetPointer(user.ID, board.ID); ptrErr == nil && ptr != nil {
+			pointerID = ptr.LastReadID
+		}
+		row := boardMenuRow{Board: board, MessageCount: len(msgs)}
+		for _, msg := range msgs {
+			if msg.ID > pointerID {
+				row.NewCount++
+			}
+			if msg.AuthorID == user.ID {
+				row.MyPosts++
+			}
+			if strings.Contains(strings.ToLower(msg.Subject), strings.ToLower(user.Handle)) || strings.Contains(strings.ToLower(msg.Body), strings.ToLower(user.Handle)) {
+				row.Mentions++
+			}
+		}
+		if len(msgs) > 0 {
+			last := msgs[len(msgs)-1]
+			row.LastAt = last.CreatedAt.Local().Format("2006-01-02 15:04")
+			row.LastSubject = cleanOneLiner(last.Subject, 72)
+		}
+		allRows = append(allRows, row)
+	}
+	sort.Slice(allRows, func(i, j int) bool {
+		if allRows[i].NewCount != allRows[j].NewCount {
+			return allRows[i].NewCount > allRows[j].NewCount
+		}
+		if allRows[i].Mentions != allRows[j].Mentions {
+			return allRows[i].Mentions > allRows[j].Mentions
+		}
+		return strings.ToLower(allRows[i].Board.Name) < strings.ToLower(allRows[j].Board.Name)
+	})
+	queue := boardQueueSnapshot{}
+	for _, row := range allRows {
+		if row.NewCount > 0 {
+			queue.UnreadBoards++
+			if len(queue.UnreadRows) < 5 {
+				queue.UnreadRows = append(queue.UnreadRows, row)
+			}
+		}
+		if row.MyPosts > 0 {
+			queue.MyBoards++
+			if len(queue.MyRows) < 5 {
+				queue.MyRows = append(queue.MyRows, row)
+			}
+		}
+		if row.Mentions > 0 {
+			queue.MentionBoards++
+			if len(queue.MentionRows) < 5 {
+				queue.MentionRows = append(queue.MentionRows, row)
+			}
+		}
+	}
+	filtered := make([]boardMenuRow, 0, len(allRows))
+	for _, row := range allRows {
+		switch mode {
+		case "unread":
+			if row.NewCount == 0 {
+				continue
+			}
+		case "mine":
+			if row.MyPosts == 0 {
+				continue
+			}
+		case "mentions":
+			if row.Mentions == 0 {
+				continue
+			}
+		}
+		if query != "" {
+			hay := strings.ToLower(strings.Join([]string{
+				row.Board.Name,
+				row.Board.Description,
+				defaultConferenceValue(row.Board.Conference),
+				row.LastSubject,
+			}, " "))
+			if !strings.Contains(hay, query) {
+				continue
+			}
+		}
+		filtered = append(filtered, row)
+	}
+	return filtered, queue
+}
+
+func (a *webApp) buildDirectoryRows(query string, onlineOnly bool, verifiedFilter, roleFilter string) []directoryRow {
+	users, err := a.authSvc.ListUsers()
+	if err != nil {
+		return nil
+	}
+	query = strings.ToLower(strings.TrimSpace(query))
+	roleFilter = normalizeDirectoryRoleFilter(roleFilter)
+	verifiedFilter = normalizeDirectoryVerifiedFilter(verifiedFilter)
+	presence := map[string]directoryRow{}
+	if a.adminRepo != nil {
+		if sessions, err := a.adminRepo.ListNodeSessions(200); err == nil {
+			for _, row := range sessions {
+				presence[strings.ToLower(row.Username)] = directoryRow{
+					Online: true,
+					Area:   row.Area,
+					Origin: strings.ToUpper(netutil.RemoteOrigin(row.RemoteAddr)),
+				}
+			}
+		}
+	}
+	out := make([]directoryRow, 0, len(users))
+	for _, row := range users {
+		entry := directoryRow{
+			Handle:   row.Handle,
+			Role:     rbac.NormalizeRole(row.Role),
+			Verified: row.Verified,
+			Theme:    row.Theme,
+			LastLogin: func() string {
+				if row.LastLoginAt == nil || row.LastLoginAt.IsZero() {
+					return "never"
+				}
+				return row.LastLoginAt.Local().Format("2006-01-02 15:04")
+			}(),
+		}
+		if live, ok := presence[strings.ToLower(row.Handle)]; ok {
+			entry.Online = live.Online
+			entry.Area = live.Area
+			entry.Origin = live.Origin
+		}
+		if onlineOnly && !entry.Online {
+			continue
+		}
+		if roleFilter != "any" && entry.Role != roleFilter {
+			continue
+		}
+		switch verifiedFilter {
+		case "verified":
+			if !entry.Verified {
+				continue
+			}
+		case "unverified":
+			if entry.Verified {
+				continue
+			}
+		}
+		if query != "" {
+			hay := strings.ToLower(strings.Join([]string{entry.Handle, entry.Role, entry.Theme, entry.LastLogin, entry.Area, entry.Origin}, " "))
+			if !strings.Contains(hay, query) {
+				continue
+			}
+		}
+		out = append(out, entry)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Online != out[j].Online {
+			return out[i].Online
+		}
+		if out[i].LastLogin != out[j].LastLogin {
+			return out[i].LastLogin > out[j].LastLogin
+		}
+		return strings.ToLower(out[i].Handle) < strings.ToLower(out[j].Handle)
+	})
+	return out
+}
+
+func (a *webApp) buildDirectoryProfile(currentUser, target *domain.User) *directoryProfile {
+	if currentUser == nil || target == nil {
+		return nil
+	}
+	profile := &directoryProfile{
+		Handle:   target.Handle,
+		Role:     rbac.NormalizeRole(target.Role),
+		Theme:    target.Theme,
+		Verified: target.Verified,
+	}
+	if target.LastLoginAt != nil && !target.LastLoginAt.IsZero() {
+		profile.LastLogin = target.LastLoginAt.Local().Format("2006-01-02 15:04")
+	} else {
+		profile.LastLogin = "never"
+	}
+	if a.adminRepo != nil {
+		if sessions, err := a.adminRepo.ListNodeSessions(200); err == nil {
+			for _, row := range sessions {
+				if !strings.EqualFold(row.Username, target.Handle) {
+					continue
+				}
+				profile.Online = true
+				profile.OnlineArea = row.Area
+				profile.OnlineOrigin = remoteHostDisplay(row.RemoteAddr)
+				break
+			}
+		}
+		if callers, err := a.adminRepo.ListCallerHistory(50); err == nil {
+			for _, row := range callers {
+				if !strings.EqualFold(row.Username, target.Handle) {
+					continue
+				}
+				profile.RecentCallerRows = append(profile.RecentCallerRows, fmt.Sprintf("%s from %s in %s", row.LogoutAt.Local().Format("2006-01-02 15:04"), remoteHostDisplay(row.RemoteAddr), row.Area))
+				if len(profile.RecentCallerRows) >= 6 {
+					break
+				}
+			}
+		}
+	}
+	if a.mailRepo != nil {
+		if inbox, err := a.mailRepo.ListInbox(target.ID, 200); err == nil {
+			profile.MailReceived = len(inbox)
+		}
+		if outbox, err := a.mailRepo.ListOutbox(target.ID, 200); err == nil {
+			profile.MailSent = len(outbox)
+		}
+	}
+	if a.msgRepo != nil {
+		for _, board := range a.visibleBoardsFor(currentUser) {
+			msgs, err := a.msgRepo.ListByBoard(board.ID)
+			if err != nil {
+				continue
+			}
+			byID := map[int64]domain.Message{}
+			for _, msg := range msgs {
+				byID[msg.ID] = msg
+			}
+			for _, msg := range msgs {
+				if msg.AuthorID == target.ID {
+					profile.Posts++
+				}
+				if strings.Contains(strings.ToLower(msg.Body), strings.ToLower(target.Handle)) || strings.Contains(strings.ToLower(msg.Subject), strings.ToLower(target.Handle)) {
+					profile.Mentions++
+				}
+				if msg.ParentID > 0 {
+					if parent, ok := byID[msg.ParentID]; ok && parent.AuthorID == target.ID {
+						profile.Replies++
+					}
+				}
+			}
+		}
+	}
+	if a.doorRegistry != nil {
+		if favorites, err := a.doorRegistry.ListFavorites(target.ID, 10); err == nil && len(favorites) > 0 {
+			profile.FavoriteDoor = favorites[0].DoorID
+		}
+		profile.Achievements = len(a.mustDoorAchievements(target.ID, 100))
+	}
+	if profile.FavoriteDoor == "" {
+		profile.FavoriteDoor = "none"
+	}
+	return profile
+}
+
+func (a *webApp) primarySysopUser() *domain.User {
+	users, err := a.authSvc.ListUsers()
+	if err != nil {
+		return nil
+	}
+	candidates := make([]domain.User, 0, len(users))
+	for _, row := range users {
+		if rbac.NormalizeRole(row.Role) == roleAdmin {
+			candidates = append(candidates, row)
+		}
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		var li, lj time.Time
+		if candidates[i].LastLoginAt != nil {
+			li = candidates[i].LastLoginAt.UTC()
+		}
+		if candidates[j].LastLoginAt != nil {
+			lj = candidates[j].LastLoginAt.UTC()
+		}
+		if li.Equal(lj) {
+			return candidates[i].CreatedAt.Before(candidates[j].CreatedAt)
+		}
+		return li.After(lj)
+	})
+	pick := candidates[0]
+	return &pick
+}
+
+func (a *webApp) searchMessageHits(user *domain.User, query string, boardID int64, authorFilter string, limit int) []messageSearchHit {
+	query = strings.ToLower(strings.TrimSpace(query))
+	authorFilter = strings.ToLower(strings.TrimSpace(authorFilter))
+	if user == nil || limit <= 0 || a.msgRepo == nil {
+		return nil
+	}
+	if query == "" && boardID <= 0 && authorFilter == "" {
+		return nil
+	}
+	lookup := a.userHandleLookup()
+	out := make([]messageSearchHit, 0, limit)
+	for _, board := range a.visibleBoardsFor(user) {
+		if boardID > 0 && board.ID != boardID {
+			continue
+		}
+		msgs, err := a.msgRepo.ListByBoard(board.ID)
+		if err != nil {
+			continue
+		}
+		for _, msg := range msgs {
+			author := lookup[msg.AuthorID]
+			if authorFilter != "" && !strings.EqualFold(author, authorFilter) {
+				continue
+			}
+			hay := strings.ToLower(msg.Subject + "\n" + msg.Body)
+			if query != "" && !strings.Contains(hay, query) {
+				continue
+			}
+			out = append(out, messageSearchHit{
+				BoardID:    board.ID,
+				BoardName:  board.Name,
+				Conference: defaultConferenceValue(board.Conference),
+				MessageID:  msg.ID,
+				Subject:    cleanOneLiner(msg.Subject, 72),
+				Author:     author,
+				AuthorID:   msg.AuthorID,
+				CreatedAt:  msg.CreatedAt.Local().Format("2006-01-02 15:04"),
+				Snippet:    cleanOneLiner(msg.Body, 90),
+			})
+			if len(out) >= limit {
+				return out
+			}
+		}
+	}
+	return out
+}
+
+func (a *webApp) buildThreadTracker(user *domain.User, trackerFilter string, limit int) []threadTrackerItem {
+	if user == nil || limit <= 0 || a.msgRepo == nil {
+		return nil
+	}
+	trackerFilter = normalizeTrackerFilter(trackerFilter)
+	type trackerEntry struct {
+		item threadTrackerItem
+		when time.Time
+	}
+	rows := make([]trackerEntry, 0, limit)
+	for _, board := range a.visibleBoardsFor(user) {
+		msgs, err := a.msgRepo.ListByBoard(board.ID)
+		if err != nil {
+			continue
+		}
+		byID := map[int64]domain.Message{}
+		for _, msg := range msgs {
+			byID[msg.ID] = msg
+		}
+		for _, msg := range msgs {
+			kind := ""
+			switch {
+			case msg.AuthorID == user.ID:
+				kind = "post"
+			case strings.Contains(strings.ToLower(msg.Body), strings.ToLower(user.Handle)) || strings.Contains(strings.ToLower(msg.Subject), strings.ToLower(user.Handle)):
+				kind = "mention"
+			case msg.ParentID > 0:
+				if parent, ok := byID[msg.ParentID]; ok && parent.AuthorID == user.ID {
+					kind = "reply"
+				}
+			}
+			if kind == "" || (trackerFilter != "all" && kind != trackerFilter) {
+				continue
+			}
+			rows = append(rows, trackerEntry{
+				item: threadTrackerItem{
+					Kind:      kind,
+					BoardID:   board.ID,
+					MessageID: msg.ID,
+					BoardName: board.Name,
+					Subject:   cleanOneLiner(msg.Subject, 56),
+					CreatedAt: msg.CreatedAt.Local().Format("2006-01-02 15:04"),
+				},
+				when: msg.CreatedAt,
+			})
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i].when.After(rows[j].when)
+	})
+	if len(rows) > limit {
+		rows = rows[:limit]
+	}
+	out := make([]threadTrackerItem, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.item)
+	}
+	return out
+}
+
+func (a *webApp) buildNewFilesSnapshot(user *domain.User, sinceFilter, tagFilter, sortMode string) newFilesSnapshot {
+	snapshot := newFilesSnapshot{QueueNames: map[int64]string{}, AreaNames: map[int64]string{}}
+	if user == nil || a.adminRepo == nil {
+		return snapshot
+	}
+	sinceFilter = normalizeFileSinceFilter(sinceFilter)
+	sortMode = normalizeFileSortMode(sortMode)
+	tagFilter = strings.ToLower(strings.TrimSpace(tagFilter))
+	if areas, err := a.adminRepo.ListFileAreas(); err == nil {
+		for _, row := range areas {
+			snapshot.AreaNames[row.ID] = row.Name
+		}
+	}
+	if rows, err := a.adminRepo.ListFileEntries(0, "", nil, 120); err == nil {
+		filtered := make([]domain.FileEntry, 0, len(rows))
+		cutoff := time.Time{}
+		switch sinceFilter {
+		case "24h":
+			cutoff = time.Now().Add(-24 * time.Hour)
+		case "7d":
+			cutoff = time.Now().Add(-7 * 24 * time.Hour)
+		case "30d":
+			cutoff = time.Now().Add(-30 * 24 * time.Hour)
+		}
+		for _, row := range rows {
+			if !cutoff.IsZero() && row.UploadedAt.Before(cutoff) {
+				continue
+			}
+			if tagFilter != "" && !hasTagIgnoreCase(row.Tags, tagFilter) {
+				continue
+			}
+			filtered = append(filtered, row)
+		}
+		switch sortMode {
+		case "rating":
+			sort.Slice(filtered, func(i, j int) bool {
+				if filtered[i].RatingAvg == filtered[j].RatingAvg {
+					if filtered[i].RatingCount == filtered[j].RatingCount {
+						return strings.ToLower(filtered[i].Name) < strings.ToLower(filtered[j].Name)
+					}
+					return filtered[i].RatingCount > filtered[j].RatingCount
+				}
+				return filtered[i].RatingAvg > filtered[j].RatingAvg
+			})
+		case "name":
+			sort.Slice(filtered, func(i, j int) bool {
+				return strings.ToLower(filtered[i].Name) < strings.ToLower(filtered[j].Name)
+			})
+		default:
+			sort.Slice(filtered, func(i, j int) bool {
+				return filtered[i].UploadedAt.After(filtered[j].UploadedAt)
+			})
+		}
+		snapshot.RecentUploads = filtered
+		top := append([]domain.FileEntry(nil), filtered...)
+		sort.Slice(top, func(i, j int) bool {
+			if top[i].RatingAvg == top[j].RatingAvg {
+				return top[i].RatingCount > top[j].RatingCount
+			}
+			return top[i].RatingAvg > top[j].RatingAvg
+		})
+		if len(top) > 8 {
+			top = top[:8]
+		}
+		snapshot.TopRated = top
+	}
+	if rows, err := a.adminRepo.ListFileFilters(user.ID); err == nil {
+		snapshot.SavedFilters = rows
+	}
+	if rows, err := a.adminRepo.ListDownloadQueue(user.ID, 100); err == nil {
+		snapshot.Queue = rows
+		for _, row := range rows {
+			if entry, err := a.adminRepo.GetFileEntry(row.FileID); err == nil && entry != nil {
+				snapshot.QueueNames[row.FileID] = entry.Name
+			}
+		}
+	}
+	if len(snapshot.RecentUploads) > 16 {
+		snapshot.RecentUploads = snapshot.RecentUploads[:16]
+	}
+	return snapshot
+}
+
+func (a *webApp) recentCorrespondents(user *domain.User, inbox, outbox []domain.PrivateMail, limit int) []string {
+	if user == nil || limit <= 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, limit)
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		key := strings.ToLower(value)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		out = append(out, value)
+	}
+	lookup := a.userHandleLookup()
+	for _, row := range outbox {
+		if row.ExternalTo != nil {
+			add(*row.ExternalTo)
+		} else {
+			add(lookup[row.ToUserID])
+		}
+		if len(out) >= limit {
+			return out
+		}
+	}
+	for _, row := range inbox {
+		add(lookup[row.FromUserID])
+		if len(out) >= limit {
+			return out
+		}
+	}
+	return out
+}
+
+func (a *webApp) localMailPicks(currentHandle string, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	users, err := a.authSvc.ListUsers()
+	if err != nil {
+		return nil
+	}
+	currentHandle = strings.ToLower(strings.TrimSpace(currentHandle))
+	sort.Slice(users, func(i, j int) bool {
+		var li, lj time.Time
+		if users[i].LastLoginAt != nil {
+			li = users[i].LastLoginAt.UTC()
+		}
+		if users[j].LastLoginAt != nil {
+			lj = users[j].LastLoginAt.UTC()
+		}
+		if li.Equal(lj) {
+			return strings.ToLower(users[i].Handle) < strings.ToLower(users[j].Handle)
+		}
+		return li.After(lj)
+	})
+	out := make([]string, 0, limit)
+	for _, row := range users {
+		if strings.ToLower(strings.TrimSpace(row.Handle)) == currentHandle {
+			continue
+		}
+		out = append(out, row.Handle)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func normalizeBoardMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "unread", "mine", "mentions":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "all"
+	}
+}
+
+func normalizeMailBox(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "inbox", "unread", "outbox":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "all"
+	}
+}
+
+func normalizeMailTemplate(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "short_note", "door_invite", "follow_up":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "none"
+	}
+}
+
+func mailTemplatePrefill(template string) (string, string) {
+	switch normalizeMailTemplate(template) {
+	case "short_note":
+		return "Quick note from WolfBBS", "Checking in from the board.\n\n"
+	case "door_invite":
+		return "Meet me in the Door Hub", "I found a good door run. Meet me in /doors and we can compare scores.\n\n"
+	case "follow_up":
+		return "Following up", "Following up on the last note so this does not fall through the cracks.\n\n"
+	default:
+		return "", ""
+	}
+}
+
+func filterMailRows(inbox, outbox []domain.PrivateMail, handleByID map[int64]string, boxFilter, query string) ([]domain.PrivateMail, []domain.PrivateMail) {
+	query = strings.ToLower(strings.TrimSpace(query))
+	boxFilter = normalizeMailBox(boxFilter)
+	visibleInbox := make([]domain.PrivateMail, 0, len(inbox))
+	visibleOutbox := make([]domain.PrivateMail, 0, len(outbox))
+	if boxFilter == "all" || boxFilter == "inbox" || boxFilter == "unread" {
+		for _, row := range inbox {
+			if boxFilter == "unread" && row.ReadAt != nil {
+				continue
+			}
+			if !mailMatchesFilter(row, handleByID[row.FromUserID], query) {
+				continue
+			}
+			visibleInbox = append(visibleInbox, row)
+		}
+	}
+	if boxFilter == "all" || boxFilter == "outbox" {
+		for _, row := range outbox {
+			target := handleByID[row.ToUserID]
+			if row.ExternalTo != nil {
+				target = *row.ExternalTo
+			}
+			if !mailMatchesFilter(row, target, query) {
+				continue
+			}
+			visibleOutbox = append(visibleOutbox, row)
+		}
+	}
+	return visibleInbox, visibleOutbox
+}
+
+func mailMatchesFilter(row domain.PrivateMail, contact, query string) bool {
+	if query == "" {
+		return true
+	}
+	hay := strings.ToLower(strings.Join([]string{contact, row.Subject, row.Body}, "\n"))
+	return strings.Contains(hay, query)
+}
+
+func normalizeTrackerFilter(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "post", "mention", "reply":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "all"
+	}
+}
+
+func normalizeFileSinceFilter(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "24h", "7d", "30d":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "all"
+	}
+}
+
+func normalizeFileSortMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "rating", "name":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "latest"
+	}
+}
+
+func normalizeDirectoryVerifiedFilter(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "verified", "unverified":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "any"
+	}
+}
+
+func normalizeDirectoryRoleFilter(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case roleUser, roleModerator, roleAdmin:
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "any"
+	}
+}
+
+func boardQueueList(rows []boardMenuRow, empty string) string {
+	if len(rows) == 0 {
+		return `<p class="wolfbbs-muted">` + htmlEscape(empty) + `</p>`
+	}
+	list := strings.Builder{}
+	list.WriteString(`<ul>`)
+	for _, row := range rows {
+		meta := []string{}
+		if row.NewCount > 0 {
+			meta = append(meta, strconv.Itoa(row.NewCount)+" new")
+		}
+		if row.MyPosts > 0 {
+			meta = append(meta, strconv.Itoa(row.MyPosts)+" yours")
+		}
+		if row.Mentions > 0 {
+			meta = append(meta, strconv.Itoa(row.Mentions)+" mentions")
+		}
+		list.WriteString(`<li><a href="/boards?board=` + strconv.FormatInt(row.Board.ID, 10) + `">` + htmlEscape(row.Board.Name) + `</a> <span class="wolfbbs-muted">` + htmlEscape(strings.Join(meta, " | ")) + `</span></li>`)
+	}
+	list.WriteString(`</ul>`)
+	return list.String()
+}
+
+func hasTagIgnoreCase(tags []string, value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return true
+	}
+	for _, row := range tags {
+		if strings.EqualFold(strings.TrimSpace(row), value) {
+			return true
+		}
+	}
+	return false
 }
 
 func minInt(a, b int) int {

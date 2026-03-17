@@ -92,6 +92,11 @@ Reference: `docs/help-guides.md`, `docs/screens.md`.
 - `GET/POST /settings`
 - `GET /status`
 - `GET /config`
+- `GET /bulletins`
+- `GET /directory`
+- `GET/POST /feedback`
+- `GET /finder`
+- `GET /newfiles`
 - `GET /radar`
 - `GET/POST /clubhouse`
 - `GET /chat`

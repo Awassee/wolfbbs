@@ -119,7 +119,7 @@ def run_oputil_set_role(db_path: Path, handle: str, role: str) -> None:
         )
 
 
-def spawn_ssh(port: int) -> pexpect.spawn:
+def spawn_ssh(port: int, term_name: str = "xterm-256color", cols: int = 80, rows: int = 25) -> pexpect.spawn:
     cmd = (
         "ssh "
         "-o StrictHostKeyChecking=no "
@@ -131,7 +131,10 @@ def spawn_ssh(port: int) -> pexpect.spawn:
         "-o ConnectTimeout=10 "
         f"-p {port} localhost"
     )
-    child = pexpect.spawn(cmd, cwd=str(ROOT), encoding="utf-8", timeout=25)
+    env = os.environ.copy()
+    env["TERM"] = term_name
+    child = pexpect.spawn(cmd, cwd=str(ROOT), env=env, encoding="utf-8", timeout=25)
+    child.setwinsize(rows, cols)
     idx = child.expect(
         [
             "Press any key to continue",
@@ -211,10 +214,17 @@ def complete_login(
     child.expect("Enter selection:")
 
 
-def run_regular_user_flow(port: int) -> None:
-    child = spawn_ssh(port)
+def run_regular_user_flow(
+    port: int,
+    *,
+    term_name: str,
+    cols: int,
+    rows: int,
+    create_if_missing: bool,
+) -> None:
+    child = spawn_ssh(port, term_name=term_name, cols=cols, rows=rows)
     try:
-        complete_login(child, "e2eadmin", "password123", create_if_missing=True)
+        complete_login(child, "e2eadmin", "password123", create_if_missing=create_if_missing)
         child.send("?")
         child.expect("Main Menu Key Guide")
         child.send("x")
@@ -300,8 +310,8 @@ def run_regular_user_flow(port: int) -> None:
         child.close(force=True)
 
 
-def run_admin_flow(port: int) -> None:
-    child = spawn_ssh(port)
+def run_admin_flow(port: int, *, term_name: str, cols: int, rows: int) -> None:
+    child = spawn_ssh(port, term_name=term_name, cols=cols, rows=rows)
     try:
         complete_login(child, "e2eadmin", "password123", create_if_missing=False)
         child.send("A")
@@ -320,19 +330,27 @@ def main() -> int:
     log_path = tmp_root / "wolfbbs-e2e.log"
     first_port = free_port()
     second_port = free_port()
-    if second_port == first_port:
+    third_port = free_port()
+    while second_port == first_port:
         second_port = free_port()
+    while third_port in {first_port, second_port}:
+        third_port = free_port()
     proc = None
     try:
         proc = start_bbs_server(db_path, first_port, log_path)
-        run_regular_user_flow(first_port)
+        run_regular_user_flow(first_port, term_name="ansi", cols=60, rows=24, create_if_missing=True)
+        stop_process(proc)
+        proc = None
+
+        proc = start_bbs_server(db_path, second_port, log_path)
+        run_regular_user_flow(second_port, term_name="xterm-256color", cols=100, rows=30, create_if_missing=False)
         stop_process(proc)
         proc = None
 
         run_oputil_set_role(db_path, "e2eadmin", "sysop")
 
-        proc = start_bbs_server(db_path, second_port, log_path)
-        run_admin_flow(second_port)
+        proc = start_bbs_server(db_path, third_port, log_path)
+        run_admin_flow(third_port, term_name="xterm-256color", cols=100, rows=30)
         print("PASS terminal e2e (pexpect)")
         return 0
     except Exception as exc:  # pragma: no cover - integration failure path

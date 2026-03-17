@@ -237,6 +237,9 @@ func (a *webApp) handleGatewayFileAction(w http.ResponseWriter, r *http.Request,
 		return false
 	}
 	redirectPath := "/gateway?view=files"
+	if candidate := strings.TrimSpace(r.FormValue("return_to")); strings.HasPrefix(candidate, "/") {
+		redirectPath = candidate
+	}
 	if a.adminRepo == nil {
 		redirectWithError(w, r, redirectPath, "FileBase is unavailable.")
 		return true

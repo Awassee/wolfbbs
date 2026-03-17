@@ -84,11 +84,11 @@ func CenterText(width int, text string) string {
 		return text
 	}
 	text = strings.TrimRight(text, "\r\n")
-	text = trimRunes(text, width)
-	if runeLen(text) >= width {
+	text = trimANSIVisible(text, width)
+	if visibleRuneLen(text) >= width {
 		return text
 	}
-	pad := width - runeLen(text)
+	pad := width - visibleRuneLen(text)
 	left := pad / 2
 	return strings.Repeat(" ", left) + text + strings.Repeat(" ", pad-left)
 }
@@ -117,8 +117,13 @@ func DrawBox(width, height int, title string, content []string, b BorderSet, fg,
 		if i < len(content) {
 			contentLine = content[i]
 		}
-		contentLine = trimRunes(contentLine, innerWidth)
-		lines = append(lines, Color(fg, bg, b.Vertical+contentLine+strings.Repeat(" ", innerWidth-runeLen(contentLine))+b.Vertical))
+		contentLine = trimANSIVisible(contentLine, innerWidth)
+		padding := innerWidth - visibleRuneLen(contentLine)
+		if padding < 0 {
+			padding = 0
+		}
+		line := fg + bg + b.Vertical + Reset + bg + contentLine + strings.Repeat(" ", padding) + fg + bg + b.Vertical + Reset
+		lines = append(lines, line)
 	}
 	lines = append(lines, Color(fg, bg, b.BottomLeft+strings.Repeat(b.Horizontal, innerWidth)+b.BottomRight))
 	return strings.Join(lines, "\r\n") + "\r\n"
@@ -129,10 +134,10 @@ func FooterPrompt(width int, text string) string {
 		width = 80
 	}
 	strip := strings.TrimRight(text, "\r\n")
-	strip = trimRunes(strip, width)
+	strip = trimANSIVisible(strip, width)
 	label := "-- " + strip + " --"
-	label = trimRunes(label, width)
-	pad := width - runeLen(label)
+	label = trimANSIVisible(label, width)
+	pad := width - visibleRuneLen(label)
 	left := pad / 2
 	return strings.Repeat(" ", left) + label + strings.Repeat(" ", pad-left)
 }
@@ -153,4 +158,55 @@ func trimRunes(value string, width int) string {
 		return value
 	}
 	return string(r[:width])
+}
+
+func visibleRuneLen(value string) int {
+	return runeLen(stripANSIEscapes(value))
+}
+
+func trimANSIVisible(value string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if visibleRuneLen(value) <= width {
+		return value
+	}
+	var out strings.Builder
+	visible := 0
+	for i := 0; i < len(value); {
+		if value[i] == 0x1b {
+			j := i + 1
+			if j < len(value) && value[j] == '[' {
+				j++
+				for j < len(value) {
+					ch := value[j]
+					if (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') {
+						j++
+						break
+					}
+					j++
+				}
+				out.WriteString(value[i:j])
+				i = j
+				continue
+			}
+		}
+		r, size := utf8.DecodeRuneInString(value[i:])
+		if r == utf8.RuneError && size == 1 {
+			if visible >= width {
+				break
+			}
+			out.WriteByte(value[i])
+			visible++
+			i++
+			continue
+		}
+		if visible >= width {
+			break
+		}
+		out.WriteString(value[i : i+size])
+		visible++
+		i += size
+	}
+	return out.String()
 }

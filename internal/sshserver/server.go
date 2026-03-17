@@ -1086,26 +1086,26 @@ func (s *Server) handleSession(sess gssh.Session) {
 				if callers, err := s.admin.ListCallerHistory(25); err == nil {
 					for _, caller := range callers {
 						duration := time.Duration(caller.DurationSeconds) * time.Second
-						last = append(last, fmt.Sprintf("%02d  %-12s %-16s %-5s %-15s %-12s %s",
+						last = append(last, formatCallerTTYRow(renderWidth,
 							caller.NodeID,
-							clampForTTY(caller.Username, 12),
-							clampForTTY(formatClock(caller.LoginAt.Local(), sessionTime24h), 16),
+							caller.Username,
+							formatClock(caller.LoginAt.Local(), sessionTime24h),
 							formatOriginTag(caller.RemoteAddr),
-							clampForTTY(normalizeRemoteHost(caller.RemoteAddr), 15),
-							clampForTTY(caller.Area, 12),
+							normalizeRemoteHost(caller.RemoteAddr),
+							caller.Area,
 							formatDuration(duration)))
 					}
 				}
 			}
 			if len(last) == 0 && s.nodes != nil {
 				for _, caller := range s.nodes.LastCallers(25) {
-					last = append(last, fmt.Sprintf("%02d  %-12s %-16s %-5s %-15s %-12s %s",
+					last = append(last, formatCallerTTYRow(renderWidth,
 						caller.NodeID,
-						clampForTTY(caller.Username, 12),
-						clampForTTY(formatClock(caller.LoginAt.Local(), sessionTime24h), 16),
+						caller.Username,
+						formatClock(caller.LoginAt.Local(), sessionTime24h),
 						formatOriginTag(caller.RemoteAddr),
-						clampForTTY(normalizeRemoteHost(caller.RemoteAddr), 15),
-						clampForTTY(caller.Area, 12),
+						normalizeRemoteHost(caller.RemoteAddr),
+						caller.Area,
 						formatDuration(caller.Duration)))
 				}
 			}
@@ -1127,26 +1127,26 @@ func (s *Server) handleSession(sess gssh.Session) {
 						if idle < 0 {
 							idle = 0
 						}
-						onlineRows = append(onlineRows, fmt.Sprintf("%02d  %-12s %-16s %-5s %-15s %-12s %s",
+						onlineRows = append(onlineRows, formatCallerTTYRow(renderWidth,
 							online.NodeID,
-							clampForTTY(online.Username, 12),
-							clampForTTY(formatClock(online.LoginAt.Local(), sessionTime24h), 16),
+							online.Username,
+							formatClock(online.LoginAt.Local(), sessionTime24h),
 							formatOriginTag(online.RemoteAddr),
-							clampForTTY(normalizeRemoteHost(online.RemoteAddr), 15),
-							clampForTTY(online.Area, 12),
+							normalizeRemoteHost(online.RemoteAddr),
+							online.Area,
 							formatDuration(idle)))
 					}
 				}
 			}
 			if len(onlineRows) == 0 && s.nodes != nil {
 				for _, online := range s.nodes.Online() {
-					onlineRows = append(onlineRows, fmt.Sprintf("%02d  %-12s %-16s %-5s %-15s %-12s %s",
+					onlineRows = append(onlineRows, formatCallerTTYRow(renderWidth,
 						online.NodeID,
-						clampForTTY(online.Username, 12),
-						clampForTTY(formatClock(online.LoginAt.Local(), sessionTime24h), 16),
+						online.Username,
+						formatClock(online.LoginAt.Local(), sessionTime24h),
 						formatOriginTag(online.RemoteAddr),
-						clampForTTY(normalizeRemoteHost(online.RemoteAddr), 15),
-						clampForTTY(online.Area, 12),
+						normalizeRemoteHost(online.RemoteAddr),
+						online.Area,
 						formatDuration(time.Duration(online.IdleSeconds)*time.Second)))
 				}
 			}
@@ -2030,7 +2030,7 @@ func (s *Server) runBoards(sess gssh.Session, reader *bufio.Reader, termWidth, r
 
 		names := make([]string, 0, len(boards))
 		for _, board := range boards {
-			names = append(names, fmt.Sprintf("[%d] %-24s (%s)", board.ID, clampForTTY(board.Name, 24), clampForTTY(boardConference(board), 16)))
+			names = append(names, formatBoardListRow(renderWidth, board.ID, board.Name, boardConference(board)))
 		}
 
 		writeClear(sess, ansiEnabled)
@@ -2129,7 +2129,7 @@ func (s *Server) runBoards(sess gssh.Session, reader *bufio.Reader, termWidth, r
 				if msg.ID > pointerID {
 					unread = "N"
 				}
-				rows = append(rows, fmt.Sprintf("%4d  %s%s %-29s %s", msg.ID, unread, threadMarker, clampForTTY(msg.Subject, 29), msg.CreatedAt.Format("01-02 15:04")))
+				rows = append(rows, formatMessageIndexRow(renderWidth, msg.ID, unread, threadMarker, msg.Subject, msg.CreatedAt.Format("01-02 15:04")))
 			}
 			renderFrame(sess, termWidth, renderWidth, ui.RenderBoardMessageIndex(renderWidth, selected.Name, rows)+"\r\n", ansiEnabled, encoding)
 			io.WriteString(sess, "> ")
@@ -2168,7 +2168,7 @@ func (s *Server) runBoards(sess gssh.Session, reader *bufio.Reader, termWidth, r
 					if !strings.Contains(haystack, query) {
 						continue
 					}
-					results = append(results, fmt.Sprintf("%4d  %-32s  %s", msg.ID, clampForTTY(msg.Subject, 32), msg.CreatedAt.Format("01-02 15:04")))
+					results = append(results, formatSearchResultRow(renderWidth, msg.ID, msg.Subject, msg.CreatedAt.Format("01-02 15:04")))
 					if len(results) >= 20 {
 						break
 					}
@@ -2448,7 +2448,7 @@ func (s *Server) runMail(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 			if row.ReadAt != nil {
 				status = "read"
 			}
-			inboxRows = append(inboxRows, fmt.Sprintf("  %4d  %-26s  %s  %s", row.ID, clampForTTY(row.Subject, 26), row.CreatedAt.Format("01-02 15:04"), status))
+			inboxRows = append(inboxRows, formatMailInboxRow(renderWidth, row.ID, row.Subject, row.CreatedAt.Format("01-02 15:04"), status))
 		}
 		outboxRows := make([]string, 0, len(outbox))
 		for _, row := range outbox {
@@ -2456,7 +2456,7 @@ func (s *Server) runMail(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 			if row.ExternalTo != nil {
 				target = *row.ExternalTo
 			}
-			outboxRows = append(outboxRows, fmt.Sprintf("  %4d  %-22s  %-18s", row.ID, clampForTTY(row.Subject, 22), clampForTTY(target, 18)))
+			outboxRows = append(outboxRows, formatMailOutboxRow(renderWidth, row.ID, row.Subject, target))
 		}
 		renderFrame(sess, termWidth, renderWidth, ui.RenderMailOverview(renderWidth, inboxRows, outboxRows)+"\r\n", ansiEnabled, encoding)
 		io.WriteString(sess, "> ")
@@ -2838,12 +2838,7 @@ func (s *Server) runFiles(sess gssh.Session, reader *bufio.Reader, termWidth, re
 		}
 		areaRows := make([]string, 0, len(areas))
 		for _, area := range areas {
-			areaRows = append(areaRows, fmt.Sprintf("%3d %-18s %-28s %s",
-				area.ID,
-				clampForTTY(area.Name, 18),
-				clampForTTY(filepath.Clean(area.Path), 28),
-				clampForTTY(area.Description, 18),
-			))
+			areaRows = append(areaRows, formatFileAreaRow(renderWidth, area.ID, area.Name, filepath.Clean(area.Path), area.Description))
 		}
 
 		writeClear(sess, ansiEnabled)
@@ -2861,7 +2856,7 @@ func (s *Server) runFiles(sess gssh.Session, reader *bufio.Reader, termWidth, re
 		case "?":
 			showHelpPanel(sess, reader, termWidth, renderWidth, s.siteName()+" Help", handle, nodeLabel, th, time24h, ansiEnabled, encoding, ui.RenderFilesHelp(renderWidth), touch)
 		case "R":
-			rows := formatFileRows(s.collectFilesAcrossAreas(areas, "", nil, 40), true, time24h)
+			rows := formatFileRows(renderWidth, s.collectFilesAcrossAreas(areas, "", nil, 40), true, time24h)
 			writeClear(sess, ansiEnabled)
 			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "Recent Files", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
 			renderFrame(sess, termWidth, renderWidth, ui.RenderSearchResults(renderWidth, "Recent Files", rows), ansiEnabled, encoding)
@@ -2872,7 +2867,7 @@ func (s *Server) runFiles(sess gssh.Session, reader *bufio.Reader, termWidth, re
 			if account != nil && account.LastLoginAt != nil && !account.LastLoginAt.IsZero() {
 				since = account.LastLoginAt.UTC()
 			}
-			rows := formatFileRows(s.collectFilesAcrossAreas(areas, "", &since, 40), true, time24h)
+			rows := formatFileRows(renderWidth, s.collectFilesAcrossAreas(areas, "", &since, 40), true, time24h)
 			writeClear(sess, ansiEnabled)
 			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "New Files", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
 			renderFrame(sess, termWidth, renderWidth, ui.RenderSearchResults(renderWidth, "New Files Since Last Call", rows), ansiEnabled, encoding)
@@ -2886,7 +2881,7 @@ func (s *Server) runFiles(sess gssh.Session, reader *bufio.Reader, termWidth, re
 			}
 			touch()
 			query = strings.TrimSpace(query)
-			rows := formatFileRows(s.collectFilesAcrossAreas(areas, query, nil, 60), true, time24h)
+			rows := formatFileRows(renderWidth, s.collectFilesAcrossAreas(areas, query, nil, 60), true, time24h)
 			writeClear(sess, ansiEnabled)
 			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "File Search", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
 			renderFrame(sess, termWidth, renderWidth, ui.RenderSearchResults(renderWidth, "File Search: "+query, rows), ansiEnabled, encoding)
@@ -2931,16 +2926,16 @@ func (s *Server) runFileArea(sess gssh.Session, reader *bufio.Reader, termWidth,
 	for {
 		rows, err := s.readAreaFiles(area, query, nil, 200)
 		lines := []string{
-			"Path: " + clampForTTY(filepath.Clean(area.Path), 58),
-			"Query: " + clampForTTY(query, 34),
+			"Path: " + clampForTTY(filepath.Clean(area.Path), max(20, renderWidth-12)),
+			"Query: " + clampForTTY(query, max(16, renderWidth-20)),
 			"",
 		}
 		if err != nil {
 			lines = append(lines, "Area read failed: "+clampForTTY(err.Error(), 48))
 		} else {
-			lines = append(lines, "Name                               Bytes      Updated")
-			lines = append(lines, strings.Repeat("-", 58))
-			lines = append(lines, formatFileRows(rows, false, time24h)...)
+			lines = append(lines, areaFileHeader(renderWidth))
+			lines = append(lines, areaFileDivider(renderWidth))
+			lines = append(lines, formatFileRows(renderWidth, rows, false, time24h)...)
 		}
 		lines = append(lines, "")
 		lines = append(lines, "(S)earch  (R)efresh  (Q)uit area  (?)Help")
@@ -3105,10 +3100,10 @@ func (s *Server) runIndexedFiles(sess gssh.Session, reader *bufio.Reader, termWi
 			areaNames[area.ID] = area.Name
 		}
 		lines := []string{
-			"Query: " + clampForTTY(query, 30) + "  Tags: " + clampForTTY(tagsRaw, 22),
+			"Query: " + clampForTTY(query, max(16, renderWidth/2-8)) + "  Tags: " + clampForTTY(tagsRaw, max(10, renderWidth/3-4)),
 			"",
-			" ID   Area       Name                          Rating   Tags",
-			strings.Repeat("-", 70),
+			indexedFilesHeader(renderWidth),
+			indexedFilesDivider(renderWidth),
 		}
 		if err != nil {
 			lines = append(lines, "Search failed: "+clampForTTY(err.Error(), 54))
@@ -3116,14 +3111,7 @@ func (s *Server) runIndexedFiles(sess gssh.Session, reader *bufio.Reader, termWi
 			lines = append(lines, "No indexed files matched.")
 		} else {
 			for _, row := range rows {
-				tagText := clampForTTY(strings.Join(row.Tags, ","), 18)
-				lines = append(lines, fmt.Sprintf("%4d %-10s %-28s %6.2f  %s",
-					row.ID,
-					clampForTTY(strings.ToUpper(areaNames[row.AreaID]), 10),
-					clampForTTY(row.Name, 28),
-					row.RatingAvg,
-					tagText,
-				))
+				lines = append(lines, formatIndexedFileRow(renderWidth, row.ID, areaNames[row.AreaID], row.Name, row.RatingAvg, strings.Join(row.Tags, ",")))
 			}
 		}
 		lines = append(lines, "", "Commands: (S)earch  [ID] queue add  (Q)uit")
@@ -3204,8 +3192,8 @@ func (s *Server) runDownloadQueue(sess gssh.Session, reader *bufio.Reader, termW
 		lines := []string{
 			"Queue items are shared with web FileBase queue.",
 			"",
-			" ID   File Name                        Queued",
-			strings.Repeat("-", 68),
+			queueHeader(renderWidth),
+			queueDivider(renderWidth),
 		}
 		if err != nil {
 			lines = append(lines, "Queue read failed: "+clampForTTY(err.Error(), 48))
@@ -3217,11 +3205,7 @@ func (s *Server) runDownloadQueue(sess gssh.Session, reader *bufio.Reader, termW
 				if entry, eErr := s.admin.GetFileEntry(row.FileID); eErr == nil && entry != nil {
 					name = entry.Name
 				}
-				lines = append(lines, fmt.Sprintf("%4d %-32s %s",
-					row.FileID,
-					clampForTTY(name, 32),
-					formatClock(row.CreatedAt.Local(), time24h),
-				))
+				lines = append(lines, formatQueueRow(renderWidth, row.FileID, name, formatClock(row.CreatedAt.Local(), time24h)))
 			}
 		}
 		lines = append(lines, "", "Commands: R<ID> remove  T<ID> ticket  B batch tip  Q quit")
@@ -3340,30 +3324,293 @@ func splitCSV(raw string) []string {
 	return out
 }
 
-func formatFileRows(rows []fileListing, includeArea bool, time24h bool) []string {
+func formatCallerTTYRow(width int, nodeID int, username, loginAt, origin, fromHost, area, tail string) string {
+	switch {
+	case width >= 74:
+		return fmt.Sprintf("%02d  %-12s %-16s %-5s %-15s %-12s %s",
+			nodeID,
+			clampForTTY(username, 12),
+			clampForTTY(loginAt, 16),
+			clampForTTY(origin, 5),
+			clampForTTY(fromHost, 15),
+			clampForTTY(area, 12),
+			tail,
+		)
+	case width >= 58:
+		return fmt.Sprintf("%02d  %-12s %-5s %-15s %-12s %s",
+			nodeID,
+			clampForTTY(username, 12),
+			clampForTTY(origin, 5),
+			clampForTTY(fromHost, 15),
+			clampForTTY(area, 12),
+			tail,
+		)
+	default:
+		return fmt.Sprintf("%02d  %-12s %-5s %-12s %s",
+			nodeID,
+			clampForTTY(username, 12),
+			clampForTTY(origin, 5),
+			clampForTTY(area, 12),
+			tail,
+		)
+	}
+}
+
+func formatBoardListRow(width int, boardID int64, boardName, conference string) string {
+	switch {
+	case width >= 72:
+		return fmt.Sprintf("[%d] %-24s (%s)", boardID, clampForTTY(boardName, 24), clampForTTY(conference, 16))
+	case width >= 54:
+		return fmt.Sprintf("[%d] %-22s %s", boardID, clampForTTY(boardName, 22), clampForTTY(conference, 12))
+	default:
+		return fmt.Sprintf("[%d] %s", boardID, clampForTTY(boardName, max(18, width-10)))
+	}
+}
+
+func formatMessageIndexRow(width int, msgID int64, unread, threadMarker, subject, stamp string) string {
+	switch {
+	case width >= 72:
+		return fmt.Sprintf("%4d  %s%s %-29s %s", msgID, unread, threadMarker, clampForTTY(subject, 29), stamp)
+	case width >= 56:
+		return fmt.Sprintf("%4d  %s%s %-22s %s", msgID, unread, threadMarker, clampForTTY(subject, 22), stamp)
+	default:
+		return fmt.Sprintf("%4d  %s%s %s", msgID, unread, threadMarker, clampForTTY(subject, max(18, width-11)))
+	}
+}
+
+func formatSearchResultRow(width int, msgID int64, subject, stamp string) string {
+	switch {
+	case width >= 72:
+		return fmt.Sprintf("%4d  %-32s  %s", msgID, clampForTTY(subject, 32), stamp)
+	case width >= 56:
+		return fmt.Sprintf("%4d  %-24s  %s", msgID, clampForTTY(subject, 24), stamp)
+	default:
+		return fmt.Sprintf("%4d  %s", msgID, clampForTTY(subject, max(18, width-8)))
+	}
+}
+
+func formatMailInboxRow(width int, messageID int64, subject, stamp, status string) string {
+	switch {
+	case width >= 72:
+		return fmt.Sprintf("  %4d  %-26s  %s  %s", messageID, clampForTTY(subject, 26), stamp, status)
+	case width >= 56:
+		return fmt.Sprintf("  %4d  %-20s  %s  %s", messageID, clampForTTY(subject, 20), stamp, status)
+	default:
+		return fmt.Sprintf("  %4d  %-18s  %s", messageID, clampForTTY(subject, 18), status)
+	}
+}
+
+func formatMailOutboxRow(width int, messageID int64, subject, target string) string {
+	switch {
+	case width >= 72:
+		return fmt.Sprintf("  %4d  %-22s  %-18s", messageID, clampForTTY(subject, 22), clampForTTY(target, 18))
+	case width >= 56:
+		return fmt.Sprintf("  %4d  %-18s  %-14s", messageID, clampForTTY(subject, 18), clampForTTY(target, 14))
+	default:
+		return fmt.Sprintf("  %4d  %-16s", messageID, clampForTTY(subject, 16))
+	}
+}
+
+func formatFileAreaRow(width int, areaID int64, name, path, description string) string {
+	switch {
+	case width >= 72:
+		return fmt.Sprintf("%3d %-18s %-28s %s",
+			areaID,
+			clampForTTY(name, 18),
+			clampForTTY(path, 28),
+			clampForTTY(description, 18),
+		)
+	case width >= 54:
+		return fmt.Sprintf("%3d %-18s %-20s %s",
+			areaID,
+			clampForTTY(name, 18),
+			clampForTTY(path, 20),
+			clampForTTY(description, 12),
+		)
+	default:
+		return fmt.Sprintf("%3d %-18s %s",
+			areaID,
+			clampForTTY(name, 18),
+			clampForTTY(path, max(14, width-24)),
+		)
+	}
+}
+
+func fileRowsHeader(width int, includeArea bool) string {
+	if includeArea {
+		if width >= 72 {
+			return "Area       Name                               Bytes      Updated"
+		}
+		if width >= 56 {
+			return "Area       Name                       Bytes      Updated"
+		}
+		return "Area       Name                 Updated"
+	}
+	if width >= 56 {
+		return "Name                               Bytes      Updated"
+	}
+	return "Name                         Updated"
+}
+
+func fileRowsDivider(width int, includeArea bool) string {
+	switch {
+	case includeArea && width >= 72:
+		return strings.Repeat("-", 70)
+	case includeArea && width >= 56:
+		return strings.Repeat("-", 58)
+	case includeArea:
+		return strings.Repeat("-", 40)
+	case width >= 56:
+		return strings.Repeat("-", 58)
+	default:
+		return strings.Repeat("-", 36)
+	}
+}
+
+func formatFileRow(width int, includeArea bool, area, name string, size int64, stamp string) string {
+	if includeArea {
+		switch {
+		case width >= 72:
+			return fmt.Sprintf("%-10s %-34s %9d %s",
+				clampForTTY(strings.ToUpper(area), 10),
+				clampForTTY(name, 34),
+				size,
+				stamp,
+			)
+		case width >= 56:
+			return fmt.Sprintf("%-10s %-24s %9d %s",
+				clampForTTY(strings.ToUpper(area), 10),
+				clampForTTY(name, 24),
+				size,
+				stamp,
+			)
+		default:
+			return fmt.Sprintf("%-10s %-18s %s",
+				clampForTTY(strings.ToUpper(area), 10),
+				clampForTTY(name, 18),
+				stamp,
+			)
+		}
+	}
+	if width >= 56 {
+		return fmt.Sprintf("%-34s %9d %s",
+			clampForTTY(name, 34),
+			size,
+			stamp,
+		)
+	}
+	return fmt.Sprintf("%-22s %s",
+		clampForTTY(name, 22),
+		stamp,
+	)
+}
+
+func areaFileHeader(width int) string {
+	if width >= 56 {
+		return "Name                               Bytes      Updated"
+	}
+	return "Name                         Updated"
+}
+
+func areaFileDivider(width int) string {
+	if width >= 56 {
+		return strings.Repeat("-", 58)
+	}
+	return strings.Repeat("-", 36)
+}
+
+func indexedFilesHeader(width int) string {
+	if width >= 72 {
+		return " ID   Area       Name                          Rating   Tags"
+	}
+	if width >= 58 {
+		return " ID   Area       Name                   Rating   Tags"
+	}
+	return " ID   Name                   Rating"
+}
+
+func indexedFilesDivider(width int) string {
+	switch {
+	case width >= 72:
+		return strings.Repeat("-", 70)
+	case width >= 58:
+		return strings.Repeat("-", 58)
+	default:
+		return strings.Repeat("-", 36)
+	}
+}
+
+func formatIndexedFileRow(width int, fileID int64, area, name string, rating float64, tags string) string {
+	switch {
+	case width >= 72:
+		return fmt.Sprintf("%4d %-10s %-28s %6.2f  %s",
+			fileID,
+			clampForTTY(strings.ToUpper(area), 10),
+			clampForTTY(name, 28),
+			rating,
+			clampForTTY(tags, 18),
+		)
+	case width >= 58:
+		return fmt.Sprintf("%4d %-10s %-20s %6.2f  %s",
+			fileID,
+			clampForTTY(strings.ToUpper(area), 10),
+			clampForTTY(name, 20),
+			rating,
+			clampForTTY(tags, 10),
+		)
+	default:
+		return fmt.Sprintf("%4d %-20s %6.2f",
+			fileID,
+			clampForTTY(name, 20),
+			rating,
+		)
+	}
+}
+
+func queueHeader(width int) string {
+	if width >= 58 {
+		return " ID   File Name                        Queued"
+	}
+	return " ID   File Name              Queued"
+}
+
+func queueDivider(width int) string {
+	if width >= 58 {
+		return strings.Repeat("-", 68)
+	}
+	return strings.Repeat("-", 40)
+}
+
+func formatQueueRow(width int, fileID int64, name, stamp string) string {
+	if width >= 58 {
+		return fmt.Sprintf("%4d %-32s %s",
+			fileID,
+			clampForTTY(name, 32),
+			stamp,
+		)
+	}
+	return fmt.Sprintf("%4d %-20s %s",
+		fileID,
+		clampForTTY(name, 20),
+		stamp,
+	)
+}
+
+func formatFileRows(width int, rows []fileListing, includeArea bool, time24h bool) []string {
 	if len(rows) == 0 {
 		return []string{"No files matched."}
 	}
 	out := make([]string, 0, len(rows)+2)
 	if includeArea {
-		out = append(out, "Area       Name                               Bytes      Updated")
-		out = append(out, strings.Repeat("-", 70))
+		out = append(out, fileRowsHeader(width, true))
+		out = append(out, fileRowsDivider(width, true))
 		for _, row := range rows {
-			out = append(out, fmt.Sprintf("%-10s %-34s %9d %s",
-				clampForTTY(strings.ToUpper(row.Area), 10),
-				clampForTTY(row.Name, 34),
-				row.Size,
-				formatClock(row.ModTime.Local(), time24h),
-			))
+			out = append(out, formatFileRow(width, true, row.Area, row.Name, row.Size, formatClock(row.ModTime.Local(), time24h)))
 		}
 		return out
 	}
 	for _, row := range rows {
-		out = append(out, fmt.Sprintf("%-34s %9d %s",
-			clampForTTY(row.Name, 34),
-			row.Size,
-			formatClock(row.ModTime.Local(), time24h),
-		))
+		out = append(out, formatFileRow(width, false, "", row.Name, row.Size, formatClock(row.ModTime.Local(), time24h)))
 	}
 	return out
 }

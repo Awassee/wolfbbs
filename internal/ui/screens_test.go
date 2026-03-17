@@ -147,12 +147,56 @@ func TestRenderWelcomeShowsWolfAndCopyright(t *testing.T) {
 	rendered := RenderWelcome(80)
 	for _, want := range []string{
 		"WolfBBS Welcome",
-		"/\\_/\\",
 		"wolfbbs (c) 2026",
+		"Wildcat-era glow, modern rails, node-ready ANSI.",
 		"Press ESC to quit, any other key to continue.",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("welcome screen missing %q", want)
+		}
+	}
+}
+
+func TestResponsiveScreensFitCommonWidths(t *testing.T) {
+	cases := []struct {
+		name     string
+		width    int
+		rendered string
+	}{
+		{name: "welcome-40", width: 40, rendered: RenderWelcome(40)},
+		{name: "welcome-72", width: 72, rendered: RenderWelcome(72)},
+		{name: "main-40", width: 40, rendered: RenderMainMenu(40)},
+		{name: "mail-54", width: 54, rendered: RenderMailOverview(54, []string{"  1  Hello there         01-01 12:00  new"}, []string{"  2  Re: Hello           uid:1"})},
+		{name: "files-54", width: 54, rendered: RenderFilesMenu(54, []string{"  1 Uploads           /bbs/files            Default area"})},
+		{name: "doors-54", width: 54, rendered: RenderDoorMenu(54, []DoorMenuItem{{Hotkey: "D", Name: "Dragon Tavern Legends", Category: "rpg", TurnsRemaining: 3, Favorite: true}}, []string{"DRAGON"}, []string{"SPACE"}, DoorMenuSummary{Total: 12, Visible: 1, Category: "rpg", FavoritesOnly: true, Spotlight: "Dragon Tavern Legends [D]"})},
+		{name: "who-40", width: 40, rendered: RenderWhoOnline(40, []string{"01  sysop        LAN   Main Menu    00:00:08"})},
+		{name: "last-40", width: 40, rendered: RenderLastCallers(40, []string{"01  sysop        WAN   Boards       00:12:11"})},
+	}
+	for _, tc := range cases {
+		plain := stripANSIEscapes(tc.rendered)
+		lines := strings.Split(strings.TrimSuffix(strings.ReplaceAll(plain, "\r\n", "\n"), "\n"), "\n")
+		for _, line := range lines {
+			if got := runeLen(line); got > tc.width {
+				t.Fatalf("%s line width %d exceeds %d: %q", tc.name, got, tc.width, line)
+			}
+		}
+	}
+}
+
+func TestResponsiveScreensMapCleanlyToASCII(t *testing.T) {
+	rendered := RenderMainMenu(54) + RenderFilesMenu(54, []string{"  1 Uploads           /bbs/files            Default area"})
+	plain := ApplyOutputProfile(rendered, false, "ascii")
+	if strings.Contains(plain, "\x1b[") {
+		t.Fatalf("expected ascii output without ANSI escapes")
+	}
+	for _, bad := range []string{"╔", "╗", "╚", "╝", "═", "║"} {
+		if strings.Contains(plain, bad) {
+			t.Fatalf("expected no unicode box drawing in ascii output: %q", plain)
+		}
+	}
+	for _, want := range []string{"Main Menu", "Files", "Quick Jump", "Uploads"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("ascii output missing %q", want)
 		}
 	}
 }

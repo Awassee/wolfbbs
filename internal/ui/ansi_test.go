@@ -32,6 +32,7 @@ func TestANSIHelpers(t *testing.T) {
 	}
 
 	box := DrawBox(8, 4, "Hi", []string{"a", "b"}, AsciiBox, FgGreen, BgBlack)
+	plainBox := stripANSIEscapes(box)
 	expected := []string{
 		"+- Hi -+",
 		"|a     |",
@@ -39,7 +40,7 @@ func TestANSIHelpers(t *testing.T) {
 		"+------+",
 	}
 	for _, line := range expected {
-		if !strings.Contains(box, line) {
+		if !strings.Contains(plainBox, line) {
 			t.Fatalf("DrawBox missing line: %q", line)
 		}
 	}
@@ -54,6 +55,21 @@ func TestApplyOutputProfileStripsANSIAndBoxes(t *testing.T) {
 	for _, want := range []string{"+-+", "|x|", "+-+"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in %q", want, got)
+		}
+	}
+}
+
+func TestDrawBoxHandlesANSIContentPadding(t *testing.T) {
+	content := []string{FgYellow + "Hotline" + FgCyan + " online"}
+	box := DrawBox(24, 4, "Board", content, AsciiBox, FgGreen, BgBlack)
+	plain := stripANSIEscapes(box)
+	lines := strings.Split(strings.TrimSuffix(plain, "\r\n"), "\r\n")
+	if len(lines) != 4 {
+		t.Fatalf("expected 4 lines, got %d", len(lines))
+	}
+	for _, line := range lines {
+		if got := runeLen(line); got != 24 {
+			t.Fatalf("expected visible line width 24, got %d for %q", got, line)
 		}
 	}
 }

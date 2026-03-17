@@ -79,6 +79,11 @@ Auto-generated from `docs/function-registry.json`.
 | `web:/config` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/connect` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/discover` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
+| `web:/bulletins` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
+| `web:/directory` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
+| `web:/feedback` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
+| `web:/finder` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
+| `web:/newfiles` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/radar` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/clubhouse` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/doors` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |

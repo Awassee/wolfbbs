@@ -11,6 +11,11 @@ const (
 	DefaultHeight = 25
 )
 
+type menuEntry struct {
+	Key   string
+	Label string
+}
+
 type Theme struct {
 	StatusFg string
 	StatusBg string
@@ -49,17 +54,13 @@ func RenderTopBarWithClock(width int, boardName, user string, now time.Time, nod
 
 func RenderWelcome(width int) string {
 	width = normalizeScreenWidth(width)
-	lines := []string{
-		"                           /\\_/\\",
-		"                          / o o \\",
-		"                         (   \"   )",
-		"                          \\~(*)~/",
-		"                           // \\\\",
+	lines := append([]string{}, welcomeWolfArt(width)...)
+	lines = append(lines,
 		"",
 		"wolfbbs (c) 2026",
-		"Node-ready ANSI board with classic flow and modern plumbing.",
+		"Wildcat-era glow, modern rails, node-ready ANSI.",
 		"Press ESC to quit, any other key to continue.",
-	}
+	)
 	panel := renderPanel(width, "WolfBBS Welcome", lines, FgYellow)
 	var b strings.Builder
 	for _, line := range strings.Split(strings.TrimSuffix(panel, "\r\n"), "\r\n") {
@@ -73,16 +74,31 @@ func RenderWelcome(width int) string {
 }
 
 func RenderMainMenu(width int) string {
-	lines := []string{
-		"[M]essage Boards   [P]rivate Mail   [F]iles",
-		"[C]hat             [G]ateways       [D]oors",
-		"[N]ewscan          [S]ettings       [A]dmin",
-		"[L]ast Callers     [W]ho's Online",
-		"[X]Config Center   [Y]Status Ctr    [/]Quick Jump",
-		"[Q]uit to caller prompt",
-		"",
-		"Single-letter hotkeys only. Esc = Back. ? = Help.",
-	}
+	lines := []string{sectionLabel("Caller Command Deck")}
+	lines = append(lines, renderMenuGrid(width, []menuEntry{
+		{Key: "M", Label: "Message Boards"},
+		{Key: "P", Label: "Private Mail"},
+		{Key: "F", Label: "Files"},
+		{Key: "C", Label: "Chat"},
+		{Key: "G", Label: "Gateways"},
+		{Key: "D", Label: "Doors"},
+	}, 3)...)
+	lines = append(lines, "", sectionLabel("Caller Intel"))
+	lines = append(lines, renderMenuGrid(width, []menuEntry{
+		{Key: "N", Label: "Newscan"},
+		{Key: "L", Label: "Last Callers"},
+		{Key: "W", Label: "Who's Online"},
+		{Key: "S", Label: "Settings"},
+		{Key: "X", Label: "Config Center"},
+		{Key: "Y", Label: "Status Center"},
+	}, 3)...)
+	lines = append(lines, "", sectionLabel("Quick Ops"))
+	lines = append(lines, renderMenuGrid(width, []menuEntry{
+		{Key: "/", Label: "Quick Jump"},
+		{Key: "A", Label: "Admin"},
+		{Key: "Q", Label: "Quit to prompt"},
+	}, 3)...)
+	lines = append(lines, "", "Single-letter hotkeys only. Esc = Back. ? = Help.")
 	return renderPanel(width, "Main Menu", lines, FgCyan)
 }
 
@@ -226,7 +242,8 @@ func RenderSinceLastCall(width int, titles []string, since time.Time) string {
 
 func RenderMessageBoardList(width int, boards []string) string {
 	lines := []string{
-		"[ID] Open board      [Q] Return      [PgUp/PgDn] Page",
+		sectionLabel("Board Command Bar"),
+		commandStrip(width, []string{"[ID] Open board", "[Q] Return", "[C] Conference", "[?] Help"}),
 		"",
 	}
 	for i, b := range boards {
@@ -310,30 +327,34 @@ func RenderPostEditor(width int, subject string) string {
 
 func RenderGatewayMenu(width int) string {
 	lines := []string{
+		sectionLabel("Gateway Desk"),
 		"[E]mail gateway   Send external mail via SMTP relay",
 		"[W]eb gateway     Read URL in ANSI pager + offline save",
-		"[R]eturn / [Q]uit / [?]help",
+		commandStrip(width, []string{"[R]eturn", "[Q]uit", "[?] Help"}),
 	}
 	return renderPanel(width, "Gateway Menu", lines, FgCyan) + "\r\n"
 }
 
 func RenderMailOverview(width int, inboxRows []string, outboxRows []string) string {
-	lines := []string{"Inbox:"}
+	lines := []string{
+		sectionLabel("Mail Command Bar"),
+		commandStrip(width, []string{"[C] Compose", "[R] Read", "Re[P]ly", "[D] Delete", "[Q] Quit", "[?] Help"}),
+		"",
+		sectionLabel("Inbox:"),
+	}
 	if len(inboxRows) == 0 {
 		lines = append(lines, "  (empty)")
 	} else {
 		lines = append(lines, inboxRows...)
 	}
 	lines = append(lines, "")
-	lines = append(lines, "Outbox:")
+	lines = append(lines, sectionLabel("Outbox:"))
 	if len(outboxRows) == 0 {
 		lines = append(lines, "  (empty)")
 	} else {
 		lines = append(lines, outboxRows...)
 	}
-	lines = append(lines, "")
-	lines = append(lines, "Commands: (C)ompose, (R)ead, Re(P)ly, (D)elete, (Q)uit, (?)help")
-	lines = append(lines, "Selection:")
+	lines = append(lines, "", "Commands: (C)ompose, (R)ead, Re(P)ly, (D)elete, (Q)uit, (?)help", "Selection:")
 	return renderPanel(width, "Private Mail", lines, FgCyan) + "\r\n"
 }
 
@@ -359,12 +380,11 @@ func RenderGatewayHelp(width int) string {
 
 func RenderFilesMenu(width int, areas []string) string {
 	lines := []string{
-		"[ID] Open area      [R]ecent files     [N]ew since last call",
-		"[S]earch by name    [I]ndexed search   [D]ownload queue",
-		"[Q] Return          [?] Help",
+		sectionLabel("File Command Bar"),
+		commandStrip(width, []string{"[ID] Open area", "[R]ecent files", "[N]ew since last call", "[S]earch", "[I]ndexed search", "[D]ownload queue", "[Q] Return", "[?] Help"}),
 		"",
-		" ID  Area Name           Path                         Description",
-		strings.Repeat("-", 68),
+		filesHeader(width),
+		filesDivider(width),
 	}
 	if len(areas) == 0 {
 		lines = append(lines, "No file areas configured yet.")
@@ -416,7 +436,8 @@ type DoorMenuSummary struct {
 
 func RenderDoorMenu(width int, items []DoorMenuItem, favoriteIDs []string, recentIDs []string, summary DoorMenuSummary) string {
 	lines := []string{
-		"[R]eturn  [Q]uit  [!] Favorite Toggle  [F]avorites  [V]Recent  [C]ategory  [?] Help  [T] Trophies",
+		sectionLabel("Door Command Bar"),
+		commandStrip(width, []string{"[R]eturn", "[Q]uit", "[!] Favorite Toggle", "[F]avorites", "[V]Recent", "[C]ategory", "[T] Trophies", "[?] Help"}),
 		"",
 	}
 	filterParts := []string{fmt.Sprintf("Showing %d of %d", summary.Visible, summary.Total)}
@@ -447,8 +468,8 @@ func RenderDoorMenu(width int, items []DoorMenuItem, favoriteIDs []string, recen
 		lines = append(lines, "No doors matched the active filter.")
 		return renderPanel(width, "Door Hub", lines, FgYellow) + "\r\n"
 	}
-	lines = append(lines, "HK  Category   Door Name                          Turns  Flags")
-	lines = append(lines, strings.Repeat("-", 62))
+	lines = append(lines, doorHeader(width))
+	lines = append(lines, doorDivider(width))
 	for _, item := range items {
 		turns := "-"
 		if item.TurnsRemaining > 0 {
@@ -458,13 +479,7 @@ func RenderDoorMenu(width int, items []DoorMenuItem, favoriteIDs []string, recen
 		if item.Favorite {
 			flags = "*"
 		}
-		lines = append(lines, fmt.Sprintf("%-3s %-10s %-33s %-6s %-3s",
-			strings.ToUpper(item.Hotkey),
-			trimRunes(strings.ToUpper(item.Category), 10),
-			trimRunes(item.Name, 33),
-			turns,
-			flags,
-		))
+		lines = append(lines, formatDoorRow(width, item, turns, flags))
 	}
 	return renderPanel(width, "Door Hub", lines, FgYellow) + "\r\n"
 }
@@ -548,8 +563,8 @@ func RenderSettingsHelp(width int) string {
 
 func RenderLastCallers(width int, users []string) string {
 	lines := []string{
-		"Node User         Login Time        Orig  From            Area         Duration",
-		strings.Repeat("-", 76),
+		callerHeader(width, false),
+		callerDivider(width, false),
 	}
 	for _, u := range users {
 		lines = append(lines, u)
@@ -563,8 +578,8 @@ func RenderLastCallers(width int, users []string) string {
 
 func RenderWhoOnline(width int, users []string) string {
 	lines := []string{
-		"Node User         Login Time        Orig  From            Area         Idle",
-		strings.Repeat("-", 72),
+		callerHeader(width, true),
+		callerDivider(width, true),
 	}
 	for _, u := range users {
 		lines = append(lines, u)
@@ -597,7 +612,7 @@ func renderHelpPanel(width int, title string, lines []string) string {
 func clampLines(width int, lines []string) string {
 	width = normalizeScreenWidth(width)
 	for i, line := range lines {
-		lines[i] = trimRunes(line, width)
+		lines[i] = trimANSIVisible(line, width)
 	}
 	return strings.Join(lines, "\r\n")
 }
@@ -606,11 +621,11 @@ func padOrTrim(value string, width int, pad string) string {
 	if width <= 0 {
 		return ""
 	}
-	value = trimRunes(value, width)
-	if runeLen(value) > width {
-		return trimRunes(value, width)
+	value = trimANSIVisible(value, width)
+	if visibleRuneLen(value) > width {
+		return trimANSIVisible(value, width)
 	}
-	return value + strings.Repeat(pad, width-runeLen(value))
+	return value + strings.Repeat(pad, width-visibleRuneLen(value))
 }
 
 func normalizeScreenWidth(width int) int {
@@ -631,7 +646,238 @@ func renderPanel(width int, title string, content []string, fg string) string {
 	innerWidth := width - 2
 	lines := make([]string, 0, len(content))
 	for _, line := range content {
-		lines = append(lines, padOrTrim(line, innerWidth, " "))
+		lines = append(lines, fitPanelLine(innerWidth, line)...)
 	}
 	return DrawBox(width, len(lines)+2, title, lines, CP437Box, fg, BgBlack)
+}
+
+func fitPanelLine(width int, line string) []string {
+	if width <= 0 {
+		return []string{""}
+	}
+	line = strings.TrimRight(line, "\r\n")
+	if line == "" {
+		return []string{strings.Repeat(" ", width)}
+	}
+	if strings.Contains(line, Esc) || strings.HasPrefix(line, " ") || strings.Contains(line, "  ") {
+		return []string{padOrTrim(line, width, " ")}
+	}
+	if visibleRuneLen(line) <= width {
+		return []string{padOrTrim(line, width, " ")}
+	}
+	words := strings.Fields(line)
+	if len(words) <= 1 {
+		return []string{padOrTrim(line, width, " ")}
+	}
+	lines := make([]string, 0, 4)
+	current := words[0]
+	for _, word := range words[1:] {
+		if visibleRuneLen(current)+1+visibleRuneLen(word) > width {
+			lines = append(lines, padOrTrim(current, width, " "))
+			current = word
+			continue
+		}
+		current += " " + word
+	}
+	lines = append(lines, padOrTrim(current, width, " "))
+	return lines
+}
+
+func renderMenuGrid(width int, entries []menuEntry, maxCols int) []string {
+	innerWidth := normalizeScreenWidth(width) - 2
+	cols := menuColumns(innerWidth, maxCols)
+	colWidth := innerWidth
+	if cols > 1 {
+		colWidth = (innerWidth - ((cols - 1) * 2)) / cols
+	}
+	if colWidth < 14 {
+		cols = 1
+		colWidth = innerWidth
+	}
+	lines := make([]string, 0, (len(entries)+cols-1)/cols)
+	for i := 0; i < len(entries); i += cols {
+		row := make([]string, 0, cols)
+		for j := 0; j < cols && i+j < len(entries); j++ {
+			row = append(row, padOrTrim(renderMenuCell(entries[i+j]), colWidth, " "))
+		}
+		lines = append(lines, strings.Join(row, "  "))
+	}
+	return lines
+}
+
+func menuColumns(innerWidth, maxCols int) int {
+	if maxCols < 1 {
+		return 1
+	}
+	switch {
+	case innerWidth >= 66:
+		if maxCols > 3 {
+			return 3
+		}
+		return maxCols
+	case innerWidth >= 46:
+		if maxCols > 2 {
+			return 2
+		}
+		return maxCols
+	default:
+		return 1
+	}
+}
+
+func renderMenuCell(entry menuEntry) string {
+	key := strings.ToUpper(strings.TrimSpace(entry.Key))
+	label := strings.TrimSpace(entry.Label)
+	if key == "" {
+		return label
+	}
+	return "[" + key + "] " + label
+}
+
+func commandStrip(width int, items []string) string {
+	innerWidth := normalizeScreenWidth(width) - 2
+	line := strings.Join(items, "  ")
+	if visibleRuneLen(line) <= innerWidth {
+		return line
+	}
+	return strings.Join(items, " | ")
+}
+
+func sectionLabel(title string) string {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return ""
+	}
+	return "== " + title + " =="
+}
+
+func filesHeader(width int) string {
+	if normalizeScreenWidth(width) >= 72 {
+		return " ID  Area Name           Path                         Description"
+	}
+	if normalizeScreenWidth(width) >= 54 {
+		return " ID  Area Name           Path                 Description"
+	}
+	return " ID  Area Name           Path"
+}
+
+func filesDivider(width int) string {
+	switch {
+	case normalizeScreenWidth(width) >= 72:
+		return strings.Repeat("-", 68)
+	case normalizeScreenWidth(width) >= 54:
+		return strings.Repeat("-", 58)
+	default:
+		return strings.Repeat("-", 40)
+	}
+}
+
+func callerHeader(width int, online bool) string {
+	if normalizeScreenWidth(width) >= 74 {
+		if online {
+			return "Node User         Login Time        Orig  From            Area         Idle"
+		}
+		return "Node User         Login Time        Orig  From            Area         Duration"
+	}
+	if normalizeScreenWidth(width) >= 58 {
+		if online {
+			return "Node User         Orig  From            Area         Idle"
+		}
+		return "Node User         Orig  From            Area         Dur"
+	}
+	if online {
+		return "Node User         Orig  Area         Idle"
+	}
+	return "Node User         Orig  Area         Dur"
+}
+
+func callerDivider(width int, online bool) string {
+	switch {
+	case normalizeScreenWidth(width) >= 74:
+		if online {
+			return strings.Repeat("-", 72)
+		}
+		return strings.Repeat("-", 76)
+	case normalizeScreenWidth(width) >= 58:
+		return strings.Repeat("-", 58)
+	default:
+		return strings.Repeat("-", 40)
+	}
+}
+
+func doorHeader(width int) string {
+	if normalizeScreenWidth(width) >= 72 {
+		return "HK  Category   Door Name                          Turns  Flags"
+	}
+	if normalizeScreenWidth(width) >= 54 {
+		return "HK  Category   Door Name                  Turns  Flags"
+	}
+	return "HK  Door Name                    Turns  Flags"
+}
+
+func doorDivider(width int) string {
+	switch {
+	case normalizeScreenWidth(width) >= 72:
+		return strings.Repeat("-", 62)
+	case normalizeScreenWidth(width) >= 54:
+		return strings.Repeat("-", 54)
+	default:
+		return strings.Repeat("-", 40)
+	}
+}
+
+func formatDoorRow(width int, item DoorMenuItem, turns, flags string) string {
+	switch {
+	case normalizeScreenWidth(width) >= 72:
+		return fmt.Sprintf("%-3s %-10s %-33s %-6s %-3s",
+			strings.ToUpper(item.Hotkey),
+			trimRunes(strings.ToUpper(item.Category), 10),
+			trimRunes(item.Name, 33),
+			turns,
+			flags,
+		)
+	case normalizeScreenWidth(width) >= 54:
+		return fmt.Sprintf("%-3s %-10s %-25s %-6s %-3s",
+			strings.ToUpper(item.Hotkey),
+			trimRunes(strings.ToUpper(item.Category), 10),
+			trimRunes(item.Name, 25),
+			turns,
+			flags,
+		)
+	default:
+		return fmt.Sprintf("%-3s %-26s %-6s %-3s",
+			strings.ToUpper(item.Hotkey),
+			trimRunes(item.Name, 26),
+			turns,
+			flags,
+		)
+	}
+}
+
+func welcomeWolfArt(width int) []string {
+	switch {
+	case normalizeScreenWidth(width) >= 72:
+		return []string{
+			"                           .     .",
+			"                          / \\.-./ \\",
+			"                         / /\\_ _/\\\\ \\",
+			"                         |/  o o  \\|",
+			"                         ( == ^ == )",
+			"                          )  ---  (",
+			"                         /         \\",
+		}
+	case normalizeScreenWidth(width) >= 54:
+		return []string{
+			"                       /\\_/\\\\",
+			"                      ( o.o )",
+			"                       > ^ <",
+			"                    WolfBBS Caller",
+		}
+	default:
+		return []string{
+			"                    /\\_/\\\\",
+			"                   ( o.o )",
+			"                    > ^ <",
+		}
+	}
 }

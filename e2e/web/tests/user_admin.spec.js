@@ -140,6 +140,32 @@ test("user web journey supports keyboard navigation and status/config visibility
   await expect(page.locator("h1")).toContainText("Message Boards");
   await expect(page.locator("#wolfbbsCommandButton")).toContainText(/Jump \/ Search/i);
   await expect(page.locator("body")).toContainText("Caller Cockpit");
+  await page.goto("/boards?mode=mentions");
+  await expect(page.locator("body")).toContainText("Personal Board Queue");
+  await expect(page.locator("body")).toContainText("Mentions");
+
+  await page.goto("/bulletins");
+  await expect(page.locator("h1")).toContainText("Bulletin Center");
+  await expect(page.locator("body")).toContainText("Spotlight");
+
+  await page.goto("/directory?online=1&verified=verified");
+  await expect(page.locator("h1")).toContainText("Caller Directory");
+  await expect(page.locator("body")).toContainText("Caller Card");
+  await expect(page.locator("body")).toContainText("visible callers");
+  await expect(page.locator("body")).toContainText("Origin");
+
+  await page.goto(`/finder?q=${USER_HANDLE}&author=${USER_HANDLE}&tracker=post`);
+  await expect(page.locator("h1")).toContainText("Message Finder");
+  await expect(page.locator("body")).toContainText("Thread Tracker");
+  await expect(page.locator("body")).toContainText("Conf");
+
+  await page.goto("/newfiles?sort=rating&since=30d");
+  await expect(page.locator("h1")).toContainText("New Files Desk");
+  await expect(page.locator("body")).toContainText("Download Desk");
+  await expect(page.locator("body")).toContainText("visible uploads");
+
+  await page.goto("/feedback");
+  await expect(page.locator("h1")).toContainText("Feedback to Sysop");
 
   await page.goto("/doors");
   await expect(page.locator("h1")).toContainText("Door Cockpit");
@@ -163,6 +189,8 @@ test("user web journey supports keyboard navigation and status/config visibility
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/mail$/);
   await expect(page.locator("h1")).toContainText("Private Mail");
+  await page.goto("/mail?template=door_invite");
+  await expect(page.locator('input[name="subject"]')).toHaveValue(/Meet me in the Door Hub/);
   await page.fill('input[name="to"]', ADMIN_HANDLE);
   await page.fill('input[name="subject"]', "Playwright Mail");
   await page.fill('textarea[name="body"]', "Mail body from browser flow.");
