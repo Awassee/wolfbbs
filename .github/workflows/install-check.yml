@@ -2,7 +2,10 @@ name: installer-check
 
 on:
   push:
+    branches:
+      - main
   pull_request:
+  workflow_dispatch:
 
 jobs:
   shellcheck:
@@ -11,12 +14,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Install shellcheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
-      - name: Validate install.sh syntax
-        run: bash -n install.sh
+        run: sudo apt-get update && sudo apt-get install -y shellcheck ripgrep
+      - name: Validate installer syntax
+        run: bash -n install.sh && bash -n bootstrap.sh && bash -n scripts/verify.sh
       - name: Run shellcheck
-        run: shellcheck install.sh
+        run: shellcheck install.sh bootstrap.sh scripts/verify.sh
       - name: Validate dry-run
-        run: bash install.sh --dry-run --with-docker
+        run: bash install.sh --dry-run --yes --with-docker
       - name: Verify acceptance fast checks
         run: scripts/verify.sh --fast

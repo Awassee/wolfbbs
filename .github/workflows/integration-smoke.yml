@@ -2,7 +2,10 @@ name: integration-smoke
 
 on:
   push:
+    branches:
+      - main
   pull_request:
+  workflow_dispatch:
 
 jobs:
   compose-smoke:
@@ -10,5 +13,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Install smoke prerequisites
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
       - name: Run acceptance smoke verifier
         run: scripts/verify.sh --smoke

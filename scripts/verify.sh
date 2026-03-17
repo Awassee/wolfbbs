@@ -84,6 +84,20 @@ has_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
 
+search_tree() {
+  local pattern="$1"
+  shift
+  if has_cmd rg; then
+    rg -n -- "$pattern" "$@"
+    return
+  fi
+  grep -RInE -- "$pattern" "$@"
+}
+
+search_tree_quiet() {
+  search_tree "$@" >/dev/null 2>&1
+}
+
 run_with_timeout() {
   local seconds="$1"
   shift
@@ -118,8 +132,60 @@ check_linux_prereq_docs() {
 }
 
 check_macos_prefix_defaults() {
-  rg -n 'DEFAULT_PREFIX_MACOS=.*\$\{HOME\}' install.sh >/dev/null &&
+  search_tree_quiet 'DEFAULT_PREFIX_MACOS=.*\$\{HOME\}' install.sh &&
     grep -Fqi "\$HOME/.local/share/wolfbbs" docs/INSTALL.md
+}
+
+check_security_bcrypt() {
+  grep -Eiq 'bcrypt' docs/threat-model.md &&
+    search_tree_quiet 'bcrypt' internal/auth
+}
+
+check_security_cookie_csrf() {
+  grep -Eiq 'HttpOnly' docs/admin.md &&
+    search_tree_quiet 'HttpOnly|requireCSRF' cmd/wolfbbs-web/main.go
+}
+
+check_no_hardcoded_admin_defaults() {
+  ! search_tree_quiet 'wolfbbs-admin|admin123|default admin password' cmd/wolfbbs-web
+}
+
+check_installer_verification_hooks() {
+  search_tree_quiet 'healthz|verify_install|wait_for_port' install.sh
+}
+
+check_installer_summary_strings() {
+  search_tree_quiet 'SSH:|/admin|/chat|IRC:' install.sh
+}
+
+check_installer_linux_detection() {
+  search_tree_quiet 'apt|dnf|yum|pacman|/etc/os-release' install.sh
+}
+
+check_bootstrap_docs() {
+  grep -Eiq 'curl -fsSL' docs/INSTALL.md &&
+    search_tree_quiet 'repo-url|git clone' install.sh
+}
+
+check_brew_handling() {
+  search_tree_quiet 'install-brew|brew' install.sh
+}
+
+check_xcode_handling() {
+  search_tree_quiet 'xcode-select -p' install.sh
+}
+
+check_ci_installer_workflow() {
+  search_tree_quiet 'bash -n install.sh' .github/workflows &&
+    search_tree_quiet 'shellcheck install.sh' .github/workflows
+}
+
+check_ci_fast_verify() {
+  search_tree_quiet 'scripts/verify.sh --fast' .github/workflows
+}
+
+check_ci_smoke_workflow() {
+  search_tree_quiet 'integration-smoke|docker compose up' .github/workflows
 }
 
 compose_file() {
@@ -340,10 +406,10 @@ run_static_checks() {
   must "GW-WEB-002" "web gateway timeout/size limits documented" bash -c "grep -Eiq 'timeout' docs/web-gateway.md && grep -Eiq 'max body|max response|2 MiB' docs/web-gateway.md"
   must "GW-WEB-003" "web gateway ssrf deny rules documented" file_contains "docs/web-gateway.md" "SSRF"
 
-  must "SEC-001" "password hashing algorithm documented and present in code" bash -c "grep -Eiq 'bcrypt' docs/threat-model.md && rg -n 'bcrypt' internal/auth >/dev/null"
-  must "SEC-002" "cookie and csrf controls documented/implemented" bash -c "grep -Eiq 'HttpOnly' docs/admin.md && rg -n 'HttpOnly|requireCSRF' cmd/wolfbbs-web/main.go >/dev/null"
+  must "SEC-001" "password hashing algorithm documented and present in code" check_security_bcrypt
+  must "SEC-002" "cookie and csrf controls documented/implemented" check_security_cookie_csrf
   must "SEC-003" "audit logging documented" bash -c "grep -Eiq 'audit' docs/threat-model.md && grep -Eiq 'audit' docs/admin.md"
-  must "SEC-004" "no hardcoded default admin credentials" bash -c "! rg -n 'wolfbbs-admin|admin123|default admin password' cmd/wolfbbs-web >/dev/null"
+  must "SEC-004" "no hardcoded default admin credentials" check_no_hardcoded_admin_defaults
   if [[ -f .env ]]; then
     if env_permissions_are_600 .env; then
       pass "SEC-005" ".env permissions are 600"
@@ -363,14 +429,14 @@ run_static_checks() {
   must "INS-005" "required installer flags are present" bash -c "./install.sh --help | grep -Eiq -- '--prefix' && ./install.sh --help | grep -Eiq -- '--ssh-port' && ./install.sh --help | grep -Eiq -- '--web-port' && ./install.sh --help | grep -Eiq -- '--irc-port' && ./install.sh --help | grep -Eiq -- '--upgrade' && ./install.sh --help | grep -Eiq -- '--rapid-upgrade' && ./install.sh --help | grep -Eiq -- '--status' && ./install.sh --help | grep -Eiq -- '--uninstall' && ./install.sh --help | grep -Eiq -- '--force'"
   must "INS-006" "bootstrap helper works in dry-run mode" bash -c "tmpdir=\$(mktemp -d) && WOLFBBS_BOOTSTRAP_INSTALLER_URL=file://\$PWD/install.sh bash ./bootstrap.sh --dry-run --yes --with-docker --prefix \"\$tmpdir/prefix\" >/dev/null"
   must "INS-007" "docs state docker compose as default install path" file_contains "docs/INSTALL.md" "Docker-based install"
-  must "INS-008" "installer has post-install verification hooks" bash -c "rg -n 'healthz|verify_install|wait_for_port' install.sh >/dev/null"
-  must "INS-009" "installer prints connection summary strings" bash -c "rg -n 'SSH:|/admin|/chat|IRC:' install.sh >/dev/null"
-  must "INS-LNX-001" "installer detects linux distro and package manager" bash -c "rg -n 'apt|dnf|yum|pacman|/etc/os-release' install.sh >/dev/null"
+  must "INS-008" "installer has post-install verification hooks" check_installer_verification_hooks
+  must "INS-009" "installer prints connection summary strings" check_installer_summary_strings
+  must "INS-LNX-001" "installer detects linux distro and package manager" check_installer_linux_detection
   must "INS-LNX-002" "linux prereqs documented" check_linux_prereq_docs
-  must "INS-LNX-003" "curl|bash bootstrap documented" bash -c "grep -Eiq 'curl -fsSL' docs/INSTALL.md && rg -n 'repo-url|git clone' install.sh >/dev/null"
+  must "INS-LNX-003" "curl|bash bootstrap documented" check_bootstrap_docs
   must "INS-MAC-002" "macOS installer entrypoint exists" bash -c "./install.sh --help | grep -qi macos || test -f install-macos.sh"
-  must "INS-MAC-003" "homebrew handling implemented" bash -c "rg -n 'install-brew|brew' install.sh >/dev/null"
-  must "INS-MAC-004" "xcode command line tools check implemented" bash -c "rg -n 'xcode-select -p' install.sh >/dev/null"
+  must "INS-MAC-003" "homebrew handling implemented" check_brew_handling
+  must "INS-MAC-004" "xcode command line tools check implemented" check_xcode_handling
   must "INS-MAC-005" "docker desktop/colima support documented" bash -c "grep -Eiq 'Docker Desktop' docs/INSTALL.md && grep -Eiq 'Colima' docs/INSTALL.md"
   should "INS-MAC-006" "portable shell style validated by shellcheck when available" bash -c "command -v shellcheck >/dev/null 2>&1 && shellcheck install.sh scripts/verify.sh >/dev/null"
   must "INS-MAC-007" "macOS default prefix is non-root path" check_macos_prefix_defaults
@@ -382,9 +448,9 @@ run_static_checks() {
   must "UX-002" "terminal e2e pexpect suite exists" bash -c "test -x scripts/test_tui_pexpect.py && test -x scripts/run-e2e.sh"
   must "VER-004" "scripted IRC test exists" bash -c "test -x scripts/test_irc.py"
 
-  must "CI-001" "ci runs bash -n and shellcheck for installers" bash -c "rg -n 'bash -n install.sh' .github/workflows >/dev/null && rg -n 'shellcheck install.sh' .github/workflows >/dev/null"
-  must "CI-002" "ci runs verify.sh --fast" bash -c "rg -n 'scripts/verify.sh --fast' .github/workflows >/dev/null"
-  should "CI-003" "ci includes smoke path" bash -c "rg -n 'integration-smoke|docker compose up' .github/workflows >/dev/null"
+  must "CI-001" "ci runs bash -n and shellcheck for installers" check_ci_installer_workflow
+  must "CI-002" "ci runs verify.sh --fast" check_ci_fast_verify
+  should "CI-003" "ci includes smoke path" check_ci_smoke_workflow
 }
 
 run_smoke_checks() {
