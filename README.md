@@ -95,6 +95,11 @@ After install, WolfBBS prints the connection summary and bootstrap sysop credent
 5. Connect over SSH and verify the caller-facing ANSI flow.
 6. Open `/boards`, `/chat`, `/doors`, and `/scores` to confirm the public experience.
 
+The installer also writes:
+
+- `<prefix>/FIRST_STEPS.txt` with exact URLs, commands, and next actions
+- `<prefix>/SERVICE_STATUS.txt` after `bash install.sh --status`
+
 Default local endpoints:
 
 - SSH: `ssh localhost -p 2222`
@@ -130,8 +135,10 @@ Then in the SSH main menu press `/` and enter `/app upgrade`.
 ## Product Guides
 
 - [Start Here](docs/START_HERE.md): fastest route from install to a usable board
+- [Launch Checklist](docs/LAUNCH_CHECKLIST.md): go/no-go pass before inviting callers
 - [Quickstart](docs/QUICKSTART.md): fastest path from download to first login
 - [Install Guide](docs/INSTALL.md): install modes, flags, lifecycle, and packaging
+- [Troubleshooting](docs/TROUBLESHOOTING.md): symptom-driven fixes and recovery path
 - [Operations Guide](docs/OPERATIONS.md): daily operator tasks, recovery, and upgrades
 - [Product Guide](docs/PRODUCT_GUIDE.md): what WolfBBS includes and how to use it
 - [Datasheet](docs/DATASHEET.md): deployment summary, capabilities, ports, and operator facts

@@ -519,6 +519,15 @@ func TestAdminSetupConfigAndErrorScreens(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), "Launch Checklist") {
 		t.Fatalf("missing launch checklist: %s", rr.Body.String())
 	}
+	if !strings.Contains(rr.Body.String(), "Launch Readiness") {
+		t.Fatalf("missing launch readiness section: %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "Go-live verdict") {
+		t.Fatalf("missing go-live verdict: %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "Real caller account exists") {
+		t.Fatalf("missing readiness caller account row: %s", rr.Body.String())
+	}
 	if !strings.Contains(rr.Body.String(), "Common Gotchas") {
 		t.Fatalf("missing common gotchas: %s", rr.Body.String())
 	}
@@ -780,9 +789,13 @@ func TestHelpPageIncludesRoleGuidanceAndReferences(t *testing.T) {
 	guestBody := guestRR.Body.String()
 	for _, needle := range []string{
 		"If you're visiting for the first time",
+		"10-minute launch plan",
+		"If something feels broken",
 		"Use the right surface",
 		"First-run verification path",
 		"docs/START_HERE.md",
+		"docs/LAUNCH_CHECKLIST.md",
+		"docs/TROUBLESHOOTING.md",
 		"docs/OPERATIONS.md",
 	} {
 		if !strings.Contains(guestBody, needle) {
@@ -805,6 +818,8 @@ func TestHelpPageIncludesRoleGuidanceAndReferences(t *testing.T) {
 	for _, needle := range []string{
 		"If you're the sysop",
 		"Common sysop jobs",
+		"10-minute launch plan",
+		"If something feels broken",
 		"/admin/setup",
 		"/admin/system",
 	} {

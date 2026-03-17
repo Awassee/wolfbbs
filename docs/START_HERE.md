@@ -21,6 +21,8 @@ You are done when:
 6. Create a real caller account in `/admin/users`.
 7. Test SSH, web, and chat.
 
+The installer writes `<prefix>/FIRST_STEPS.txt` with the exact URLs and commands for this flow.
+
 ## Install
 
 Linux:
@@ -67,6 +69,12 @@ curl -fsSL https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh |
 - add one non-sysop account
 - test login as that user
 
+### 5. Do the launch pass
+
+- run `bash install.sh --status`
+- run `bash install.sh --doctor`
+- walk [LAUNCH_CHECKLIST.md](LAUNCH_CHECKLIST.md)
+
 ## If something looks wrong
 
 ```bash
@@ -78,6 +86,8 @@ bash install.sh --repair
 ## Read next
 
 - [Quickstart](QUICKSTART.md)
+- [Launch Checklist](LAUNCH_CHECKLIST.md)
 - [Install Guide](INSTALL.md)
+- [Troubleshooting](TROUBLESHOOTING.md)
 - [Operations Guide](OPERATIONS.md)
 - [Product Guide](PRODUCT_GUIDE.md)

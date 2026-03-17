@@ -292,6 +292,139 @@ read_env_value() {
   awk -F= -v lookup="$key" '$1 == lookup {sub(/^[^=]*=/, "", $0); print; exit}' "$file_path"
 }
 
+docs_root_path() {
+  local candidates=(
+    "${WORK_DIR}/docs"
+    "$(managed_checkout_dir)/docs"
+    "${PREFIX}/docs"
+  )
+  local candidate=""
+  for candidate in "${candidates[@]}"; do
+    if [[ -d "$candidate" ]]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+launch_brief_path() {
+  printf '%s/%s' "$PREFIX" "FIRST_STEPS.txt"
+}
+
+status_snapshot_path() {
+  printf '%s/%s' "$PREFIX" "SERVICE_STATUS.txt"
+}
+
+write_file_secure() {
+  local target="$1"
+  local mode="${2:-600}"
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "DRY-RUN: would write ${target}"
+    return 0
+  fi
+  chmod "$mode" "$target" >/dev/null 2>&1 || true
+}
+
+write_launch_brief() {
+  local host="${1:-${BBS_HOSTNAME:-localhost}}"
+  local bbs_name="${2:-${BBS_NAME:-$DEFAULT_BBS_NAME}}"
+  local admin_handle="${3:-${BOOTSTRAP_ADMIN_HANDLE:-sysop}}"
+  local docs_root=""
+  local admin_login_url="http://${host}:${WEB_PORT}/admin/login"
+  local admin_setup_url="http://${host}:${WEB_PORT}/admin/setup"
+  local admin_system_url="http://${host}:${WEB_PORT}/admin/system"
+  local boards_url="http://${host}:${WEB_PORT}/boards"
+  local chat_url="http://${host}:${WEB_PORT}/chat"
+  local doors_url="http://${host}:${WEB_PORT}/doors"
+  local scores_url="http://${host}:${WEB_PORT}/scores"
+  local out_file=""
+
+  out_file="$(launch_brief_path)"
+  docs_root="$(docs_root_path || true)"
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "DRY-RUN: would write launch brief to ${out_file}"
+    return 0
+  fi
+
+  mkdir -p "$PREFIX"
+  cat >"$out_file" <<EOF
+WolfBBS First Steps
+Generated: $(date -u +'%Y-%m-%dT%H:%M:%SZ')
+
+Board:
+- Name: ${bbs_name}
+- Host: ${host}
+
+Install layout:
+- Prefix: ${PREFIX}
+- Managed checkout: $(managed_checkout_dir)
+- Env file: ${ENV_FILE:-${PREFIX}/.env}
+- Compose file: ${compose_file:-$(managed_checkout_dir)/docker-compose.yml}
+- Installer log: ${LOG_FILE}
+
+Launch URLs:
+- Admin login: ${admin_login_url}
+- Admin setup: ${admin_setup_url}
+- System dashboard: ${admin_system_url}
+- Boards: ${boards_url}
+- Chat: ${chat_url}
+- Doors: ${doors_url}
+- Scores: ${scores_url}
+- SSH: ssh ${host} -p ${SSH_PORT}
+- IRC: ${host}:${IRC_PORT} (TLS: ${host}:${IRC_TLS_PORT})
+- Mail ingest: http://${host}:${MAILIN_PORT}/ingest
+
+Bootstrap sysop:
+- Handle: ${admin_handle}
+- Password source: ${ENV_FILE:-${PREFIX}/.env}
+- Password command: grep '^WOLFBBS_BOOTSTRAP_ADMIN_PASSWORD=' '${ENV_FILE:-${PREFIX}/.env}' | cut -d= -f2-
+
+10-minute launch path:
+1. Open ${admin_login_url}
+2. Finish ${admin_setup_url}
+3. Review http://${host}:${WEB_PORT}/admin/config
+4. Create a non-sysop user in http://${host}:${WEB_PORT}/admin/users
+5. Validate ${boards_url}, ${chat_url}, ${doors_url}, and ${scores_url}
+6. Run: bash install.sh --status
+
+Recovery commands:
+- bash install.sh --status
+- bash install.sh --doctor
+- bash install.sh --repair
+- bash install.sh --logs
+
+Docs:
+EOF
+  if [[ -n "$docs_root" ]]; then
+    {
+      [[ -f "${docs_root}/START_HERE.md" ]] && printf '%s\n' "- ${docs_root}/START_HERE.md"
+      [[ -f "${docs_root}/LAUNCH_CHECKLIST.md" ]] && printf '%s\n' "- ${docs_root}/LAUNCH_CHECKLIST.md"
+      [[ -f "${docs_root}/TROUBLESHOOTING.md" ]] && printf '%s\n' "- ${docs_root}/TROUBLESHOOTING.md"
+      [[ -f "${docs_root}/OPERATIONS.md" ]] && printf '%s\n' "- ${docs_root}/OPERATIONS.md"
+      [[ -f "${docs_root}/INSTALL.md" ]] && printf '%s\n' "- ${docs_root}/INSTALL.md"
+    } >>"$out_file"
+  else
+    printf '%s\n' "- docs/START_HERE.md" "- docs/LAUNCH_CHECKLIST.md" "- docs/TROUBLESHOOTING.md" "- docs/OPERATIONS.md" "- docs/INSTALL.md" >>"$out_file"
+  fi
+  write_file_secure "$out_file" 600
+}
+
+write_status_snapshot() {
+  local content="$1"
+  local out_file=""
+
+  out_file="$(status_snapshot_path)"
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "DRY-RUN: would write service snapshot to ${out_file}"
+    return 0
+  fi
+  mkdir -p "$PREFIX"
+  printf '%s\n' "$content" >"$out_file"
+  write_file_secure "$out_file" 600
+}
+
 default_hostname() {
   local value=""
   if command -v hostname >/dev/null 2>&1; then
@@ -501,6 +634,7 @@ print_first_login_wizard() {
     fi
   fi
   echo "=========================================================="
+  echo "Saved first-steps brief: $(launch_brief_path)"
   echo
 }
 
@@ -519,6 +653,7 @@ print_install_summary() {
       bbs_name="$env_name"
     fi
   fi
+  write_launch_brief "$host" "$bbs_name" "${BOOTSTRAP_ADMIN_HANDLE:-sysop}"
   echo "WolfBBS installation complete."
   echo "BBS: ${bbs_name}"
   echo "Host: ${host}"
@@ -527,6 +662,7 @@ print_install_summary() {
   echo "Web Chat: http://${host}:${WEB_PORT}/chat"
   echo "IRC: ${host}:${IRC_PORT} (TLS: ${IRC_TLS_PORT})"
   echo "Mail Ingest: http://${host}:${MAILIN_PORT}/ingest"
+  echo "First-steps brief: $(launch_brief_path)"
   print_first_login_wizard "$host"
 }
 
@@ -577,6 +713,10 @@ Environment shortcuts:
   WOLFBBS_HOSTNAME=<host>         optional installer hostname override (prefer /admin/setup)
   WOLFBBS_SETUP_PROFILE=<profile> basic|critical|expert baseline (prefer /admin/setup)
   WOLFBBS_REPO_URL defaults to:   https://github.com/Awassee/wolfbbs.git
+
+Operator files written under the install prefix:
+  FIRST_STEPS.txt                 exact first-login and launch checklist summary
+  SERVICE_STATUS.txt              last machine-readable-ish status snapshot from --status
 USAGE
 }
 
@@ -1973,6 +2113,18 @@ status_view() {
   local runtime_irc_port="${WOLFBBS_IRC_PORT:-$IRC_PORT}"
   local runtime_irc_tls_port="${WOLFBBS_IRC_TLS_PORT:-$IRC_TLS_PORT}"
   local runtime_mailin_port="${WOLFBBS_MAILIN_PORT:-$MAILIN_PORT}"
+  local docs_root=""
+  local probe_lines=()
+  local pass_count=0
+  local warn_count=0
+  local verdict="ATTENTION"
+  local cmd=""
+  local env_mode=""
+  local snapshot=""
+
+  docs_root="$(docs_root_path || true)"
+  write_launch_brief "$status_host" "$status_name" "${WOLFBBS_BOOTSTRAP_ADMIN_HANDLE:-sysop}"
+
   echo "BBS Name: ${status_name}"
   echo "Setup Profile: ${WOLFBBS_SETUP_PROFILE:-basic}"
   echo "SSH: ssh ${status_host} -p ${runtime_ssh_port}"
@@ -1980,10 +2132,16 @@ status_view() {
   echo "Chat: http://${status_host}:${runtime_web_port}/chat"
   echo "IRC: ${status_host}:${runtime_irc_port} (TLS: ${status_host}:${runtime_irc_tls_port})"
   echo "Mail Ingest: http://${status_host}:${runtime_mailin_port}/ingest"
+  echo "Install layout:"
+  echo "  Prefix: ${PREFIX}"
+  echo "  Managed checkout: $(managed_checkout_dir)"
+  echo "  Env file: ${ENV_FILE}"
+  echo "  Compose file: ${compose_file}"
+  echo "  First-steps brief: $(launch_brief_path)"
+  echo "  Service snapshot: $(status_snapshot_path)"
   if [[ -n "${WOLFBBS_BOOTSTRAP_ADMIN_HANDLE:-}" ]]; then
     echo "Bootstrap sysop handle: ${WOLFBBS_BOOTSTRAP_ADMIN_HANDLE} (password stored in ${ENV_FILE})"
   fi
-  local cmd
   cmd="$(compose_cmd)"
   if [[ -n "$cmd" ]]; then
     echo "Compose status:"
@@ -1993,46 +2151,122 @@ status_view() {
   if command -v curl >/dev/null 2>&1; then
     if curl -fsS "http://127.0.0.1:${runtime_web_port}/healthz" >/dev/null 2>&1; then
       echo "  PASS web healthz: http://127.0.0.1:${runtime_web_port}/healthz"
+      probe_lines+=("PASS web healthz: http://127.0.0.1:${runtime_web_port}/healthz")
+      pass_count=$((pass_count + 1))
     else
       echo "  WARN web healthz unreachable: http://127.0.0.1:${runtime_web_port}/healthz"
+      probe_lines+=("WARN web healthz unreachable: http://127.0.0.1:${runtime_web_port}/healthz")
+      warn_count=$((warn_count + 1))
     fi
     if curl -fsS "http://127.0.0.1:${runtime_web_port}/readyz" >/dev/null 2>&1; then
       echo "  PASS web readyz: http://127.0.0.1:${runtime_web_port}/readyz"
+      probe_lines+=("PASS web readyz: http://127.0.0.1:${runtime_web_port}/readyz")
+      pass_count=$((pass_count + 1))
     else
       echo "  WARN web readyz unreachable: http://127.0.0.1:${runtime_web_port}/readyz"
+      probe_lines+=("WARN web readyz unreachable: http://127.0.0.1:${runtime_web_port}/readyz")
+      warn_count=$((warn_count + 1))
     fi
   else
     echo "  WARN curl not found; skipping HTTP probes"
+    probe_lines+=("WARN curl not found; skipping HTTP probes")
+    warn_count=$((warn_count + 1))
   fi
   if command -v nc >/dev/null 2>&1; then
     if nc -z 127.0.0.1 "$runtime_ssh_port" >/dev/null 2>&1; then
       echo "  PASS ssh port ${runtime_ssh_port} reachable"
+      probe_lines+=("PASS ssh port ${runtime_ssh_port} reachable")
+      pass_count=$((pass_count + 1))
     else
       echo "  WARN ssh port ${runtime_ssh_port} unreachable"
+      probe_lines+=("WARN ssh port ${runtime_ssh_port} unreachable")
+      warn_count=$((warn_count + 1))
     fi
     if nc -z 127.0.0.1 "$runtime_irc_port" >/dev/null 2>&1; then
       echo "  PASS irc port ${runtime_irc_port} reachable"
+      probe_lines+=("PASS irc port ${runtime_irc_port} reachable")
+      pass_count=$((pass_count + 1))
     else
       echo "  WARN irc port ${runtime_irc_port} unreachable"
+      probe_lines+=("WARN irc port ${runtime_irc_port} unreachable")
+      warn_count=$((warn_count + 1))
     fi
     if nc -z 127.0.0.1 "$runtime_mailin_port" >/dev/null 2>&1; then
       echo "  PASS mail ingest port ${runtime_mailin_port} reachable"
+      probe_lines+=("PASS mail ingest port ${runtime_mailin_port} reachable")
+      pass_count=$((pass_count + 1))
     else
       echo "  WARN mail ingest port ${runtime_mailin_port} unreachable"
+      probe_lines+=("WARN mail ingest port ${runtime_mailin_port} unreachable")
+      warn_count=$((warn_count + 1))
     fi
   else
     echo "  WARN nc not found; skipping TCP probes"
+    probe_lines+=("WARN nc not found; skipping TCP probes")
+    warn_count=$((warn_count + 1))
   fi
+  if [[ "$warn_count" -eq 0 ]]; then
+    verdict="READY"
+  elif [[ "$pass_count" -gt 0 ]]; then
+    verdict="PARTIAL"
+  fi
+  echo "Launch verdict: ${verdict} (${pass_count} pass / ${warn_count} warn)"
   echo "Recommended next actions:"
   echo "  1) Finish /admin/setup if this is a first install or recent rebuild"
   echo "  2) Review /admin/config for runtime flags and host identity"
   echo "  3) Walk /boards, /chat, /doors, and /scores as a real user"
   echo "  4) Use bash install.sh --doctor before changing ports or proxies"
-  if [[ -d "${WORK_DIR}/docs" ]]; then
+  echo "  5) Open $(launch_brief_path) for the operator handoff summary"
+  if [[ -n "$docs_root" ]]; then
     echo "Operator guides:"
-    [[ -f "${WORK_DIR}/docs/START_HERE.md" ]] && echo "  - ${WORK_DIR}/docs/START_HERE.md"
-    [[ -f "${WORK_DIR}/docs/OPERATIONS.md" ]] && echo "  - ${WORK_DIR}/docs/OPERATIONS.md"
+    [[ -f "${docs_root}/START_HERE.md" ]] && echo "  - ${docs_root}/START_HERE.md"
+    [[ -f "${docs_root}/LAUNCH_CHECKLIST.md" ]] && echo "  - ${docs_root}/LAUNCH_CHECKLIST.md"
+    [[ -f "${docs_root}/TROUBLESHOOTING.md" ]] && echo "  - ${docs_root}/TROUBLESHOOTING.md"
+    [[ -f "${docs_root}/OPERATIONS.md" ]] && echo "  - ${docs_root}/OPERATIONS.md"
   fi
+  if [[ -f "$ENV_FILE" ]]; then
+    env_mode="$(stat -f '%Lp' "$ENV_FILE" 2>/dev/null || stat -c '%a' "$ENV_FILE" 2>/dev/null || true)"
+  fi
+  snapshot="WolfBBS Service Status
+Generated: $(date -u +'%Y-%m-%dT%H:%M:%SZ')
+Verdict: ${verdict}
+Pass: ${pass_count}
+Warn: ${warn_count}
+
+Board:
+- Name: ${status_name}
+- Host: ${status_host}
+
+Install layout:
+- Prefix: ${PREFIX}
+- Managed checkout: $(managed_checkout_dir)
+- Env file: ${ENV_FILE}
+- Env mode: ${env_mode:-unknown}
+- Compose file: ${compose_file}
+- First-steps brief: $(launch_brief_path)
+
+Endpoints:
+- SSH: ssh ${status_host} -p ${runtime_ssh_port}
+- Admin: http://${status_host}:${runtime_web_port}/admin
+- Chat: http://${status_host}:${runtime_web_port}/chat
+- IRC: ${status_host}:${runtime_irc_port} (TLS: ${status_host}:${runtime_irc_tls_port})
+- Mail ingest: http://${status_host}:${runtime_mailin_port}/ingest
+
+Runtime probes:
+"
+  if (( ${#probe_lines[@]} > 0 )); then
+    snapshot+=$(printf -- '- %s\n' "${probe_lines[@]}")
+  else
+    snapshot+="- No probes executed"$'\n'
+  fi
+  snapshot+=$'\nDocs:\n'
+  if [[ -n "$docs_root" ]]; then
+    [[ -f "${docs_root}/START_HERE.md" ]] && snapshot+="- ${docs_root}/START_HERE.md"$'\n'
+    [[ -f "${docs_root}/LAUNCH_CHECKLIST.md" ]] && snapshot+="- ${docs_root}/LAUNCH_CHECKLIST.md"$'\n'
+    [[ -f "${docs_root}/TROUBLESHOOTING.md" ]] && snapshot+="- ${docs_root}/TROUBLESHOOTING.md"$'\n'
+    [[ -f "${docs_root}/OPERATIONS.md" ]] && snapshot+="- ${docs_root}/OPERATIONS.md"$'\n'
+  fi
+  write_status_snapshot "$snapshot"
 }
 
 doctor_ok() {
@@ -2053,13 +2287,19 @@ doctor_report() {
   local local_compose=""
   local install_compose=""
   local install_env=""
+  local blockers=()
+  local warnings=()
+  local docs_root=""
 
   echo "WolfBBS doctor report"
   echo "  os=${OS} distro=${DISTRO} arch=${ARCH} pkg=${PKG_MGR:-none}"
+  echo "  prefix=${PREFIX}"
+  docs_root="$(docs_root_path || true)"
 
   if [[ "$OS" == "unknown" ]]; then
     doctor_fail "unsupported operating system"
     failures=$((failures + 1))
+    blockers+=("Unsupported operating system.")
   else
     doctor_ok "supported OS detected"
   fi
@@ -2075,6 +2315,7 @@ doctor_report() {
   if (( ${#missing[@]} > 0 )); then
     doctor_fail "missing required commands: ${missing[*]}"
     failures=$((failures + 1))
+    blockers+=("Install missing commands: ${missing[*]}.")
   else
     doctor_ok "required base commands are present"
   fi
@@ -2084,6 +2325,7 @@ doctor_report() {
   else
     doctor_fail "docker CLI missing"
     failures=$((failures + 1))
+    blockers+=("Docker CLI is missing.")
   fi
 
   compose_cmd_value="$(compose_cmd)"
@@ -2092,6 +2334,7 @@ doctor_report() {
   else
     doctor_fail "docker compose command not found"
     failures=$((failures + 1))
+    blockers+=("Docker Compose is not available.")
   fi
 
   if command -v docker >/dev/null 2>&1; then
@@ -2099,6 +2342,7 @@ doctor_report() {
       doctor_ok "docker daemon reachable"
     else
       doctor_warn "docker daemon not reachable for current user"
+      warnings+=("Docker daemon is not reachable for the current user.")
     fi
   fi
 
@@ -2107,6 +2351,7 @@ doctor_report() {
     doctor_ok "compose file in working dir: ${local_compose}"
   else
     doctor_warn "no compose file in working dir (installer can clone via --repo)"
+    warnings+=("No compose file in the current working directory.")
   fi
 
   install_compose="$(find_installed_compose_file || true)"
@@ -2114,6 +2359,7 @@ doctor_report() {
     doctor_ok "compose file in install layout: ${install_compose}"
   else
     doctor_warn "no compose file in install layout under ${PREFIX}"
+    warnings+=("No compose file found under ${PREFIX}.")
   fi
 
   install_env="${PREFIX}/.env"
@@ -2125,9 +2371,11 @@ doctor_report() {
       doctor_ok ".env permissions are 600"
     elif [[ -n "$mode" ]]; then
       doctor_warn ".env permissions are ${mode} (recommended 600)"
+      warnings+=(".env permissions are ${mode}; recommended 600.")
     fi
   else
     doctor_warn "no env file in install prefix (expected before first install)"
+    warnings+=("No .env found in the install prefix yet.")
   fi
 
   if command -v nc >/dev/null 2>&1; then
@@ -2135,14 +2383,17 @@ doctor_report() {
       doctor_ok "ssh port ${SSH_PORT} is reachable"
     else
       doctor_warn "ssh port ${SSH_PORT} is not reachable"
+      warnings+=("SSH port ${SSH_PORT} is not reachable.")
     fi
     if nc -z 127.0.0.1 "$IRC_PORT" >/dev/null 2>&1; then
       doctor_ok "irc port ${IRC_PORT} is reachable"
     else
       doctor_warn "irc port ${IRC_PORT} is not reachable"
+      warnings+=("IRC port ${IRC_PORT} is not reachable.")
     fi
   else
     doctor_warn "netcat (nc) not found; skipping port checks"
+    warnings+=("Netcat is not available, so TCP port checks were skipped.")
   fi
 
   if command -v curl >/dev/null 2>&1; then
@@ -2150,8 +2401,41 @@ doctor_report() {
       doctor_ok "web health endpoint is reachable on port ${WEB_PORT}"
     else
       doctor_warn "web health endpoint not reachable on port ${WEB_PORT}"
+      warnings+=("Web health endpoint on port ${WEB_PORT} is not reachable.")
     fi
   fi
+
+  echo
+  echo "Doctor summary:"
+  if (( ${#blockers[@]} > 0 )); then
+    echo "  Blocking:"
+    printf '  - %s\n' "${blockers[@]}"
+  else
+    echo "  Blocking: none"
+  fi
+  if (( ${#warnings[@]} > 0 )); then
+    echo "  Warnings:"
+    printf '  - %s\n' "${warnings[@]}"
+  else
+    echo "  Warnings: none"
+  fi
+  echo "Recommended commands:"
+  if (( failures > 0 )); then
+    echo "  - Fix blocking issues, then rerun: bash install.sh --doctor"
+    echo "  - If this is a clean machine, use: curl -fsSL https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh | bash"
+  else
+    echo "  - Check runtime + next steps: bash install.sh --status"
+    echo "  - If a service looks unhealthy: bash install.sh --repair"
+  fi
+  if [[ -n "$docs_root" ]]; then
+    echo "Operator docs:"
+    [[ -f "${docs_root}/START_HERE.md" ]] && echo "  - ${docs_root}/START_HERE.md"
+    [[ -f "${docs_root}/LAUNCH_CHECKLIST.md" ]] && echo "  - ${docs_root}/LAUNCH_CHECKLIST.md"
+    [[ -f "${docs_root}/TROUBLESHOOTING.md" ]] && echo "  - ${docs_root}/TROUBLESHOOTING.md"
+    [[ -f "${docs_root}/OPERATIONS.md" ]] && echo "  - ${docs_root}/OPERATIONS.md"
+  fi
+  echo "First-steps brief: $(launch_brief_path)"
+  echo "Service snapshot: $(status_snapshot_path)"
 
   if (( failures > 0 )); then
     echo "Doctor found ${failures} blocking issue(s)."

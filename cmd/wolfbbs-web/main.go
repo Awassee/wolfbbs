@@ -2534,6 +2534,22 @@ func (a *webApp) handleHelp(w http.ResponseWriter, r *http.Request) {
 <li>Policy surfaces: <a href="/admin/chat">/admin/chat</a>, <a href="/admin/doors">/admin/doors</a>, <a href="/admin/files">/admin/files</a></li>
 </ul>`
 	}
+	launchPlan := `<h2>10-minute launch plan</h2>
+<ol>
+<li>Start with <a href="/admin/setup">/admin/setup</a> if you run the board, or <a href="/connect">/connect</a> if you are just exploring.</li>
+<li>Use <a href="/status">/status</a> to confirm the product surfaces you care about are actually present.</li>
+<li>Walk one real caller path: <a href="/boards">/boards</a>, <a href="/chat">/chat</a>, <a href="/doors">/doors</a>, then SSH.</li>
+<li>If anything feels off, stop guessing and use <code>bash install.sh --status</code>, <code>--doctor</code>, or <code>--repair</code>.</li>
+</ol>`
+	troubleMatrix := `<h2>If something feels broken</h2>
+<table border="1">
+<tr><th>Symptom</th><th>Where to look first</th><th>Practical next move</th></tr>
+<tr><td>I cannot tell what to do after install</td><td><a href="/admin/setup">/admin/setup</a>, <code>docs/START_HERE.md</code></td><td>Use the launch checklist and finish the four setup steps in order.</td></tr>
+<tr><td>The board feels empty</td><td><a href="/admin/setup?step=4">/admin/setup?step=4</a>, <a href="/boards">/boards</a></td><td>Seed default boards, post a starter message, and create a caller account.</td></tr>
+<tr><td>Chat or IRC seems wrong</td><td><a href="/chat">/chat</a>, <a href="/admin/chat">/admin/chat</a>, <a href="/status">/status</a></td><td>Verify <code>#lobby</code>, moderation state, and bridge health before inviting users.</td></tr>
+<tr><td>Browser routes work but launch still feels risky</td><td><a href="/status">/status</a>, <a href="/admin/system">/admin/system</a></td><td>Use the readiness views and fix warnings before you announce the board.</td></tr>
+<tr><td>I need operator docs fast</td><td><code>docs/LAUNCH_CHECKLIST.md</code>, <code>docs/TROUBLESHOOTING.md</code></td><td>Use the checklist first, then the troubleshooting guide if a command or surface is failing.</td></tr>
+</table>`
 
 	page := `<html><body>
 <h1>` + htmlEscape(a.siteDisplayName()) + ` Help</h1>
@@ -2541,6 +2557,7 @@ func (a *webApp) handleHelp(w http.ResponseWriter, r *http.Request) {
 <p>Current role: ` + htmlEscape(roleLabel) + `</p>
 <h2>` + roleGuideTitle + `</h2>
 ` + roleGuide + `
+` + launchPlan + `
 <h2>Use the right surface</h2>
 <table border="1">
 <tr><th>Surface</th><th>Best for</th><th>Why it exists</th></tr>
@@ -2580,6 +2597,7 @@ func (a *webApp) handleHelp(w http.ResponseWriter, r *http.Request) {
 <li>Open <a href="/doors">/doors</a> and <a href="/scores">/scores</a> to verify game and score surfaces.</li>
 <li>Check <a href="/status">/status</a> or <a href="/admin/system">/admin/system</a> before inviting users.</li>
 </ol>
+` + troubleMatrix + `
 	<h2>Admin routes (sysop only)</h2>
 	<ul>
 	<li>/admin/users, /admin/boards, /admin/mail, /admin/files, /admin/gateways</li>
@@ -2591,6 +2609,8 @@ func (a *webApp) handleHelp(w http.ResponseWriter, r *http.Request) {
 <h2>Reference docs</h2>
 <ul>
 <li><code>docs/START_HERE.md</code></li>
+<li><code>docs/LAUNCH_CHECKLIST.md</code></li>
+<li><code>docs/TROUBLESHOOTING.md</code></li>
 <li><code>docs/OPERATIONS.md</code></li>
 <li><code>docs/help-guides.md</code></li>
 <li><code>docs/INSTALL.md</code></li>
@@ -4600,6 +4620,105 @@ func (a *webApp) buildStatusSnapshot(user *domain.User) statusSnapshot {
 	}
 }
 
+func (a *webApp) buildSetupReadinessSnapshot(user *domain.User) statusSnapshot {
+	boardsCount := 0
+	if a.boardRepo != nil {
+		if boards, err := a.boardRepo.List(); err == nil {
+			boardsCount = len(boards)
+		}
+	}
+	doorCount := 0
+	if a.doorRegistry != nil {
+		doorCount = len(a.doorRegistry.Doors())
+	}
+	usersCount := 0
+	realCallerCount := 0
+	moderatorCount := 0
+	mailbotReady := false
+	if a.authSvc != nil {
+		if users, err := a.authSvc.ListUsers(); err == nil {
+			usersCount = len(users)
+			for _, row := range users {
+				handle := strings.TrimSpace(strings.ToLower(row.Handle))
+				role := rbac.NormalizeRole(row.Role)
+				if handle == "mailbot" && !row.Enabled && row.Verified {
+					mailbotReady = true
+				}
+				if role == roleModerator {
+					moderatorCount++
+				}
+				if role != roleAdmin && handle != "mailbot" {
+					realCallerCount++
+				}
+			}
+		}
+	}
+	siteCustomized := strings.TrimSpace(a.siteDisplayName()) != "" &&
+		strings.TrimSpace(a.siteHost()) != "" &&
+		!(a.siteDisplayName() == "WolfBBS" && a.siteHost() == "localhost")
+	safetyReady := a.requireVerifiedEmail && (a.secureCookie || strings.EqualFold(a.siteHost(), "localhost"))
+	launchChecks := []statusCheck{
+		{Name: "Site identity customized", OK: siteCustomized, Detail: a.siteDisplayName() + " @ " + a.siteHost()},
+		{Name: "Safety baseline set", OK: safetyReady, Detail: fmt.Sprintf("secure_cookie=%s verified_email=%s", boolToText(a.secureCookie), boolToText(a.requireVerifiedEmail))},
+		{Name: "Boards seeded", OK: boardsCount > 0, Detail: fmt.Sprintf("%d boards", boardsCount)},
+		{Name: "Mailbot service account", OK: mailbotReady, Detail: boolToText(mailbotReady)},
+		{Name: "Real caller account exists", OK: realCallerCount > 0, Detail: fmt.Sprintf("%d caller(s), %d moderator(s), %d total users", realCallerCount, moderatorCount, usersCount)},
+		{Name: "Chat surface wired", OK: a.chatSvc != nil, Detail: boolToText(a.chatSvc != nil)},
+		{Name: "Doors available", OK: doorCount > 0, Detail: fmt.Sprintf("%d doors", doorCount)},
+	}
+	pass := 0
+	for _, row := range launchChecks {
+		if row.OK {
+			pass++
+		}
+	}
+	recommendations := make([]string, 0, 6)
+	if !siteCustomized {
+		recommendations = append(recommendations, "Set a real board name and hostname in Step 1 before sharing the board publicly.")
+	}
+	if !safetyReady {
+		recommendations = append(recommendations, "Finish Step 2 and enable verified-email protection; enable secure cookies when the board is behind HTTPS.")
+	}
+	if boardsCount == 0 {
+		recommendations = append(recommendations, "Run the default board seeding action so callers do not land on an empty board.")
+	}
+	if !mailbotReady {
+		recommendations = append(recommendations, "Run the mailbot bootstrap action so sysop and system flows have their service account.")
+	}
+	if realCallerCount == 0 {
+		recommendations = append(recommendations, "Create at least one non-sysop account in /admin/users and test the real caller journey.")
+	}
+	if a.chatSvc == nil {
+		recommendations = append(recommendations, "Investigate chat runtime wiring before launch; /chat should be usable on day one.")
+	}
+	if doorCount == 0 {
+		recommendations = append(recommendations, "Load or register at least one door so the nostalgia loop is not empty.")
+	}
+	if len(recommendations) == 0 {
+		recommendations = append(recommendations, "Launch baseline looks good. Walk the real user path once more, then invite callers.")
+	}
+	role := roleAdmin
+	handle := "sysop"
+	if user != nil {
+		role = rbac.NormalizeRole(user.Role)
+		handle = user.Handle
+	}
+	return statusSnapshot{
+		GeneratedAt: time.Now().UTC(),
+		Site:        a.siteDisplayName(),
+		Host:        a.siteHost(),
+		User:        handle,
+		Role:        role,
+		Summary: statusSummary{
+			Total: len(launchChecks),
+			Pass:  pass,
+			Warn:  len(launchChecks) - pass,
+		},
+		Checks:          launchChecks,
+		Recommendations: recommendations,
+	}
+}
+
 func (a *webApp) handleStatusCenter(w http.ResponseWriter, r *http.Request) {
 	user, ok := a.currentUser(r)
 	if !ok {
@@ -4899,6 +5018,21 @@ func (a *webApp) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
 	healthRows.WriteString(statusRow("Site identity configured", strings.TrimSpace(a.siteName) != "" && strings.TrimSpace(a.siteHostname) != "", a.siteDisplayName()+" @ "+a.siteHost()))
 	healthRows.WriteString(statusRow("Secure cookie mode", a.secureCookie, boolToText(a.secureCookie)))
 	healthRows.WriteString(statusRow("Verified required for external email", a.requireVerifiedEmail, boolToText(a.requireVerifiedEmail)))
+	readiness := a.buildSetupReadinessSnapshot(user)
+	readinessRows := strings.Builder{}
+	for _, row := range readiness.Checks {
+		readinessRows.WriteString(statusRow(row.Name, row.OK, row.Detail))
+	}
+	readinessItems := strings.Builder{}
+	for _, item := range readiness.Recommendations {
+		readinessItems.WriteString(`<li>` + htmlEscape(item) + `</li>`)
+	}
+	readinessVerdict := "Needs launch work"
+	if readiness.Summary.Warn == 0 {
+		readinessVerdict = "Caller-ready baseline reached"
+	} else if readiness.Summary.Pass >= readiness.Summary.Total-2 {
+		readinessVerdict = "Close to launch"
+	}
 
 	csrf := a.csrfHiddenInput(r)
 	noticeBlock := ""
@@ -4917,6 +5051,10 @@ func (a *webApp) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
 		`<li><a href="/admin/setup?step=3">Step 3: Experience</a></li>` +
 		`<li><a href="/admin/setup?step=4">Step 4: Bootstrap</a></li>` +
 		`</ol>`
+	readinessBlock := `<h2>Launch Readiness</h2>` +
+		`<p><strong>Go-live verdict:</strong> ` + htmlEscape(readinessVerdict) + ` | ` + strconv.Itoa(readiness.Summary.Pass) + `/` + strconv.Itoa(readiness.Summary.Total) + ` PASS, ` + strconv.Itoa(readiness.Summary.Warn) + ` remaining</p>` +
+		`<table border="1"><tr><th>Readiness check</th><th>Status</th><th>Details</th></tr>` + readinessRows.String() + `</table>` +
+		`<h3>Next best actions</h3><ul>` + readinessItems.String() + `</ul>`
 	launchChecklist := `<h2>Launch Checklist</h2>` +
 		`<ol>` +
 		`<li>Save Step 1 and Step 2 before treating the board as caller-ready.</li>` +
@@ -4938,6 +5076,7 @@ func (a *webApp) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
 		`<p>` + htmlEscape(wizardHint) + `</p>` +
 		progress +
 		`<p><strong>Tip:</strong> use the step links above, then save once after each section change.</p>` +
+		readinessBlock +
 		launchChecklist +
 		commonGotchas +
 		noticeBlock +
@@ -4977,6 +5116,8 @@ func (a *webApp) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
 		`<h2>Install and Ops Shortcuts</h2>` +
 		`<ul>` +
 		`<li>Start here: <code>docs/START_HERE.md</code></li>` +
+		`<li>Launch checklist: <code>docs/LAUNCH_CHECKLIST.md</code></li>` +
+		`<li>Troubleshooting: <code>docs/TROUBLESHOOTING.md</code></li>` +
 		`<li>Operations guide: <code>docs/OPERATIONS.md</code></li>` +
 		`<li>Installer docs: <code>docs/INSTALL.md</code></li>` +
 		`<li>Health: <a href="/healthz">/healthz</a> and <a href="/readyz">/readyz</a></li>` +

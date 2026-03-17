@@ -27,6 +27,8 @@ WolfBBS solves four problems at once:
    - setup wizard, config center, audit logs, user administration, runtime diagnostics
 4. `Ready to distribute`
    - release tarballs, checksums, bootstrap installer, smoke verification, and product docs
+5. `Ready to operate`
+   - first-step brief, status snapshot, launch checklist, and troubleshooting path
 
 ## Product Surfaces
 
@@ -200,8 +202,10 @@ bash install.sh --logs
 ## Documentation Map
 
 - [Start Here](START_HERE.md)
+- [Launch Checklist](LAUNCH_CHECKLIST.md)
 - [Quickstart](QUICKSTART.md)
 - [Install Guide](INSTALL.md)
+- [Troubleshooting](TROUBLESHOOTING.md)
 - [Operations Guide](OPERATIONS.md)
 - [Datasheet](DATASHEET.md)
 - [Feature Reference](feature-reference.md)
