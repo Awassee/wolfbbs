@@ -17,6 +17,7 @@ import (
 	"wolfbbs/internal/auth"
 	"wolfbbs/internal/chat"
 	"wolfbbs/internal/config"
+	"wolfbbs/internal/discovery"
 	"wolfbbs/internal/domain"
 	"wolfbbs/internal/doors"
 	"wolfbbs/internal/gateway"
@@ -2448,6 +2449,451 @@ func TestAdminLaunchDashboardAndBoardsEmptyState(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "Board Launch Tip") {
 		t.Fatalf("boards empty state missing launch tip: %s", rr.Body.String())
+	}
+}
+
+func TestStartAttentionOpsAndRichComposeSurfaces(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	boardRepo := repository.NewInMemoryBoardRepository()
+	msgRepo := repository.NewInMemoryMessageRepository()
+	mailRepo := repository.NewInMemoryPrivateMailRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
+	authSvc := auth.NewService(userRepo)
+
+	caller, err := authSvc.Register("caller", "password123")
+	if err != nil {
+		t.Fatalf("register caller: %v", err)
+	}
+	friend, err := authSvc.Register("friend", "password123")
+	if err != nil {
+		t.Fatalf("register friend: %v", err)
+	}
+	if _, err := authSvc.Register("sysop", "password123"); err != nil {
+		t.Fatalf("register sysop: %v", err)
+	}
+	if err := authSvc.SetRole("sysop", roleAdmin); err != nil {
+		t.Fatalf("set sysop role: %v", err)
+	}
+
+	last := time.Now().UTC().Add(-4 * time.Hour)
+	caller.LastLoginAt = &last
+	if err := userRepo.Update(caller); err != nil {
+		t.Fatalf("update caller last login: %v", err)
+	}
+
+	if err := boardRepo.Create(&domain.Board{Name: "General", Description: "Main board", Conference: "Public", CreatedBy: caller.ID}); err != nil {
+		t.Fatalf("create board: %v", err)
+	}
+	root := &domain.Message{
+		BoardID:   1,
+		AuthorID:  friend.ID,
+		Subject:   "Attention needed",
+		Body:      "caller should look here",
+		CreatedAt: time.Now().UTC().Add(-2 * time.Hour),
+	}
+	if err := msgRepo.CreateMessage(root); err != nil {
+		t.Fatalf("create root message: %v", err)
+	}
+	if err := msgRepo.CreateMessage(&domain.Message{
+		BoardID:   1,
+		AuthorID:  friend.ID,
+		ParentID:  root.ID,
+		Subject:   "Re: Attention needed",
+		Body:      "caller this is a reply for you",
+		CreatedAt: time.Now().UTC().Add(-90 * time.Minute),
+	}); err != nil {
+		t.Fatalf("create reply message: %v", err)
+	}
+	if err := mailRepo.CreateMail(&domain.PrivateMail{
+		FromUserID: friend.ID,
+		ToUserID:   caller.ID,
+		Subject:    "Unread attention mail",
+		Body:       "check this now",
+		CreatedAt:  time.Now().UTC().Add(-45 * time.Minute),
+	}); err != nil {
+		t.Fatalf("create unread mail: %v", err)
+	}
+	if err := adminRepo.UpsertNodeSession(&domain.NodeSession{
+		SessionID:    "live-sysop",
+		NodeID:       1,
+		Username:     "sysop",
+		Area:         "WFC",
+		RemoteAddr:   "203.0.113.20:2222",
+		LoginAt:      time.Now().UTC().Add(-20 * time.Minute),
+		LastActivity: time.Now().UTC().Add(-3 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed node session: %v", err)
+	}
+	if err := adminRepo.UpsertNodeSession(&domain.NodeSession{
+		SessionID:    "stale-node",
+		NodeID:       7,
+		Username:     "stale",
+		Area:         "Idle",
+		RemoteAddr:   "198.51.100.77:2222",
+		LoginAt:      time.Now().UTC().Add(-2 * time.Hour),
+		LastActivity: time.Now().UTC().Add(-95 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed stale node session: %v", err)
+	}
+	if err := adminRepo.AddCallerHistory(&domain.CallerHistory{
+		SessionID:       "recent-caller",
+		NodeID:          2,
+		Username:        "caller",
+		Area:            "Boards",
+		RemoteAddr:      "198.51.100.7:2222",
+		LoginAt:         time.Now().UTC().Add(-70 * time.Minute),
+		LogoutAt:        time.Now().UTC().Add(-10 * time.Minute),
+		DurationSeconds: 3600,
+	}); err != nil {
+		t.Fatalf("seed caller history: %v", err)
+	}
+	if err := adminRepo.AddAudit(&domain.AdminAudit{
+		Actor:     "sysop",
+		Target:    "boards",
+		Action:    "seed_default_boards",
+		Details:   "seeded=3",
+		CreatedAt: time.Now().UTC().Add(-5 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed audit: %v", err)
+	}
+	appErr := errors.New("qa runtime issue")
+
+	app := &webApp{
+		authSvc:       authSvc,
+		userRepo:      userRepo,
+		boardRepo:     boardRepo,
+		msgRepo:       msgRepo,
+		mailRepo:      mailRepo,
+		adminRepo:     adminRepo,
+		chatSvc:       chat.NewServiceForTest(),
+		sessions:      map[string]sessionState{},
+		rateLimits:    map[string][]time.Time{},
+		runtimeCfg:    config.DefaultRuntime(),
+		discover:      true,
+		quickJump:     true,
+		savedSearches: map[string][]string{},
+	}
+	app.addAppError("qa.ops", appErr)
+
+	callerSID, ok := app.createSession("caller")
+	if !ok {
+		t.Fatal("caller session creation failed")
+	}
+	sysopSID, ok := app.createSession("sysop")
+	if !ok {
+		t.Fatal("sysop session creation failed")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/start", nil)
+	rr := httptest.NewRecorder()
+	app.handleStartCenter(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("guest start status = %d", rr.Code)
+	}
+	for _, needle := range []string{"Start Center", "Caller path", "Sysop path"} {
+		if !strings.Contains(rr.Body.String(), needle) {
+			t.Fatalf("guest start missing %q: %s", needle, rr.Body.String())
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/start", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleStartCenter(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("caller start status = %d", rr.Code)
+	}
+	for _, needle := range []string{"Attention Center", "everything that needs follow-up", "Use Attention first"} {
+		if !strings.Contains(rr.Body.String(), needle) {
+			t.Fatalf("caller start missing %q: %s", needle, rr.Body.String())
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/attention", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleAttentionCenter(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("attention status = %d", rr.Code)
+	}
+	for _, needle := range []string{"Attention Center", "Direct Follow-Up", "Inbox Needs Action", "Unread attention mail", "Attention needed"} {
+		if !strings.Contains(rr.Body.String(), needle) {
+			t.Fatalf("attention page missing %q: %s", needle, rr.Body.String())
+		}
+	}
+	digest, err := discovery.BuildSinceLastCall(app.boardRepo, app.msgRepo, app.mailRepo, caller, 18)
+	if err != nil {
+		t.Fatalf("build digest: %v", err)
+	}
+	var dismissItem discovery.Item
+	for _, item := range digest.Items {
+		if item.Kind == "reply" || item.Kind == "mention" {
+			dismissItem = item
+			break
+		}
+	}
+	if dismissItem.Line == "" {
+		t.Fatalf("expected dismissible attention item in digest: %+v", digest.Items)
+	}
+	form := url.Values{}
+	form.Set("action", "dismiss")
+	form.Set("item_key", attentionItemKey(dismissItem))
+	form.Set("csrf_token", app.sessions[callerSID].csrf)
+	req = httptest.NewRequest(http.MethodPost, "/attention", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleAttentionCenter(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("dismiss attention status = %d", rr.Code)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/attention", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleAttentionCenter(rr, req)
+	if strings.Contains(rr.Body.String(), dismissItem.Line) {
+		t.Fatalf("expected dismissed attention item to be removed: %s", rr.Body.String())
+	}
+	rawDismissed, err := adminRepo.GetSystemSetting(attentionDismissedSettingKey("caller"))
+	if err != nil {
+		t.Fatalf("persisted attention dismissals missing: %v", err)
+	}
+	if !strings.Contains(rawDismissed, attentionItemKey(dismissItem)) {
+		t.Fatalf("persisted attention dismissals missing item key: %s", rawDismissed)
+	}
+	reloadedApp := &webApp{
+		authSvc:       authSvc,
+		userRepo:      userRepo,
+		boardRepo:     boardRepo,
+		msgRepo:       msgRepo,
+		mailRepo:      mailRepo,
+		adminRepo:     adminRepo,
+		chatSvc:       chat.NewServiceForTest(),
+		sessions:      map[string]sessionState{},
+		rateLimits:    map[string][]time.Time{},
+		runtimeCfg:    config.DefaultRuntime(),
+		discover:      true,
+		quickJump:     true,
+		savedSearches: map[string][]string{},
+	}
+	reloadedSID, ok := reloadedApp.createSession("caller")
+	if !ok {
+		t.Fatal("reloaded caller session creation failed")
+	}
+	req = httptest.NewRequest(http.MethodGet, "/attention", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: reloadedSID})
+	rr = httptest.NewRecorder()
+	reloadedApp.handleAttentionCenter(rr, req)
+	if strings.Contains(rr.Body.String(), dismissItem.Line) {
+		t.Fatalf("expected dismissed attention item to persist across app reload: %s", rr.Body.String())
+	}
+
+	form = url.Values{}
+	form.Set("action", "clear_dismissed")
+	form.Set("csrf_token", app.sessions[callerSID].csrf)
+	req = httptest.NewRequest(http.MethodPost, "/attention", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleAttentionCenter(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("clear dismissed attention status = %d", rr.Code)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/attention", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleAttentionCenter(rr, req)
+	if !strings.Contains(rr.Body.String(), dismissItem.Line) {
+		t.Fatalf("expected restored attention item to reappear: %s", rr.Body.String())
+	}
+	if cleared, err := adminRepo.GetSystemSetting(attentionDismissedSettingKey("caller")); err != nil {
+		t.Fatalf("load cleared attention dismissals: %v", err)
+	} else if strings.TrimSpace(cleared) != "" {
+		t.Fatalf("expected persisted attention dismissals to clear, got %q", cleared)
+	}
+
+	form = url.Values{}
+	form.Set("action", "dismiss_board")
+	form.Set("board_id", "1")
+	form.Set("csrf_token", app.sessions[callerSID].csrf)
+	req = httptest.NewRequest(http.MethodPost, "/attention", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleAttentionCenter(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("dismiss board status = %d", rr.Code)
+	}
+	rawDismissed, err = adminRepo.GetSystemSetting(attentionDismissedSettingKey("caller"))
+	if err != nil {
+		t.Fatalf("persisted board attention dismissals missing: %v", err)
+	}
+	if !strings.Contains(rawDismissed, boardAttentionKey(1)) {
+		t.Fatalf("persisted attention dismissals missing board key: %s", rawDismissed)
+	}
+
+	form = url.Values{}
+	form.Set("action", "mark_all_mail_read")
+	form.Set("csrf_token", app.sessions[callerSID].csrf)
+	req = httptest.NewRequest(http.MethodPost, "/attention", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleAttentionCenter(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("mark all mail read status = %d", rr.Code)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/attention", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleAttentionCenter(rr, req)
+	if !strings.Contains(rr.Body.String(), "No unread mail is waiting.") {
+		t.Fatalf("expected unread mail queue to clear: %s", rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/mail", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleMail(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("mail status = %d", rr.Code)
+	}
+	for _, needle := range []string{`data-rich-compose="mail-compose"`, `data-compose-signature="caller"`} {
+		if !strings.Contains(rr.Body.String(), needle) {
+			t.Fatalf("mail compose missing %q: %s", needle, rr.Body.String())
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/mail?id=1", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleMail(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("mail reader status = %d", rr.Code)
+	}
+	for _, needle := range []string{`data-rich-compose="mail-reply"`, `data-compose-signature="caller"`, `data-compose-quote="&gt; check this now`} {
+		if !strings.Contains(rr.Body.String(), needle) {
+			t.Fatalf("mail reply missing %q: %s", needle, rr.Body.String())
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/mail", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleMail(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("mail status = %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), `data-rich-compose="mail-compose"`) {
+		t.Fatalf("mail compose missing rich compose marker: %s", rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/boards?board=1&id=1", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleBoards(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("board reader status = %d", rr.Code)
+	}
+	for _, needle := range []string{`data-rich-compose="board-reply"`, `data-compose-signature="caller"`, `data-compose-quote="&gt; caller should look here`} {
+		if !strings.Contains(rr.Body.String(), needle) {
+			t.Fatalf("board reader missing %q: %s", needle, rr.Body.String())
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/feedback", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleFeedback(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("feedback status = %d", rr.Code)
+	}
+	for _, needle := range []string{`data-rich-compose="feedback-compose"`, `data-compose-signature="caller"`} {
+		if !strings.Contains(rr.Body.String(), needle) {
+			t.Fatalf("feedback missing %q: %s", needle, rr.Body.String())
+		}
+	}
+	app.sessions["expired-web"] = sessionState{handle: "caller", expire: time.Now().Add(-time.Minute), csrf: "expired"}
+	app.rateLimits["login:198.51.100.9"] = []time.Time{time.Now().UTC()}
+	app.rateLimits["reset:198.51.100.9"] = []time.Time{time.Now().UTC()}
+
+	req = httptest.NewRequest(http.MethodGet, "/admin/ops", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sysopSID})
+	rr = httptest.NewRecorder()
+	app.handleAdminOps(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("ops status = %d", rr.Code)
+	}
+	for _, needle := range []string{"Ops Center", "Current Operator Focus", "Recent Runtime Errors", "Recent Audit Trail", "seed_default_boards", "Live Sessions", "Clear Runtime Errors", "Prune Sessions", "Purge Expired Web Sessions", "Clear Rate Limits", "qa runtime issue"} {
+		if !strings.Contains(rr.Body.String(), needle) {
+			t.Fatalf("ops page missing %q: %s", needle, rr.Body.String())
+		}
+	}
+	form = url.Values{}
+	form.Set("action", "clear_errors")
+	form.Set("csrf_token", app.sessions[sysopSID].csrf)
+	req = httptest.NewRequest(http.MethodPost, "/admin/ops", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sysopSID})
+	rr = httptest.NewRecorder()
+	app.handleAdminOps(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("clear errors status = %d", rr.Code)
+	}
+	if len(app.latestErrors(10)) != 0 {
+		t.Fatalf("expected error log to be cleared, got %+v", app.latestErrors(10))
+	}
+
+	form = url.Values{}
+	form.Set("action", "prune_idle_sessions")
+	form.Set("idle_minutes", "30")
+	form.Set("csrf_token", app.sessions[sysopSID].csrf)
+	req = httptest.NewRequest(http.MethodPost, "/admin/ops", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sysopSID})
+	rr = httptest.NewRecorder()
+	app.handleAdminOps(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("prune sessions status = %d", rr.Code)
+	}
+	sessions, err := adminRepo.ListNodeSessions(10)
+	if err != nil {
+		t.Fatalf("list node sessions: %v", err)
+	}
+	for _, row := range sessions {
+		if row.SessionID == "stale-node" {
+			t.Fatalf("expected stale session to be pruned: %+v", sessions)
+		}
+	}
+
+	form = url.Values{}
+	form.Set("action", "purge_web_sessions")
+	form.Set("csrf_token", app.sessions[sysopSID].csrf)
+	req = httptest.NewRequest(http.MethodPost, "/admin/ops", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sysopSID})
+	rr = httptest.NewRecorder()
+	app.handleAdminOps(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("purge web sessions status = %d", rr.Code)
+	}
+	if _, ok := app.sessions["expired-web"]; ok {
+		t.Fatalf("expected expired web session to be purged")
+	}
+
+	form = url.Values{}
+	form.Set("action", "clear_rate_limits")
+	form.Set("csrf_token", app.sessions[sysopSID].csrf)
+	req = httptest.NewRequest(http.MethodPost, "/admin/ops", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sysopSID})
+	rr = httptest.NewRecorder()
+	app.handleAdminOps(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("clear rate limits status = %d", rr.Code)
+	}
+	if got := app.countRateLimits(); got != 0 {
+		t.Fatalf("expected rate limits to clear, got %d", got)
 	}
 }
 

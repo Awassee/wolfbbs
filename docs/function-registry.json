@@ -177,6 +177,19 @@
       "notes": "Discovered from cmd/wolfbbs-web route registration."
     },
     {
+      "id": "web:/admin/ops",
+      "type": "web_route",
+      "entrypoint": "/admin/ops",
+      "user_tui": false,
+      "user_web": false,
+      "admin_tui": false,
+      "admin_web": true,
+      "config_ui": "/admin/config",
+      "status_ui": "/admin/system",
+      "state_visibility": "enabled/configured/healthy surfaced via status center",
+      "notes": "Discovered from cmd/wolfbbs-web route registration."
+    },
+    {
       "id": "web:/admin/mail",
       "type": "web_route",
       "entrypoint": "/admin/mail",
@@ -238,6 +251,19 @@
       "admin_web": true,
       "config_ui": "/admin/config",
       "status_ui": "/admin/system",
+      "state_visibility": "enabled/configured/healthy surfaced via status center",
+      "notes": "Discovered from cmd/wolfbbs-web route registration."
+    },
+    {
+      "id": "web:/attention",
+      "type": "web_route",
+      "entrypoint": "/attention",
+      "user_tui": true,
+      "user_web": true,
+      "admin_tui": false,
+      "admin_web": false,
+      "config_ui": "/admin/config",
+      "status_ui": "/status",
       "state_visibility": "enabled/configured/healthy surfaced via status center",
       "notes": "Discovered from cmd/wolfbbs-web route registration."
     },
@@ -714,6 +740,19 @@
       "type": "web_route",
       "entrypoint": "/statusz",
       "user_tui": false,
+      "user_web": true,
+      "admin_tui": false,
+      "admin_web": false,
+      "config_ui": "/admin/config",
+      "status_ui": "/status",
+      "state_visibility": "enabled/configured/healthy surfaced via status center",
+      "notes": "Discovered from cmd/wolfbbs-web route registration."
+    },
+    {
+      "id": "web:/start",
+      "type": "web_route",
+      "entrypoint": "/start",
+      "user_tui": true,
       "user_web": true,
       "admin_tui": false,
       "admin_web": false,

@@ -135,12 +135,24 @@ test("connect page exposes the web terminal entrypoint", async ({ page }) => {
 test("user web journey supports keyboard navigation and status/config visibility", async ({
   page,
 }) => {
+  await page.goto("/start");
+  await expect(page.locator("h1")).toContainText(/Start Center/i);
+  await expect(page.locator("body")).toContainText("Caller path");
+
   await page.goto("/login");
   await expect(page.locator("h1")).toContainText(/Web Login/i);
   await expectNoCriticalA11y(page);
 
   await login(page, USER_HANDLE, USER_PASSWORD);
   await expect(page).toHaveURL(/\/boards$/);
+  await page.goto("/start");
+  await expect(page.locator("body")).toContainText("Attention Center");
+  await page.goto("/attention");
+  await expect(page.locator("h1")).toContainText("Attention Center");
+  await expect(page.locator("body")).toContainText("Inbox Needs Action");
+  await expect(page.locator("body")).toContainText("Direct Follow-Up");
+
+  await page.goto("/boards");
   await expect(page.locator("h1")).toContainText("Message Boards");
   await expect(page.locator("#wolfbbsCommandButton")).toContainText(/Jump \/ Search/i);
   await expect(page.locator("body")).toContainText("Caller Cockpit");
@@ -194,6 +206,21 @@ test("user web journey supports keyboard navigation and status/config visibility
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/mail$/);
   await expect(page.locator("h1")).toContainText("Private Mail");
+  await expect(page.getByRole("button", { name: "Preview" }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Focus Mode" }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Insert Signature" }).first()).toBeVisible();
+  await page.fill('textarea[name="body"]', "Draft survives reload.");
+  await expect(page.locator(".wolfbbs-form-status").first()).toContainText("Draft saved", { timeout: 3000 });
+  await page.reload();
+  await expect(page.locator('textarea[name="body"]')).toHaveValue(/Draft survives reload\./);
+  await page.getByRole("button", { name: "Preview" }).first().click();
+  await expect(page.locator(".wolfbbs-compose-preview.active").first()).toContainText("Draft survives reload.");
+  await page.getByRole("button", { name: "Focus Mode" }).first().click();
+  await expect(page.locator('form[data-rich-compose="mail-compose"]')).toHaveClass(/wolfbbs-compose-focus/);
+  await page.locator('textarea[name="body"]').press("Escape");
+  await expect(page.locator('form[data-rich-compose="mail-compose"]')).not.toHaveClass(/wolfbbs-compose-focus/);
+  await page.getByRole("button", { name: "Insert Signature" }).first().click();
+  await expect(page.locator('textarea[name="body"]')).toHaveValue(new RegExp(`--\\s*\\n${USER_HANDLE}`, "i"));
   await page.goto("/mail?template=door_invite");
   await expect(page.locator('input[name="subject"]')).toHaveValue(/Meet me in the Door Hub/);
   await expect(page.locator("body")).toContainText("Drafts are local");
@@ -204,6 +231,7 @@ test("user web journey supports keyboard navigation and status/config visibility
   await expect(page.locator("body")).toContainText("Playwright Mail");
 
   await page.goto("/boards?board=1");
+  await expect(page.getByRole("button", { name: "Preview" }).first()).toBeVisible();
   await page.fill('input[name="subject"]', "Playwright Post");
   await page.fill('textarea[name="body"]', "Testing from browser flow.");
   await page.getByRole("button", { name: "Post" }).click();
@@ -214,6 +242,7 @@ test("user web journey supports keyboard navigation and status/config visibility
   await expect(link).toBeVisible();
   await link.click();
   await expect(page.locator("h2")).toContainText("Reader");
+  await expect(page.getByRole("button", { name: "Quote Context" }).first()).toBeVisible();
   await page.fill('textarea[name="body"]', "Reply body from playwright.");
   await page.getByRole("button", { name: "Post Reply" }).click();
   await expect(page.locator("body")).toContainText("Playwright Post");
@@ -258,6 +287,10 @@ test("admin journey enforces RBAC and exposes sysop pages", async ({ browser }) 
   await expect(adminPage.locator("body")).toContainText("Operator Commands");
   await expect(adminPage.locator("body")).toContainText("docs/OPERATOR_PLAYBOOK.md");
   await expect(adminPage.locator("body")).toContainText("Use Launch Center as home base");
+  await adminPage.goto("/admin/ops");
+  await expect(adminPage.locator("h1")).toContainText("Ops Center");
+  await expect(adminPage.locator("body")).toContainText("Current Operator Focus");
+  await expect(adminPage.locator("body")).toContainText("Recent Audit Trail");
   await adminPage.goto("/admin");
 
   await adminPage.locator('a[href="/admin/users"]').first().focus();

@@ -61,11 +61,13 @@ Auto-generated from `docs/function-registry.json`.
 | `web:/admin/gateways` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/login` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/launch` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
+| `web:/admin/ops` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/mail` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/node-state` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/setup` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/system` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/users` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
+| `web:/attention` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/ap/users/` | `web_route` | N | N | N | N | `/admin/config` | `/status` |
 | `web:/boards` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/chat` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
@@ -103,4 +105,5 @@ Auto-generated from `docs/function-registry.json`.
 | `web:/settings` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/status` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/statusz` | `web_route` | N | Y | N | N | `/admin/config` | `/status` |
+| `web:/start` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/tour` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
