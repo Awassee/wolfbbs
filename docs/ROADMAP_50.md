@@ -43,10 +43,10 @@ Status: planned.
 ## Theme 2: Communication and social depth
 11. Persistent notification model with read/unread state, not just generated queues.
 Value: enables reliable follow-up behavior.
-Status: next.
+Status: shipped in v1.1.12.
 12. Board subscription tiers: watch, mute, digest-only.
 Value: gives users more control than a binary watch list.
-Status: next.
+Status: shipped in v1.1.12.
 13. Mention autocomplete in boards, mail, and chat.
 Value: reduces failed mentions and typing friction.
 Status: planned.
@@ -75,7 +75,7 @@ Status: later.
 ## Theme 3: Boards and knowledge systems
 21. Full-screen composer with preview, quote tools, templates, and keyboard map.
 Value: makes posting feel intentional instead of form-based.
-Status: next.
+Status: shipped in v1.1.12.
 22. Thread summaries and high-signal reply highlighting.
 Value: speeds catch-up in long discussions.
 Status: planned.
@@ -142,7 +142,7 @@ Value: makes competitive doors feel like a product system.
 Status: next.
 42. Event recurrence and series management in `/admin/events`.
 Value: reduces manual calendar maintenance.
-Status: next.
+Status: shipped in v1.1.12.
 43. Door parties and scheduled multiplayer sessions.
 Value: turns doors into community events.
 Status: planned.
@@ -169,7 +169,7 @@ Value: keeps product improvement tied to operational quality.
 Status: later.
 
 ## Next recommended tranche
-- Notification persistence and subscription tiers.
-- Full-screen composer.
-- Event recurrence and tournament scaffolding.
+- Guided first caller session and persistent quick-start checklist.
+- Sysop go-live wizard and role-aware empty states.
+- Tournament scaffolding on top of the recurring events system.
 - File upload modernization.

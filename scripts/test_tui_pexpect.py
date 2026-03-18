@@ -168,6 +168,7 @@ def spawn_ssh(port: int, term_name: str = "xterm-256color", cols: int = 80, rows
             except pexpect.TIMEOUT:
                 pass
     if idx in (4, 5):
+        child.send("x")
         try:
             child.expect("Handle:")
             return child

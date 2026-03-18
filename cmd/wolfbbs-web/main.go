@@ -183,15 +183,19 @@ type attentionActionRow struct {
 	Href        string
 	Meta        string
 	ItemKey     string
+	Read        bool
 	Dismissible bool
 }
 
 type communityEvent struct {
 	ID          string    `json:"id"`
+	SeriesID    string    `json:"series_id,omitempty"`
 	Title       string    `json:"title"`
 	Category    string    `json:"category"`
 	StartsAt    time.Time `json:"starts_at"`
 	EndsAt      time.Time `json:"ends_at"`
+	Recurrence  string    `json:"recurrence,omitempty"`
+	RepeatUntil time.Time `json:"repeat_until,omitempty"`
 	Location    string    `json:"location"`
 	Host        string    `json:"host"`
 	Audience    string    `json:"audience"`
@@ -300,6 +304,21 @@ type boardQueueSnapshot struct {
 	MentionBoards int
 }
 
+type boardSubscriptionMode string
+
+const (
+	boardSubscriptionNone   boardSubscriptionMode = ""
+	boardSubscriptionWatch  boardSubscriptionMode = "watch"
+	boardSubscriptionDigest boardSubscriptionMode = "digest"
+	boardSubscriptionMute   boardSubscriptionMode = "mute"
+)
+
+type boardSubscriptionStat struct {
+	Label string
+	Mode  boardSubscriptionMode
+	Count int
+}
+
 type sessionState struct {
 	handle string
 	expire time.Time
@@ -379,8 +398,10 @@ const (
 	sysSettingConnectorTelnetCmd     = "runtime.connector.telnet_bridge.command"
 	sysSettingConnectorTelnetArgs    = "runtime.connector.telnet_bridge.args"
 	sysSettingCommunityEvents        = "community.calendar.events"
+	sysSettingBoardSubscriptionsRoot = "web.board_subscriptions."
 	sysSettingBoardWatchRoot         = "web.board_watch."
 	sysSettingAttentionDismissedRoot = "web.attention.dismissed."
+	sysSettingAttentionReadRoot      = "web.attention.read."
 	maxAdminErrorEntries             = 300
 	maxActivityPubInboxBytes         = 1 << 20
 	maxJSONRequestBytes              = 1 << 20
@@ -390,6 +411,7 @@ const (
 	defaultResetRateLimit            = 5
 	defaultResetRateWindow           = 30 * time.Minute
 	maxAttentionDismissedItems       = 200
+	maxAttentionReadItems            = 300
 )
 
 type webApp struct {
@@ -438,6 +460,8 @@ type webApp struct {
 	savedSearches        map[string][]string
 	attentionDismissed   map[string]map[string]time.Time
 	attentionLoaded      map[string]bool
+	attentionRead        map[string]map[string]time.Time
+	attentionReadLoaded  map[string]bool
 	motd                 string
 	announcement         string
 	errorLog             []appErrorEntry
@@ -622,23 +646,25 @@ func main() {
 		}(),
 		showResetDev: strings.EqualFold(strings.TrimSpace(os.Getenv("WOLFBBS_DEV_SHOW_RESET_TOKEN")), "1") ||
 			strings.EqualFold(strings.TrimSpace(os.Getenv("WOLFBBS_DEV_SHOW_RESET_TOKEN")), "true"),
-		apEnabled:          runtimeCfg.ActivityPub.Enabled,
-		apBaseURL:          runtimeCfg.ActivityPub.BaseURL,
-		publicBaseURL:      strings.TrimSpace(os.Getenv("WOLFBBS_PUBLIC_BASE_URL")),
-		eventBus:           bus,
-		startedAt:          time.Now().UTC(),
-		runtimeCfg:         runtimeCfg,
-		modernOnRamp:       envEnabledDefault("WOLFBBS_WEB_ONRAMP_ENABLE", false),
-		guestTour:          envEnabledDefault("WOLFBBS_GUEST_TOUR_ENABLE", false),
-		discover:           envEnabledDefault("WOLFBBS_DISCOVER_ENABLE", false),
-		quickJump:          envEnabledDefault("WOLFBBS_QUICK_JUMP_ENABLE", false),
-		classicSearch:      envEnabledDefault("WOLFBBS_CLASSIC_SEARCH_ENABLE", false),
-		wsTerminalURL:      strings.TrimSpace(envFirst("WOLFBBS_WS_TERMINAL_URL", "WOLFBBS_WS_URL", "WOLFBBS_WSS_URL")),
-		menuRoot:           strings.TrimSpace(os.Getenv("WOLFBBS_MENU_ROOT")),
-		savedSearches:      map[string][]string{},
-		attentionDismissed: map[string]map[string]time.Time{},
-		attentionLoaded:    map[string]bool{},
-		lockedChat:         map[string]bool{},
+		apEnabled:           runtimeCfg.ActivityPub.Enabled,
+		apBaseURL:           runtimeCfg.ActivityPub.BaseURL,
+		publicBaseURL:       strings.TrimSpace(os.Getenv("WOLFBBS_PUBLIC_BASE_URL")),
+		eventBus:            bus,
+		startedAt:           time.Now().UTC(),
+		runtimeCfg:          runtimeCfg,
+		modernOnRamp:        envEnabledDefault("WOLFBBS_WEB_ONRAMP_ENABLE", false),
+		guestTour:           envEnabledDefault("WOLFBBS_GUEST_TOUR_ENABLE", false),
+		discover:            envEnabledDefault("WOLFBBS_DISCOVER_ENABLE", false),
+		quickJump:           envEnabledDefault("WOLFBBS_QUICK_JUMP_ENABLE", false),
+		classicSearch:       envEnabledDefault("WOLFBBS_CLASSIC_SEARCH_ENABLE", false),
+		wsTerminalURL:       strings.TrimSpace(envFirst("WOLFBBS_WS_TERMINAL_URL", "WOLFBBS_WS_URL", "WOLFBBS_WSS_URL")),
+		menuRoot:            strings.TrimSpace(os.Getenv("WOLFBBS_MENU_ROOT")),
+		savedSearches:       map[string][]string{},
+		attentionDismissed:  map[string]map[string]time.Time{},
+		attentionLoaded:     map[string]bool{},
+		attentionRead:       map[string]map[string]time.Time{},
+		attentionReadLoaded: map[string]bool{},
+		lockedChat:          map[string]bool{},
 		networkSvc: func() *network.Service {
 			spoolDir := strings.TrimSpace(os.Getenv("WOLFBBS_NET_SPOOL_DIR"))
 			if spoolDir == "" {
@@ -849,6 +875,22 @@ func (a *webApp) handleAttentionCenter(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
+	buildAttentionContext := func() (discovery.Result, []boardPulseRow, []communityEvent, string, map[int64]bool, map[int64]bool, error) {
+		digest, err := discovery.BuildSinceLastCall(a.boardRepo, a.msgRepo, a.mailRepo, user, 18)
+		if err != nil {
+			return discovery.Result{}, nil, nil, "", nil, nil, err
+		}
+		visibleBoards := a.visibleBoardsFor(user)
+		watchSubs := a.boardSubscriptionIDs(user.Handle, boardSubscriptionWatch)
+		digestSubs := a.boardSubscriptionIDs(user.Handle, boardSubscriptionDigest)
+		trackedBoards := filterBoardsByWatch(visibleBoards, watchSubs)
+		trackedLabel := "watch tier"
+		if len(trackedBoards) == 0 {
+			trackedBoards = visibleBoards
+			trackedLabel = "board pulse fallback"
+		}
+		return digest, a.buildBoardPulse(user, trackedBoards, 6), a.upcomingCommunityEvents(4, time.Now().UTC()), trackedLabel, watchSubs, digestSubs, nil
+	}
 	if r.Method == http.MethodPost {
 		if !a.requireCSRF(w, r) {
 			return
@@ -863,6 +905,46 @@ func (a *webApp) handleAttentionCenter(w http.ResponseWriter, r *http.Request) {
 			}
 			a.dismissAttentionItem(user.Handle, itemKey)
 			redirectWithNotice(w, r, "/attention", "Attention item dismissed.")
+			return
+		case "mark_read":
+			itemKey := strings.TrimSpace(r.FormValue("item_key"))
+			if itemKey == "" {
+				redirectWithError(w, r, "/attention", "Attention item key is required.")
+				return
+			}
+			a.markAttentionItemRead(user.Handle, itemKey)
+			redirectWithNotice(w, r, "/attention", "Attention item marked read.")
+			return
+		case "mark_unread":
+			itemKey := strings.TrimSpace(r.FormValue("item_key"))
+			if itemKey == "" {
+				redirectWithError(w, r, "/attention", "Attention item key is required.")
+				return
+			}
+			a.markAttentionItemUnread(user.Handle, itemKey)
+			redirectWithNotice(w, r, "/attention", "Attention item marked unread.")
+			return
+		case "mark_all_read":
+			digest, boardPulse, _, _, _, _, err := buildAttentionContext()
+			if err != nil {
+				redirectWithError(w, r, "/attention", "Attention feed unavailable.")
+				return
+			}
+			keys := make([]string, 0, len(digest.Items)+len(boardPulse))
+			for _, item := range digest.Items {
+				key := attentionItemKey(item)
+				if key != "" && !a.isAttentionKeyDismissed(user.Handle, key) {
+					keys = append(keys, key)
+				}
+			}
+			for _, row := range boardPulse {
+				key := boardAttentionItemKey(row)
+				if key != "" && !a.isAttentionKeyDismissed(user.Handle, key) {
+					keys = append(keys, key)
+				}
+			}
+			updated := a.markAttentionItemsRead(user.Handle, keys)
+			redirectWithNotice(w, r, "/attention", fmt.Sprintf("Marked %d attention item(s) read.", updated))
 			return
 		case "clear_dismissed":
 			a.clearAttentionDismissals(user.Handle)
@@ -900,12 +982,16 @@ func (a *webApp) handleAttentionCenter(w http.ResponseWriter, r *http.Request) {
 			redirectWithNotice(w, r, "/attention", fmt.Sprintf("Marked %d mail item(s) as read.", updated))
 			return
 		case "dismiss_board":
-			boardID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("board_id")), 10, 64)
-			if boardID <= 0 {
-				redirectWithError(w, r, "/attention", "Board ID is required.")
-				return
+			itemKey := strings.TrimSpace(r.FormValue("item_key"))
+			if itemKey == "" {
+				boardID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("board_id")), 10, 64)
+				if boardID <= 0 {
+					redirectWithError(w, r, "/attention", "Board ID is required.")
+					return
+				}
+				itemKey = boardAttentionKey(boardID)
 			}
-			a.dismissAttentionItem(user.Handle, boardAttentionKey(boardID))
+			a.dismissAttentionItem(user.Handle, itemKey)
 			redirectWithNotice(w, r, "/attention", "Board dismissed from attention queue.")
 			return
 		default:
@@ -918,32 +1004,27 @@ func (a *webApp) handleAttentionCenter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	digest, err := discovery.BuildSinceLastCall(a.boardRepo, a.msgRepo, a.mailRepo, user, 18)
+	digest, boardPulse, upcomingEvents, trackedLabel, watchSubs, digestSubs, err := buildAttentionContext()
 	if err != nil {
 		http.Error(w, "attention feed unavailable", http.StatusInternalServerError)
 		return
 	}
 
-	visibleBoards := a.visibleBoardsFor(user)
-	watchedBoards := a.watchedBoardIDs(user.Handle)
-	trackedBoards := filterBoardsByWatch(visibleBoards, watchedBoards)
-	trackedLabel := "watched boards"
-	if len(trackedBoards) == 0 {
-		trackedBoards = visibleBoards
-		trackedLabel = "board pulse fallback"
-	}
-	boardPulse := a.buildBoardPulse(user, trackedBoards, 6)
-	upcomingEvents := a.upcomingCommunityEvents(4, time.Now().UTC())
 	handleByID := a.userHandleLookup()
 	csrf := a.csrfHiddenInput(r)
 
-	directRows := make([]attentionActionRow, 0, 8)
-	boardRows := make([]attentionActionRow, 0, 8)
-	allRows := make([]attentionActionRow, 0, len(digest.Items))
+	directUnread := make([]attentionActionRow, 0, 8)
+	directSeen := make([]attentionActionRow, 0, 8)
+	boardQueueUnread := make([]attentionActionRow, 0, 8)
+	boardUnread := make([]attentionActionRow, 0, 8)
+	boardSeen := make([]attentionActionRow, 0, 8)
+	allUnread := make([]attentionActionRow, 0, len(digest.Items))
 	replyMentions := 0
 	boardUpdates := 0
+	seenCount := 0
 	for _, item := range digest.Items {
-		if a.isAttentionDismissed(user.Handle, item) {
+		itemKey := attentionItemKey(item)
+		if a.isAttentionKeyDismissed(user.Handle, itemKey) {
 			continue
 		}
 		href := "/discover"
@@ -961,17 +1042,29 @@ func (a *webApp) handleAttentionCenter(w http.ResponseWriter, r *http.Request) {
 			Label:       item.Line,
 			Href:        href,
 			Meta:        meta,
-			ItemKey:     attentionItemKey(item),
+			ItemKey:     itemKey,
+			Read:        a.isAttentionKeyRead(user.Handle, itemKey),
 			Dismissible: item.Kind != "mail",
 		}
-		allRows = append(allRows, row)
+		if row.Read {
+			seenCount++
+		} else {
+			allUnread = append(allUnread, row)
+		}
 		switch item.Kind {
 		case "mention", "reply":
-			replyMentions++
-			directRows = append(directRows, row)
+			if row.Read {
+				directSeen = append(directSeen, row)
+			} else {
+				replyMentions++
+				directUnread = append(directUnread, row)
+			}
 		case "board":
-			boardUpdates++
-			boardRows = append(boardRows, row)
+			if row.Read {
+				boardSeen = append(boardSeen, row)
+			} else {
+				boardQueueUnread = append(boardQueueUnread, row)
+			}
 		}
 	}
 
@@ -999,6 +1092,15 @@ func (a *webApp) handleAttentionCenter(w http.ResponseWriter, r *http.Request) {
 		list := strings.Builder{}
 		for _, row := range rows {
 			list.WriteString(`<li><div class="wolfbbs-inline-actions"><a href="` + htmlEscape(row.Href) + `">` + htmlEscape(row.Label) + `</a><span class="wolfbbs-muted">` + htmlEscape(row.Meta) + `</span>`)
+			if row.ItemKey != "" {
+				action := "mark_read"
+				label := "Mark Read"
+				if row.Read {
+					action = "mark_unread"
+					label = "Mark Unread"
+				}
+				list.WriteString(`<form method="POST" action="/attention"><input type="hidden" name="action" value="` + action + `"><input type="hidden" name="item_key" value="` + htmlEscape(row.ItemKey) + `">` + csrf + `<button type="submit">` + label + `</button></form>`)
+			}
 			if row.Dismissible && row.ItemKey != "" {
 				list.WriteString(`<form method="POST" action="/attention"><input type="hidden" name="action" value="dismiss"><input type="hidden" name="item_key" value="` + htmlEscape(row.ItemKey) + `">` + csrf + `<button type="submit">Dismiss</button></form>`)
 			}
@@ -1010,7 +1112,31 @@ func (a *webApp) handleAttentionCenter(w http.ResponseWriter, r *http.Request) {
 		return list.String()
 	}
 
-	directList := renderAttentionList(directRows, "No direct replies or mentions are waiting.")
+	for _, row := range boardPulse {
+		itemKey := boardAttentionItemKey(row)
+		if a.isAttentionKeyDismissed(user.Handle, itemKey) {
+			continue
+		}
+		actionRow := attentionActionRow{
+			Label:       row.BoardName,
+			Href:        "/boards?board=" + strconv.FormatInt(row.BoardID, 10),
+			Meta:        fmt.Sprintf("%d new | %d total | %s", row.NewCount, row.MessageCount, row.LastAt),
+			ItemKey:     itemKey,
+			Read:        a.isAttentionKeyRead(user.Handle, itemKey),
+			Dismissible: true,
+		}
+		if actionRow.Read {
+			seenCount++
+			boardSeen = append(boardSeen, actionRow)
+			continue
+		}
+		boardUpdates++
+		allUnread = append(allUnread, actionRow)
+		boardUnread = append(boardUnread, actionRow)
+	}
+
+	directList := renderAttentionList(directUnread, "No direct replies or mentions are waiting.")
+	seenList := renderAttentionList(append(append([]attentionActionRow{}, directSeen...), boardSeen...), "No previously seen attention items are active.")
 
 	inboxList := strings.Builder{}
 	for _, row := range inboxRows {
@@ -1024,22 +1150,18 @@ func (a *webApp) handleAttentionCenter(w http.ResponseWriter, r *http.Request) {
 		inboxList.WriteString(`<li>No unread mail is waiting.</li>`)
 	}
 
-	boardList := strings.Builder{}
-	for _, row := range boardPulse {
-		itemKey := boardAttentionKey(row.BoardID)
-		if a.isAttentionKeyDismissed(user.Handle, itemKey) {
-			continue
-		}
-		boardList.WriteString(`<li><div class="wolfbbs-inline-actions"><a href="/boards?board=` + strconv.FormatInt(row.BoardID, 10) + `">` + htmlEscape(row.BoardName) + `</a> <span class="wolfbbs-muted">` + strconv.Itoa(row.NewCount) + ` new / ` + strconv.Itoa(row.MessageCount) + ` total / ` + htmlEscape(row.LastAt) + `</span><form method="POST" action="/attention"><input type="hidden" name="action" value="dismiss_board"><input type="hidden" name="board_id" value="` + strconv.FormatInt(row.BoardID, 10) + `">` + csrf + `<button type="submit">Dismiss</button></form></div></li>`)
-	}
-	if boardList.Len() == 0 {
-		boardList.WriteString(renderAttentionList(boardRows, "No board follow-up is waiting."))
+	boardList := renderAttentionList(boardUnread, "No watch-tier board follow-up is waiting.")
+	if len(boardUnread) == 0 && len(boardQueueUnread) > 0 {
+		boardList = renderAttentionList(boardQueueUnread, "No watch-tier board follow-up is waiting.")
 	}
 
-	discoveryList := renderAttentionList(allRows, "Nothing new since the last call.")
+	discoveryList := renderAttentionList(allUnread, "Nothing new since the last call.")
 	eventList := strings.Builder{}
 	for _, row := range upcomingEvents {
 		meta := []string{formatCommunityEventWindow(row)}
+		if recurrence := recurrenceSummary(row); recurrence != "" {
+			meta = append(meta, recurrence)
+		}
 		if strings.TrimSpace(row.Location) != "" {
 			meta = append(meta, row.Location)
 		}
@@ -1053,26 +1175,27 @@ func (a *webApp) handleAttentionCenter(w http.ResponseWriter, r *http.Request) {
 <p><a href="/start">start</a> | <a href="/today">today</a> | <a href="/boards">boards</a> | <a href="/events">events</a> | <a href="/mail">mail</a> | <a href="/discover">discover</a> | <a href="/radar">radar</a> | <a href="/doors">doors</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
 ` + pageMessageBlock(r) + `
 <h1>Attention Center</h1>
-<p>Single-screen triage for direct follow-up, unread mail, and boards that moved while you were away.</p>
+<p>Single-screen triage for direct follow-up, unread mail, and boards that moved while you were away. Read state persists, so this screen stays short instead of resetting every refresh.</p>
 <section class="wolfbbs-kpi-grid">
-<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(allRows)) + `</strong><span>attention items</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(allUnread)) + `</strong><span>unread attention</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(seenCount) + `</strong><span>read this cycle</span></article>
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(replyMentions) + `</strong><span>mentions + replies</span></article>
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(inboxRows)) + `</strong><span>unread mail</span></article>
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(boardUpdates) + `</strong><span>board updates</span></article>
-<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(watchedBoards)) + `</strong><span>watched boards</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(watchSubs)) + ` / ` + strconv.Itoa(len(digestSubs)) + `</strong><span>watch / digest boards</span></article>
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(upcomingEvents)) + `</strong><span>upcoming events</span></article>
 </section>
-<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Work top-down</strong><p>Direct replies and mentions should be handled first because they are the clearest pending obligation.</p></article><article class="wolfbbs-helper-card"><strong>Unread mail is private follow-up</strong><p>Use inbox for direct conversation, then return to boards when the topic belongs in public.</p></article><article class="wolfbbs-helper-card"><strong>Watch the right boards</strong><p>The board watch list is showing ` + htmlEscape(trackedLabel) + `. Use Watch Board inside <a href="/boards">/boards</a> to make this queue personal.</p></article></section>
-<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Queue Actions</h2><div class="wolfbbs-inline-actions"><form method="POST" action="/attention"><input type="hidden" name="action" value="mark_all_mail_read">` + csrf + `<button type="submit">Mark All Mail Read</button></form><form method="POST" action="/attention"><input type="hidden" name="action" value="clear_dismissed">` + csrf + `<button type="submit">Restore Dismissed Items</button></form><a href="/discover">Open Full Discover Feed</a></div></article></section>
+<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Work top-down</strong><p>Direct replies and mentions should be handled first because they are the clearest pending obligation.</p></article><article class="wolfbbs-helper-card"><strong>Unread mail is private follow-up</strong><p>Use inbox for direct conversation, then return to boards when the topic belongs in public.</p></article><article class="wolfbbs-helper-card"><strong>Use tiers deliberately</strong><p>The board pulse is showing ` + htmlEscape(trackedLabel) + `. Watch boards surface here, digest boards stay in <a href="/today">/today</a>, and mute hides noise.</p></article></section>
+<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Queue Actions</h2><div class="wolfbbs-inline-actions"><form method="POST" action="/attention"><input type="hidden" name="action" value="mark_all_read">` + csrf + `<button type="submit">Mark Current Attention Read</button></form><form method="POST" action="/attention"><input type="hidden" name="action" value="mark_all_mail_read">` + csrf + `<button type="submit">Mark All Mail Read</button></form><form method="POST" action="/attention"><input type="hidden" name="action" value="clear_dismissed">` + csrf + `<button type="submit">Restore Dismissed Items</button></form><a href="/discover">Open Full Discover Feed</a></div></article></section>
 <section class="wolfbbs-grid">
 <article><h2>Direct Follow-Up</h2><ul>` + directList + `</ul><p><a href="/boards?mode=mentions">Mentions queue</a> | <a href="/boards?mode=mine">Your threads</a></p></article>
 <article><h2>Inbox Needs Action</h2><ul>` + inboxList.String() + `</ul><p><a href="/mail?box=unread">Open unread mail</a> | <a href="/mail">Compose</a></p></article>
 </section>
 <section class="wolfbbs-grid">
-<article><h2>Board Watch List</h2><ul>` + boardList.String() + `</ul><p><a href="/boards?mode=watched">Watched boards</a> | <a href="/boards?mode=unread">Unread board scan</a></p></article>
+<article><h2>Watch Tier Board Pulse</h2><ul>` + boardList + `</ul><p><a href="/boards?mode=watched">Watch tier</a> | <a href="/boards?mode=digest">Digest tier</a> | <a href="/boards?mode=unread">Unread board scan</a></p></article>
 <article><h2>Community Calendar</h2><ul>` + eventList.String() + `</ul><p><a href="/events">Open calendar</a> | <a href="/today">Open today brief</a></p></article>
 </section>
-<section><h2>Since Last Call</h2><ul>` + discoveryList + `</ul><p><a href="/discover">Open full discover feed</a></p></section>
+<section class="wolfbbs-grid"><article><h2>Unread Notification Feed</h2><ul>` + discoveryList + `</ul><p><a href="/discover">Open full discover feed</a></p></article><article><h2>Seen This Cycle</h2><ul>` + seenList + `</ul><p>Read items stay out of your way until the board moves again.</p></article></section>
 </body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -1246,14 +1369,17 @@ func (a *webApp) handleToday(w http.ResponseWriter, r *http.Request) {
 	}
 
 	visibleBoards := a.visibleBoardsFor(user)
-	watched := a.watchedBoardIDs(user.Handle)
-	trackedBoards := filterBoardsByWatch(visibleBoards, watched)
-	trackedLabel := "watched boards"
+	watchSubs := a.boardSubscriptionIDs(user.Handle, boardSubscriptionWatch)
+	digestSubs := a.boardSubscriptionIDs(user.Handle, boardSubscriptionDigest)
+	muteSubs := a.boardSubscriptionIDs(user.Handle, boardSubscriptionMute)
+	trackedBoards := filterBoardsByWatch(visibleBoards, watchSubs)
+	trackedLabel := "watch tier"
 	if len(trackedBoards) == 0 {
 		trackedBoards = visibleBoards
 		trackedLabel = "board pulse fallback"
 	}
 	boardPulse := a.buildBoardPulse(user, trackedBoards, 6)
+	digestPulse := a.buildBoardPulse(user, filterBoardsByWatch(visibleBoards, digestSubs), 4)
 	digest, _ := discovery.BuildSinceLastCall(a.boardRepo, a.msgRepo, a.mailRepo, user, 10)
 	upcoming := a.upcomingCommunityEvents(5, time.Now().UTC())
 	dashboard := a.buildBoardsDashboard(user, visibleBoards)
@@ -1264,7 +1390,15 @@ func (a *webApp) handleToday(w http.ResponseWriter, r *http.Request) {
 
 	nextRows := strings.Builder{}
 	nextCount := 0
+	readCount := 0
 	for _, item := range digest.Items {
+		itemKey := attentionItemKey(item)
+		if a.isAttentionKeyDismissed(user.Handle, itemKey) || a.isAttentionKeyRead(user.Handle, itemKey) {
+			if a.isAttentionKeyRead(user.Handle, itemKey) {
+				readCount++
+			}
+			continue
+		}
 		href := "/discover"
 		if item.BoardID > 0 {
 			href = "/boards?board=" + strconv.FormatInt(item.BoardID, 10)
@@ -1279,15 +1413,39 @@ func (a *webApp) handleToday(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if nextRows.Len() == 0 {
-		nextRows.WriteString(`<li>No direct follow-up items are waiting.</li>`)
+		nextRows.WriteString(`<li>No unread direct follow-up items are waiting.</li>`)
 	}
 
 	boardRows := strings.Builder{}
+	watchSignalCount := 0
 	for _, row := range boardPulse {
+		if itemKey := boardAttentionItemKey(row); a.isAttentionKeyDismissed(user.Handle, itemKey) || a.isAttentionKeyRead(user.Handle, itemKey) {
+			if a.isAttentionKeyRead(user.Handle, itemKey) {
+				readCount++
+			}
+			continue
+		}
+		watchSignalCount++
 		boardRows.WriteString(`<tr><td><a href="/boards?board=` + strconv.FormatInt(row.BoardID, 10) + `">` + htmlEscape(row.BoardName) + `</a></td><td>` + htmlEscape(defaultConferenceValue(row.Conference)) + `</td><td>` + strconv.Itoa(row.NewCount) + `</td><td>` + strconv.Itoa(row.MessageCount) + `</td><td>` + htmlEscape(row.LastAt) + `</td><td>` + htmlEscape(row.LastSubject) + `</td></tr>`)
 	}
 	if boardRows.Len() == 0 {
-		boardRows.WriteString(`<tr><td colspan="6">No tracked board movement yet. Use Watch Board inside <a href="/boards">/boards</a>.</td></tr>`)
+		boardRows.WriteString(`<tr><td colspan="6">No unread watch-tier movement yet. Use board subscriptions inside <a href="/boards">/boards</a>.</td></tr>`)
+	}
+
+	digestRows := strings.Builder{}
+	digestSignalCount := 0
+	for _, row := range digestPulse {
+		if itemKey := boardAttentionItemKey(row); a.isAttentionKeyDismissed(user.Handle, itemKey) || a.isAttentionKeyRead(user.Handle, itemKey) {
+			if a.isAttentionKeyRead(user.Handle, itemKey) {
+				readCount++
+			}
+			continue
+		}
+		digestSignalCount++
+		digestRows.WriteString(`<tr><td><a href="/boards?board=` + strconv.FormatInt(row.BoardID, 10) + `">` + htmlEscape(row.BoardName) + `</a></td><td>` + strconv.Itoa(row.NewCount) + `</td><td>` + htmlEscape(row.LastAt) + `</td><td>` + htmlEscape(row.LastSubject) + `</td></tr>`)
+	}
+	if digestRows.Len() == 0 {
+		digestRows.WriteString(`<tr><td colspan="4">No unread digest-tier movement yet. Digest boards appear here instead of Attention Center.</td></tr>`)
 	}
 
 	eventRows := strings.Builder{}
@@ -1297,6 +1455,9 @@ func (a *webApp) handleToday(w http.ResponseWriter, r *http.Request) {
 			link = ` <a href="` + htmlEscape(strings.TrimSpace(row.Link)) + `">details</a>`
 		}
 		meta := []string{formatCommunityEventWindow(row)}
+		if recurrence := recurrenceSummary(row); recurrence != "" {
+			meta = append(meta, recurrence)
+		}
 		if strings.TrimSpace(row.Location) != "" {
 			meta = append(meta, row.Location)
 		}
@@ -1313,23 +1474,25 @@ func (a *webApp) handleToday(w http.ResponseWriter, r *http.Request) {
 <p><a href="/start">start</a> | <a href="/attention">attention</a> | <a href="/boards">boards</a> | <a href="/events">events</a> | <a href="/mail">mail</a> | <a href="/radar">radar</a> | <a href="/doors">doors</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
 ` + pageMessageBlock(r) + `
 <h1>Today Brief</h1>
-<p>One screen for the daily caller loop: immediate follow-up, watched boards, upcoming events, and the best next route.</p>
+<p>One screen for the daily caller loop: immediate follow-up, subscription-tier board movement, upcoming events, and the best next route.</p>
 <section class="wolfbbs-kpi-grid">
-<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(digest.Items)) + `</strong><span>since-last-call items</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(nextCount+watchSignalCount+digestSignalCount) + `</strong><span>current loop signals</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(readCount) + `</strong><span>already read</span></article>
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(dashboard.UnreadMail) + `</strong><span>unread mail</span></article>
-<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(watched)) + `</strong><span>watched boards</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(watchSubs)) + ` / ` + strconv.Itoa(len(digestSubs)) + ` / ` + strconv.Itoa(len(muteSubs)) + `</strong><span>watch / digest / mute</span></article>
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(upcoming)) + `</strong><span>upcoming events</span></article>
 <article class="wolfbbs-kpi-card"><strong>` + htmlEscape(recommendedDoor) + `</strong><span>recommended door</span></article>
 </section>
-<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Use Today first</strong><p>Start here when you want the shortest path through what changed.</p></article><article class="wolfbbs-helper-card"><strong>Watch the right boards</strong><p>Inside <a href="/boards">/boards</a>, use Watch Board so this page reflects your real routine instead of every visible board.</p></article><article class="wolfbbs-helper-card"><strong>Events give callers a reason to return</strong><p>Use <a href="/events">/events</a> for the public calendar and <a href="/admin/events">/admin/events</a> to schedule the board.</p></article></section>
+<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Use Today first</strong><p>Start here when you want the shortest path through what changed.</p></article><article class="wolfbbs-helper-card"><strong>Subscription tiers matter</strong><p>Watch boards escalate into Attention Center, digest boards land here, and mute hides a board from routine loops without unsubscribing from it permanently.</p></article><article class="wolfbbs-helper-card"><strong>Events give callers a reason to return</strong><p>Use <a href="/events">/events</a> for the public calendar and <a href="/admin/events">/admin/events</a> to schedule recurring rhythms.</p></article></section>
 <section class="wolfbbs-grid">
 <article class="wolfbbs-card"><h2>Needs Response</h2><ul>` + nextRows.String() + `</ul><p><a href="/attention">Open Attention Center</a> | <a href="/discover">Open Discover</a></p></article>
 <article class="wolfbbs-card"><h2>Community Calendar</h2><ul>` + eventRows.String() + `</ul><p><a href="/events">Open full calendar</a></p></article>
 </section>
 <section class="wolfbbs-grid">
-<article class="wolfbbs-card"><h2>Tracked Boards</h2><p class="wolfbbs-muted">Currently showing ` + htmlEscape(trackedLabel) + `.</p><table border="1"><tr><th>Board</th><th>Conf</th><th>New</th><th>Total</th><th>Last</th><th>Last subject</th></tr>` + boardRows.String() + `</table></article>
-<article class="wolfbbs-card"><h2>Next Move</h2><ul><li><a href="/mail">Mail</a> if you need private follow-up.</li><li><a href="/boards?mode=watched">Watched boards</a> when you want threaded catch-up.</li><li><a href="/doors?mode=recommended">Doors</a> when you want a quick return loop.</li><li><a href="/chat">Chat</a> when the conversation should be live.</li></ul></article>
+<article class="wolfbbs-card"><h2>Watch Tier Boards</h2><p class="wolfbbs-muted">Currently showing ` + htmlEscape(trackedLabel) + `.</p><table border="1"><tr><th>Board</th><th>Conf</th><th>New</th><th>Total</th><th>Last</th><th>Last subject</th></tr>` + boardRows.String() + `</table></article>
+<article class="wolfbbs-card"><h2>Digest Tier Boards</h2><p class="wolfbbs-muted">Lower urgency subscriptions stay here instead of interrupting Attention Center.</p><table border="1"><tr><th>Board</th><th>New</th><th>Last</th><th>Last subject</th></tr>` + digestRows.String() + `</table></article>
 </section>
+<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Next Move</h2><ul><li><a href="/mail">Mail</a> if you need private follow-up.</li><li><a href="/boards?mode=watched">Watch tier</a> when you want threaded catch-up.</li><li><a href="/boards?mode=digest">Digest tier</a> when you want low-noise board scanning.</li><li><a href="/doors?mode=recommended">Doors</a> when you want a quick return loop.</li><li><a href="/chat">Chat</a> when the conversation should be live.</li></ul></article></section>
 </body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -1355,6 +1518,9 @@ func (a *webApp) handleEventsCalendar(w http.ResponseWriter, r *http.Request) {
 		out := strings.Builder{}
 		for _, row := range rows {
 			meta := []string{strings.ToUpper(row.Category), formatCommunityEventWindow(row)}
+			if recurrence := recurrenceSummary(row); recurrence != "" {
+				meta = append(meta, recurrence)
+			}
 			if strings.TrimSpace(row.Location) != "" {
 				meta = append(meta, row.Location)
 			}
@@ -1422,13 +1588,33 @@ func (a *webApp) handleAdminEvents(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			}
+			recurrence := normalizeEventRecurrence(r.FormValue("recurrence"))
+			repeatUntil := time.Time{}
+			if strings.TrimSpace(r.FormValue("repeat_until")) != "" {
+				repeatUntil, err = parseLocalDateTime(r.FormValue("repeat_until"))
+				if err != nil {
+					redirectWithError(w, r, "/admin/events", "Repeat-until must be a valid local date/time.")
+					return
+				}
+				if repeatUntil.Before(startsAt) {
+					redirectWithError(w, r, "/admin/events", "Repeat-until must be after the start time.")
+					return
+				}
+			}
+			if recurrence != "" && repeatUntil.IsZero() {
+				repeatUntil = startsAt.Add(90 * 24 * time.Hour)
+			}
 			rows := a.loadCommunityEvents()
+			eventID := randomEventID()
 			row := communityEvent{
-				ID:          randomEventID(),
+				ID:          eventID,
+				SeriesID:    eventID,
 				Title:       title,
 				Category:    normalizeEventCategory(r.FormValue("category")),
 				StartsAt:    startsAt.UTC(),
 				EndsAt:      endsAt.UTC(),
+				Recurrence:  recurrence,
+				RepeatUntil: repeatUntil.UTC(),
 				Location:    strings.TrimSpace(r.FormValue("location")),
 				Host:        strings.TrimSpace(r.FormValue("host")),
 				Audience:    strings.TrimSpace(r.FormValue("audience")),
@@ -1441,7 +1627,11 @@ func (a *webApp) handleAdminEvents(w http.ResponseWriter, r *http.Request) {
 			}
 			rows = append(rows, row)
 			a.persistCommunityEvents(rows)
-			a.recordAdminAction(user.Handle, "community_calendar", "create_event", fmt.Sprintf("id=%s title=%s", row.ID, row.Title))
+			recurrenceLabel := row.Recurrence
+			if strings.TrimSpace(recurrenceLabel) == "" {
+				recurrenceLabel = "none"
+			}
+			a.recordAdminAction(user.Handle, "community_calendar", "create_event", fmt.Sprintf("id=%s title=%s recurrence=%s", row.ID, row.Title, recurrenceLabel))
 			redirectWithNotice(w, r, "/admin/events", "Community event created.")
 			return
 		case "delete":
@@ -1482,10 +1672,14 @@ func (a *webApp) handleAdminEvents(w http.ResponseWriter, r *http.Request) {
 	csrf := a.csrfHiddenInput(r)
 	eventRows := strings.Builder{}
 	for _, row := range rows {
-		eventRows.WriteString(`<tr><td>` + htmlEscape(row.Title) + `</td><td>` + htmlEscape(strings.ToUpper(row.Category)) + `</td><td>` + htmlEscape(formatCommunityEventWindow(row)) + `</td><td>` + htmlEscape(row.Location) + `</td><td>` + htmlEscape(row.Audience) + `</td><td><form method="POST" action="/admin/events"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="` + htmlEscape(row.ID) + `">` + csrf + `<button type="submit">Delete</button></form></td></tr>`)
+		recurrenceLabel := recurrenceSummary(row)
+		if strings.TrimSpace(recurrenceLabel) == "" {
+			recurrenceLabel = "one-time"
+		}
+		eventRows.WriteString(`<tr><td>` + htmlEscape(row.Title) + `</td><td>` + htmlEscape(strings.ToUpper(row.Category)) + `</td><td>` + htmlEscape(formatCommunityEventWindow(row)) + `</td><td>` + htmlEscape(recurrenceLabel) + `</td><td>` + htmlEscape(row.Location) + `</td><td>` + htmlEscape(row.Audience) + `</td><td><form method="POST" action="/admin/events"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="` + htmlEscape(row.ID) + `">` + csrf + `<button type="submit">Delete</button></form></td></tr>`)
 	}
 	if eventRows.Len() == 0 {
-		eventRows.WriteString(`<tr><td colspan="6">No events scheduled yet.</td></tr>`)
+		eventRows.WriteString(`<tr><td colspan="7">No events scheduled yet.</td></tr>`)
 	}
 
 	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Events Admin</title></head><body>
@@ -1493,9 +1687,9 @@ func (a *webApp) handleAdminEvents(w http.ResponseWriter, r *http.Request) {
 ` + pageMessageBlock(r) + `
 <h1>Events Admin</h1>
 <p>Schedule public reasons for callers to return: nets, tournaments, featured content drops, and operator-run sessions.</p>
-<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Be concrete</strong><p>Give callers a specific time, place, and audience. Vague events do not drive return behavior.</p></article><article class="wolfbbs-helper-card"><strong>Use categories deliberately</strong><p>System, social, door, tournament, content, and ops let the calendar read like a real board schedule.</p></article><article class="wolfbbs-helper-card"><strong>Verify the public path</strong><p>After creating an event, check <a href="/events">/events</a> and <a href="/today">/today</a> as a caller.</p></article></section>
-<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Create Event</h2><form method="POST" action="/admin/events"><input type="hidden" name="action" value="create">` + csrf + `<label>Title <input name="title" size="48" placeholder="Friday Tournament Night"></label><br><label>Category <select name="category"><option value="social">social</option><option value="door">door</option><option value="tournament">tournament</option><option value="content">content</option><option value="system">system</option><option value="ops">ops</option></select></label><br><label>Starts <input type="datetime-local" name="starts_at"></label><br><label>Ends <input type="datetime-local" name="ends_at"></label><br><label>Location <input name="location" size="40" placeholder="#lobby, Door Cockpit, SSH"></label><br><label>Host <input name="host" size="40" placeholder="sysop"></label><br><label>Audience <input name="audience" size="40" placeholder="all callers"></label><br><label>Link <input name="link" size="60" placeholder="/doors or https://..."></label><br><label>Description<br><textarea name="description" rows="6" cols="72" placeholder="What happens, why it matters, and how to join."></textarea></label><br><button type="submit">Create Event</button></form></article><article class="wolfbbs-card"><h2>Event Design Notes</h2><ul><li>Use a real start time, not "later tonight".</li><li>Put join instructions in the description or link.</li><li>Keep the calendar fresh by deleting or replacing stale entries.</li></ul></article></section>
-<section><h2>Scheduled Events</h2><table border="1"><tr><th>Title</th><th>Category</th><th>When</th><th>Location</th><th>Audience</th><th>Action</th></tr>` + eventRows.String() + `</table></section>
+<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Be concrete</strong><p>Give callers a specific time, place, and audience. Vague events do not drive return behavior.</p></article><article class="wolfbbs-helper-card"><strong>Use categories deliberately</strong><p>System, social, door, tournament, content, and ops let the calendar read like a real board schedule.</p></article><article class="wolfbbs-helper-card"><strong>Build series, not chores</strong><p>Recurring events turn the board into a habit. Weekly or weekday series are better than retyping the same entry every day.</p></article></section>
+<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Create Event</h2><form method="POST" action="/admin/events"><input type="hidden" name="action" value="create">` + csrf + `<label>Title <input name="title" size="48" placeholder="Friday Tournament Night"></label><br><label>Category <select name="category"><option value="social">social</option><option value="door">door</option><option value="tournament">tournament</option><option value="content">content</option><option value="system">system</option><option value="ops">ops</option></select></label><br><label>Starts <input type="datetime-local" name="starts_at"></label><br><label>Ends <input type="datetime-local" name="ends_at"></label><br><label>Recurrence <select name="recurrence"><option value="">one-time</option><option value="daily">daily</option><option value="weekdays">weekdays</option><option value="weekly">weekly</option><option value="monthly">monthly</option></select></label><br><label>Repeat Until <input type="datetime-local" name="repeat_until"></label><br><label>Location <input name="location" size="40" placeholder="#lobby, Door Cockpit, SSH"></label><br><label>Host <input name="host" size="40" placeholder="sysop"></label><br><label>Audience <input name="audience" size="40" placeholder="all callers"></label><br><label>Link <input name="link" size="60" placeholder="/doors or https://..."></label><br><label>Description<br><textarea name="description" rows="6" cols="72" placeholder="What happens, why it matters, and how to join."></textarea></label><br><button type="submit">Create Event</button></form></article><article class="wolfbbs-card"><h2>Event Design Notes</h2><ul><li>Use a real start time, not "later tonight".</li><li>Put join instructions in the description or link.</li><li>Use recurrence for weekly nets, weekday check-ins, or tournament ladders.</li><li>Delete or replace stale series instead of letting the calendar drift.</li></ul></article></section>
+<section><h2>Scheduled Events</h2><table border="1"><tr><th>Title</th><th>Category</th><th>When</th><th>Series</th><th>Location</th><th>Audience</th><th>Action</th></tr>` + eventRows.String() + `</table></section>
 </body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -2347,6 +2541,25 @@ hr{
 .wolfbbs-compose-preview p:last-child{
   margin-bottom:0;
 }
+.wolfbbs-compose-help{
+  display:none;
+  padding:12px 14px;
+  border:1px solid #d6e1f0;
+  border-radius:12px;
+  background:#ffffff;
+  color:#28415d;
+}
+.wolfbbs-compose-help.active{
+  display:block;
+}
+.wolfbbs-compose-help strong{
+  display:block;
+  margin-bottom:8px;
+}
+.wolfbbs-compose-help ul{
+  margin:0;
+  padding-left:18px;
+}
 .wolfbbs-compose-focus{
   position:relative;
   z-index:3;
@@ -2360,6 +2573,29 @@ hr{
   border-radius:14px;
   background:#ffffff;
   box-shadow:0 18px 30px rgba(15,27,42,.12);
+}
+body.wolfbbs-compose-fullscreen-open{
+  overflow:hidden;
+}
+.wolfbbs-compose-fullscreen{
+  position:fixed;
+  inset:16px;
+  z-index:82;
+  overflow:auto;
+  padding:18px;
+  border:1px solid #c6d8ef;
+  border-radius:18px;
+  background:rgba(255,255,255,.98);
+  box-shadow:0 24px 60px rgba(15,27,42,.22);
+}
+.wolfbbs-compose-fullscreen textarea{
+  min-height:58vh;
+}
+.wolfbbs-compose-fullscreen .wolfbbs-compose-shell{
+  padding:14px;
+  border:1px solid #c6d8ef;
+  border-radius:14px;
+  background:#ffffff;
 }
 .wolfbbs-command-block{
   position:relative;
@@ -3017,6 +3253,7 @@ hr{
     if (form.querySelector('.wolfbbs-compose-toolbar')) return;
     const textarea = form.querySelector('textarea[name="body"]');
     if (!textarea) return;
+    const layoutKey = 'wolfbbs:compose:layout:' + location.pathname + ':' + (form.getAttribute('data-draft-key') || form.getAttribute('data-rich-compose') || textarea.name || 'body');
 
     const shell = document.createElement('div');
     shell.className = 'wolfbbs-compose-shell';
@@ -3045,6 +3282,16 @@ hr{
     focusButton.type = 'button';
     focusButton.textContent = 'Focus Mode';
     toolbar.appendChild(focusButton);
+
+    const fullscreenButton = document.createElement('button');
+    fullscreenButton.type = 'button';
+    fullscreenButton.textContent = 'Fullscreen';
+    toolbar.appendChild(fullscreenButton);
+
+    const helpButton = document.createElement('button');
+    helpButton.type = 'button';
+    helpButton.textContent = 'Shortcuts';
+    toolbar.appendChild(helpButton);
 
     const quoteSource = textarea.getAttribute('data-compose-quote') || form.getAttribute('data-compose-quote') || '';
     if (quoteSource.trim()) {
@@ -3085,6 +3332,21 @@ hr{
     preview.className = 'wolfbbs-compose-preview';
     shell.appendChild(preview);
 
+    const help = document.createElement('div');
+    help.className = 'wolfbbs-compose-help';
+    help.innerHTML = '<strong>Composer Shortcuts</strong><ul><li>Ctrl/Cmd+Enter: send</li><li>Ctrl/Cmd+Shift+P: preview</li><li>Ctrl/Cmd+Shift+F: fullscreen</li><li>Esc: exit focus or fullscreen</li></ul>';
+    shell.appendChild(help);
+
+    function persistLayout() {
+      try {
+        localStorage.setItem(layoutKey, JSON.stringify({
+          preview: preview.classList.contains('active'),
+          focus: form.classList.contains('wolfbbs-compose-focus'),
+          fullscreen: form.classList.contains('wolfbbs-compose-fullscreen')
+        }));
+      } catch (_) {}
+    }
+
     function syncMeta() {
       const text = textarea.value || '';
       const words = text.trim() ? text.trim().split(/\s+/).length : 0;
@@ -3107,6 +3369,7 @@ hr{
       if (open) {
         syncPreview();
       }
+      persistLayout();
     }
 
     function toggleFocus(force) {
@@ -3120,6 +3383,31 @@ hr{
       if (open) {
         textarea.focus();
       }
+      persistLayout();
+    }
+
+    function toggleFullscreen(force) {
+      if (typeof force === 'boolean') {
+        form.classList.toggle('wolfbbs-compose-fullscreen', force);
+      } else {
+        form.classList.toggle('wolfbbs-compose-fullscreen');
+      }
+      const open = form.classList.contains('wolfbbs-compose-fullscreen');
+      document.body.classList.toggle('wolfbbs-compose-fullscreen-open', open);
+      fullscreenButton.textContent = open ? 'Exit Fullscreen' : 'Fullscreen';
+      if (open) {
+        textarea.focus();
+      }
+      persistLayout();
+    }
+
+    function toggleHelp(force) {
+      if (typeof force === 'boolean') {
+        help.classList.toggle('active', force);
+      } else {
+        help.classList.toggle('active');
+      }
+      helpButton.textContent = help.classList.contains('active') ? 'Hide Shortcuts' : 'Shortcuts';
     }
 
     previewButton.addEventListener('click', () => {
@@ -3128,6 +3416,14 @@ hr{
 
     focusButton.addEventListener('click', () => {
       toggleFocus();
+    });
+
+    fullscreenButton.addEventListener('click', () => {
+      toggleFullscreen();
+    });
+
+    helpButton.addEventListener('click', () => {
+      toggleHelp();
     });
 
     textarea.addEventListener('input', syncPreview);
@@ -3148,11 +3444,35 @@ hr{
         togglePreview();
         return;
       }
+      if (modifier && event.shiftKey && String(event.key).toLowerCase() === 'f') {
+        event.preventDefault();
+        toggleFullscreen();
+        return;
+      }
+      if (event.key === 'Escape' && help.classList.contains('active')) {
+        event.preventDefault();
+        toggleHelp(false);
+        return;
+      }
+      if (event.key === 'Escape' && form.classList.contains('wolfbbs-compose-fullscreen')) {
+        event.preventDefault();
+        toggleFullscreen(false);
+        return;
+      }
       if (event.key === 'Escape' && form.classList.contains('wolfbbs-compose-focus')) {
         event.preventDefault();
         toggleFocus(false);
       }
     });
+    try {
+      const raw = localStorage.getItem(layoutKey);
+      if (raw) {
+        const saved = JSON.parse(raw);
+        if (saved && saved.preview) togglePreview(true);
+        if (saved && saved.focus) toggleFocus(true);
+        if (saved && saved.fullscreen) toggleFullscreen(true);
+      }
+    } catch (_) {}
     syncPreview();
   });
 
@@ -4771,7 +5091,7 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 			boardPath = fmt.Sprintf("/boards?board=%d", boardID)
 		}
 		switch action {
-		case "watch", "unwatch":
+		case "watch", "digest", "mute", "unwatch", "subscribe":
 			if boardID <= 0 {
 				redirectWithError(w, r, "/boards", "Board ID is required.")
 				return
@@ -4785,11 +5105,21 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "watch denied by board ACS", http.StatusForbidden)
 				return
 			}
-			enable := action == "watch"
-			a.setBoardWatched(user.Handle, boardID, enable)
-			notice := "Board removed from watch list."
-			if enable {
-				notice = "Board added to watch list."
+			mode := boardSubscriptionNone
+			switch action {
+			case "watch":
+				mode = boardSubscriptionWatch
+			case "digest":
+				mode = boardSubscriptionDigest
+			case "mute":
+				mode = boardSubscriptionMute
+			case "subscribe":
+				mode = normalizeBoardSubscriptionMode(r.FormValue("subscription_mode"))
+			}
+			a.setBoardSubscription(user.Handle, boardID, mode)
+			notice := "Board subscription cleared."
+			if mode != boardSubscriptionNone {
+				notice = "Board set to " + boardSubscriptionLabel(mode) + "."
 			}
 			redirectWithNotice(w, r, boardPath, notice)
 			return
@@ -4925,16 +5255,23 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 		sort.Slice(conferences, func(i, j int) bool { return strings.ToLower(conferences[i]) < strings.ToLower(conferences[j]) })
 		boardQuery := strings.TrimSpace(r.URL.Query().Get("q"))
 		boardMode := normalizeBoardMode(r.URL.Query().Get("mode"))
-		watchedSet := a.watchedBoardIDs(user.Handle)
+		subscriptions := a.boardSubscriptions(user.Handle)
 		csrf := a.csrfHiddenInput(r)
 		rows := strings.Builder{}
 		messageBlock := pageMessageBlock(r)
 		dashboard := a.buildBoardsDashboard(user, boards)
 		boardRows, boardQueue := a.buildBoardMenuRows(user, boards, boardQuery, boardMode)
-		if boardMode == "watched" {
+		if boardMode == "watched" || boardMode == "digest" || boardMode == "muted" {
 			filteredRows := make([]boardMenuRow, 0, len(boardRows))
 			for _, row := range boardRows {
-				if watchedSet[row.Board.ID] {
+				mode := subscriptions[row.Board.ID]
+				if boardMode == "watched" && mode == boardSubscriptionWatch {
+					filteredRows = append(filteredRows, row)
+				}
+				if boardMode == "digest" && mode == boardSubscriptionDigest {
+					filteredRows = append(filteredRows, row)
+				}
+				if boardMode == "muted" && mode == boardSubscriptionMute {
 					filteredRows = append(filteredRows, row)
 				}
 			}
@@ -4970,14 +5307,23 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 		if oneLinerBlock.Len() == 0 {
 			oneLinerBlock.WriteString(`<li>No one-liners yet.</li>`)
 		}
-		for _, row := range boardRows {
-			watchAction := "watch"
-			watchLabel := "Watch Board"
-			if watchedSet[row.Board.ID] {
-				watchAction = "unwatch"
-				watchLabel = "Unwatch"
+		subscriptionStats := a.boardSubscriptionStats(user.Handle)
+		subscriptionSummary := strings.Builder{}
+		for _, stat := range subscriptionStats {
+			modePath := "all"
+			switch stat.Mode {
+			case boardSubscriptionWatch:
+				modePath = "watched"
+			case boardSubscriptionDigest:
+				modePath = "digest"
+			case boardSubscriptionMute:
+				modePath = "muted"
 			}
-			rows.WriteString(`<tr><td>` + strconv.FormatInt(row.Board.ID, 10) + `</td><td><a href="/boards?board=` + strconv.FormatInt(row.Board.ID, 10) + `">` + htmlEscape(row.Board.Name) + `</a></td><td>` + htmlEscape(defaultConferenceValue(row.Board.Conference)) + `</td><td>` + strconv.Itoa(row.MessageCount) + `</td><td>` + strconv.Itoa(row.NewCount) + `</td><td>` + strconv.Itoa(row.MyPosts) + `</td><td>` + strconv.Itoa(row.Mentions) + `</td><td>` + htmlEscape(row.LastAt) + `</td><td>` + htmlEscape(row.LastSubject) + `</td><td><form method="POST" action="/boards"><input type="hidden" name="action" value="` + watchAction + `"><input type="hidden" name="board_id" value="` + strconv.FormatInt(row.Board.ID, 10) + `">` + csrf + `<button type="submit">` + watchLabel + `</button></form></td></tr>`)
+			subscriptionSummary.WriteString(`<li><a href="/boards?mode=` + htmlEscape(modePath) + `">` + htmlEscape(strings.Title(stat.Label)) + `</a>: ` + strconv.Itoa(stat.Count) + `</li>`)
+		}
+		for _, row := range boardRows {
+			currentMode := normalizeBoardSubscriptionMode(string(subscriptions[row.Board.ID]))
+			rows.WriteString(`<tr><td>` + strconv.FormatInt(row.Board.ID, 10) + `</td><td><a href="/boards?board=` + strconv.FormatInt(row.Board.ID, 10) + `">` + htmlEscape(row.Board.Name) + `</a></td><td>` + htmlEscape(defaultConferenceValue(row.Board.Conference)) + `</td><td>` + strconv.Itoa(row.MessageCount) + `</td><td>` + strconv.Itoa(row.NewCount) + `</td><td>` + strconv.Itoa(row.MyPosts) + `</td><td>` + strconv.Itoa(row.Mentions) + `</td><td>` + htmlEscape(row.LastAt) + `</td><td>` + htmlEscape(row.LastSubject) + `</td><td><form method="POST" action="/boards" class="wolfbbs-inline-actions"><input type="hidden" name="action" value="subscribe"><input type="hidden" name="board_id" value="` + strconv.FormatInt(row.Board.ID, 10) + `">` + csrf + `<label class="wolfbbs-muted">tier <select name="subscription_mode">` + boardSubscriptionOptionRows(currentMode) + `</select></label><button type="submit">Save</button></form></td></tr>`)
 		}
 		emptyBoardHelper := ""
 		if rows.Len() == 0 {
@@ -5003,7 +5349,7 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 			}
 			confOptions.WriteString(`<option value="` + htmlEscape(conf) + `"` + selected + `>` + htmlEscape(conf) + `</option>`)
 		}
-		modeOptions := []string{"all", "unread", "mine", "mentions", "watched"}
+		modeOptions := []string{"all", "unread", "mine", "mentions", "watched", "digest", "muted"}
 		modeOptionRows := strings.Builder{}
 		for _, row := range modeOptions {
 			selected := ""
@@ -5028,7 +5374,7 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 		}
 		filterSummary := renderActiveFilterPanel("Active Board Filters", "/boards", filterItems)
 		confFilterBlock := `<form method="GET" action="/boards" class="wolfbbs-inline-form" data-filter-form="boards" data-filter-reset="/boards"><label>Search <input name="q" value="` + htmlEscape(boardQuery) + `" placeholder="board, description, subject" data-filter-label="search"></label><label>Conference <select name="conference" data-filter-label="conference">` + confOptions.String() + `</select></label><label>Mode <select name="mode" data-filter-label="mode">` + modeOptionRows.String() + `</select></label><button type="submit">Filter</button></form>`
-		scanHelperBlock := `<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Unread scan</strong><p>Use mode=unread to work through the boards that changed since your last call.</p></article><article class="wolfbbs-helper-card"><strong>Personal follow-up</strong><p>Use mine, mentions, and watched to stay on top of the boards you actually care about.</p></article><article class="wolfbbs-helper-card"><strong>Conference narrowing</strong><p>Use the conference filter when the board list is broad and you need to triage a single area fast.</p></article></section>`
+		scanHelperBlock := `<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Unread scan</strong><p>Use mode=unread to work through the boards that changed since your last call.</p></article><article class="wolfbbs-helper-card"><strong>Subscription tiers</strong><p>Watch escalates into Attention Center, digest stays in Today Brief, and mute removes a board from routine loops without deleting access.</p></article><article class="wolfbbs-helper-card"><strong>Conference narrowing</strong><p>Use the conference filter when the board list is broad and you need to triage a single area fast.</p></article></section>`
 		discoverActionCard := `<a class="wolfbbs-action-card" href="/discover"><strong>Discover</strong><span>Catch up since last call</span></a>`
 		if !a.discover {
 			discoverActionCard = `<article class="wolfbbs-action-card"><strong>Discover</strong><span>Disabled by current feature flags</span></article>`
@@ -5053,7 +5399,7 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 </section>
 <section class="wolfbbs-grid">
 <article class="wolfbbs-card"><h2>Legacy Classics</h2><div class="wolfbbs-action-grid"><a class="wolfbbs-action-card" href="/bulletins"><strong>Bulletin Center</strong><span>system wire, hot boards, download pick</span></a><a class="wolfbbs-action-card" href="/directory"><strong>Caller Directory</strong><span>user list, profile cards, direct mail links</span></a><a class="wolfbbs-action-card" href="/finder"><strong>Message Finder</strong><span>cross-board search and thread tracker</span></a><a class="wolfbbs-action-card" href="/newfiles"><strong>New Files Desk</strong><span>recent uploads, top-rated files, queue</span></a><a class="wolfbbs-action-card" href="/feedback"><strong>Feedback to Sysop</strong><span>classic feedback module, rebuilt</span></a></div></article>
-<article class="wolfbbs-card"><h2>Personal Board Queue</h2><div class="wolfbbs-grid"><section><h3>Unread Scan</h3>` + boardQueueList(boardQueue.UnreadRows, "Unread queue is clear.") + `</section><section><h3>Your Threads</h3>` + boardQueueList(boardQueue.MyRows, "No personal threads tracked yet.") + `</section><section><h3>Mentions</h3>` + boardQueueList(boardQueue.MentionRows, "No mentions waiting.") + `</section></div></article>
+<article class="wolfbbs-card"><h2>Personal Board Queue</h2><div class="wolfbbs-grid"><section><h3>Unread Scan</h3>` + boardQueueList(boardQueue.UnreadRows, "Unread queue is clear.") + `</section><section><h3>Your Threads</h3>` + boardQueueList(boardQueue.MyRows, "No personal threads tracked yet.") + `</section><section><h3>Mentions</h3>` + boardQueueList(boardQueue.MentionRows, "No mentions waiting.") + `</section><section><h3>Subscription Tiers</h3><ul>` + subscriptionSummary.String() + `</ul></section></div></article>
 </section>`
 		page := fmt.Sprintf(`<html><body>
 <p>Signed in as %s</p>
@@ -5070,7 +5416,7 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 <p><strong>Tip:</strong> Select a board to read, then open a message ID to reply/report. Use search, conference, and mode filters to work your unread and mention queues.</p>
 <h1>Message Boards</h1>
 <table border="1">
-<tr><th>ID</th><th>Board</th><th>Conf</th><th>Topics</th><th>New</th><th>Mine</th><th>Mentions</th><th>Last</th><th>Last subject</th><th>Track</th></tr>%s</table>
+<tr><th>ID</th><th>Board</th><th>Conf</th><th>Topics</th><th>New</th><th>Mine</th><th>Mentions</th><th>Last</th><th>Last subject</th><th>Subscription</th></tr>%s</table>
 </body></html>`, user.Handle, discoverLink, messageBlock, motdBlock, announcementBlock, quickJumpBlock, confFilterBlock, filterSummary, dashboardBlock, scanHelperBlock, emptyBoardHelper, rows.String())
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(page))
@@ -5097,7 +5443,7 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 	}
 	handleByID := a.userHandleLookup()
 	csrf := a.csrfHiddenInput(r)
-	watchedSet := a.watchedBoardIDs(user.Handle)
+	subscriptions := a.boardSubscriptions(user.Handle)
 	messageID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("id")), 10, 64)
 	view := strings.Builder{}
 	if messageID > 0 {
@@ -5146,7 +5492,7 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 		discoverLink = ` | <a href="/discover">discover</a>`
 	}
 	messageBlock := pageMessageBlock(r)
-	boardHelperBlock := `<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Board scan</strong><p>Rows marked N are newer than your current read pointer for this board.</p></article><article class="wolfbbs-helper-card"><strong>Posting flow</strong><p>Drafts in the compose boxes are saved locally in this browser while you type.</p></article><article class="wolfbbs-helper-card"><strong>When to use mail instead</strong><p>Use private mail for direct follow-up that does not belong in a public thread.</p></article></section>`
+	boardHelperBlock := `<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Board scan</strong><p>Rows marked N are newer than your current read pointer for this board.</p></article><article class="wolfbbs-helper-card"><strong>Posting flow</strong><p>Drafts in the compose boxes are saved locally in this browser while you type.</p></article><article class="wolfbbs-helper-card"><strong>Subscription tier</strong><p>Watch sends this board into Attention Center, digest keeps it in Today Brief, and mute removes it from routine loops while keeping access intact.</p></article></section>`
 	motdBlock := ""
 	if strings.TrimSpace(a.motd) != "" {
 		motdBlock = `<p><strong>MOTD:</strong> ` + htmlEscape(a.motd) + `</p>`
@@ -5160,17 +5506,7 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 		messageBlock +
 		`<p><strong>Reader keys:</strong> open subject to read, use Reply form, and Report for abuse/moderation queue.</p>` +
 		`<p><strong>Conference:</strong> ` + htmlEscape(defaultConferenceValue(board.Conference)) + `</p>` +
-		`<form method="POST" action="/boards"><input type="hidden" name="action" value="` + func() string {
-		if watchedSet[board.ID] {
-			return "unwatch"
-		}
-		return "watch"
-	}() + `"><input type="hidden" name="board_id" value="` + strconv.FormatInt(boardID, 10) + `">` + csrf + `<button type="submit">` + func() string {
-		if watchedSet[board.ID] {
-			return "Unwatch"
-		}
-		return "Watch Board"
-	}() + `</button></form>` +
+		`<form method="POST" action="/boards" class="wolfbbs-inline-actions"><input type="hidden" name="action" value="subscribe"><input type="hidden" name="board_id" value="` + strconv.FormatInt(boardID, 10) + `">` + csrf + `<label>Subscription <select name="subscription_mode">` + boardSubscriptionOptionRows(normalizeBoardSubscriptionMode(string(subscriptions[board.ID]))) + `</select></label><button type="submit">Save</button></form>` +
 		motdBlock + announcementBlock + boardHelperBlock +
 		`<table border="1"><tr><th>ID</th><th>New</th><th>Subject</th><th>Author</th><th>When</th></tr>` + rows.String() + `</table>`
 	if a.canWriteBoard(user, board) {
@@ -9071,6 +9407,21 @@ func boardAttentionKey(boardID int64) string {
 	return fmt.Sprintf("board-pulse|%d", boardID)
 }
 
+func boardAttentionItemKey(row boardPulseRow) string {
+	if row.BoardID <= 0 {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprintf("board-pulse|%d|%d|%s|%s", row.BoardID, row.NewCount, row.LastAt, row.LastSubject))
+}
+
+func boardSubscriptionSettingKey(handle string) string {
+	handle = normalizeHandleKey(handle)
+	if handle == "" {
+		return ""
+	}
+	return sysSettingBoardSubscriptionsRoot + handle
+}
+
 func boardWatchSettingKey(handle string) string {
 	handle = normalizeHandleKey(handle)
 	if handle == "" {
@@ -9079,65 +9430,222 @@ func boardWatchSettingKey(handle string) string {
 	return sysSettingBoardWatchRoot + handle
 }
 
-func (a *webApp) watchedBoardIDs(handle string) map[int64]bool {
+func normalizeBoardSubscriptionMode(value string) boardSubscriptionMode {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case string(boardSubscriptionWatch):
+		return boardSubscriptionWatch
+	case string(boardSubscriptionDigest):
+		return boardSubscriptionDigest
+	case string(boardSubscriptionMute):
+		return boardSubscriptionMute
+	default:
+		return boardSubscriptionNone
+	}
+}
+
+func boardSubscriptionLabel(mode boardSubscriptionMode) string {
+	switch mode {
+	case boardSubscriptionWatch:
+		return "watch"
+	case boardSubscriptionDigest:
+		return "digest"
+	case boardSubscriptionMute:
+		return "mute"
+	default:
+		return "none"
+	}
+}
+
+func boardSubscriptionOptionRows(current boardSubscriptionMode) string {
+	options := []boardSubscriptionMode{
+		boardSubscriptionNone,
+		boardSubscriptionWatch,
+		boardSubscriptionDigest,
+		boardSubscriptionMute,
+	}
+	var out strings.Builder
+	for _, option := range options {
+		selected := ""
+		if option == current {
+			selected = ` selected`
+		}
+		out.WriteString(`<option value="` + htmlEscape(string(option)) + `"` + selected + `>` + htmlEscape(boardSubscriptionLabel(option)) + `</option>`)
+	}
+	return out.String()
+}
+
+func (a *webApp) boardSubscriptions(handle string) map[int64]boardSubscriptionMode {
+	subs := map[int64]boardSubscriptionMode{}
+	if a.adminRepo == nil {
+		return subs
+	}
+	if key := boardSubscriptionSettingKey(handle); key != "" {
+		raw, err := a.adminRepo.GetSystemSetting(key)
+		if err == nil && strings.TrimSpace(raw) != "" {
+			decoded := map[string]string{}
+			if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+				a.addAppError("board_watch.persistence", fmt.Errorf("decode board subscriptions for %s: %w", handle, err))
+			} else {
+				for rawID, rawMode := range decoded {
+					boardID, err := strconv.ParseInt(strings.TrimSpace(rawID), 10, 64)
+					if err != nil || boardID <= 0 {
+						continue
+					}
+					mode := normalizeBoardSubscriptionMode(rawMode)
+					if mode != boardSubscriptionNone {
+						subs[boardID] = mode
+					}
+				}
+			}
+		}
+	}
+	if len(subs) > 0 {
+		return subs
+	}
 	key := boardWatchSettingKey(handle)
-	if key == "" || a.adminRepo == nil {
-		return map[int64]bool{}
+	if key == "" {
+		return subs
 	}
 	raw, err := a.adminRepo.GetSystemSetting(key)
 	if err != nil || strings.TrimSpace(raw) == "" {
-		return map[int64]bool{}
+		return subs
 	}
 	var ids []int64
 	if err := json.Unmarshal([]byte(raw), &ids); err != nil {
 		a.addAppError("board_watch.persistence", fmt.Errorf("decode watched boards for %s: %w", handle, err))
-		return map[int64]bool{}
+		return subs
 	}
-	out := make(map[int64]bool, len(ids))
 	for _, id := range ids {
 		if id > 0 {
-			out[id] = true
+			subs[id] = boardSubscriptionWatch
+		}
+	}
+	return subs
+}
+
+func (a *webApp) watchedBoardIDs(handle string) map[int64]bool {
+	out := map[int64]bool{}
+	for boardID, mode := range a.boardSubscriptions(handle) {
+		if mode == boardSubscriptionWatch {
+			out[boardID] = true
 		}
 	}
 	return out
 }
 
-func (a *webApp) persistWatchedBoardIDs(handle string, watched map[int64]bool) {
-	key := boardWatchSettingKey(handle)
-	if key == "" || a.adminRepo == nil {
-		return
+func (a *webApp) boardSubscriptionIDs(handle string, modes ...boardSubscriptionMode) map[int64]bool {
+	if len(modes) == 0 {
+		return map[int64]bool{}
 	}
-	ids := make([]int64, 0, len(watched))
-	for id, enabled := range watched {
-		if id > 0 && enabled {
-			ids = append(ids, id)
+	allowed := map[boardSubscriptionMode]bool{}
+	for _, mode := range modes {
+		if mode != boardSubscriptionNone {
+			allowed[mode] = true
 		}
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	out := map[int64]bool{}
+	for boardID, mode := range a.boardSubscriptions(handle) {
+		if allowed[mode] {
+			out[boardID] = true
+		}
+	}
+	return out
+}
+
+func (a *webApp) boardSubscriptionStats(handle string) []boardSubscriptionStat {
+	counts := map[boardSubscriptionMode]int{
+		boardSubscriptionWatch:  0,
+		boardSubscriptionDigest: 0,
+		boardSubscriptionMute:   0,
+	}
+	for _, mode := range a.boardSubscriptions(handle) {
+		if mode == boardSubscriptionNone {
+			continue
+		}
+		counts[mode]++
+	}
+	return []boardSubscriptionStat{
+		{Label: "watch", Mode: boardSubscriptionWatch, Count: counts[boardSubscriptionWatch]},
+		{Label: "digest", Mode: boardSubscriptionDigest, Count: counts[boardSubscriptionDigest]},
+		{Label: "mute", Mode: boardSubscriptionMute, Count: counts[boardSubscriptionMute]},
+	}
+}
+
+func (a *webApp) persistWatchedBoardIDs(handle string, watched map[int64]bool) {
+	subs := map[int64]boardSubscriptionMode{}
+	for boardID, enabled := range watched {
+		if enabled {
+			subs[boardID] = boardSubscriptionWatch
+		}
+	}
+	a.persistBoardSubscriptions(handle, subs)
+}
+
+func (a *webApp) persistBoardSubscriptions(handle string, subs map[int64]boardSubscriptionMode) {
+	if a.adminRepo == nil {
+		return
+	}
+	key := boardSubscriptionSettingKey(handle)
+	if key == "" {
+		return
+	}
+	encoded := map[string]string{}
+	watchIDs := make([]int64, 0, len(subs))
+	for boardID, mode := range subs {
+		mode = normalizeBoardSubscriptionMode(string(mode))
+		if boardID <= 0 || mode == boardSubscriptionNone {
+			continue
+		}
+		encoded[strconv.FormatInt(boardID, 10)] = string(mode)
+		if mode == boardSubscriptionWatch {
+			watchIDs = append(watchIDs, boardID)
+		}
+	}
 	body := ""
-	if len(ids) > 0 {
-		raw, err := json.Marshal(ids)
+	if len(encoded) > 0 {
+		raw, err := json.Marshal(encoded)
 		if err != nil {
-			a.addAppError("board_watch.persistence", fmt.Errorf("encode watched boards for %s: %w", handle, err))
+			a.addAppError("board_watch.persistence", fmt.Errorf("encode board subscriptions for %s: %w", handle, err))
 			return
 		}
 		body = string(raw)
 	}
 	a.persistSystemSetting(key, body)
+
+	sort.Slice(watchIDs, func(i, j int) bool { return watchIDs[i] < watchIDs[j] })
+	legacyBody := ""
+	if len(watchIDs) > 0 {
+		raw, err := json.Marshal(watchIDs)
+		if err != nil {
+			a.addAppError("board_watch.persistence", fmt.Errorf("encode legacy watch list for %s: %w", handle, err))
+			return
+		}
+		legacyBody = string(raw)
+	}
+	a.persistSystemSetting(boardWatchSettingKey(handle), legacyBody)
 }
 
-func (a *webApp) setBoardWatched(handle string, boardID int64, watched bool) {
+func (a *webApp) setBoardSubscription(handle string, boardID int64, mode boardSubscriptionMode) {
 	handle = normalizeHandleKey(handle)
 	if handle == "" || boardID <= 0 {
 		return
 	}
-	rows := a.watchedBoardIDs(handle)
-	if watched {
-		rows[boardID] = true
-	} else {
+	rows := a.boardSubscriptions(handle)
+	mode = normalizeBoardSubscriptionMode(string(mode))
+	if mode == boardSubscriptionNone {
 		delete(rows, boardID)
+	} else {
+		rows[boardID] = mode
 	}
-	a.persistWatchedBoardIDs(handle, rows)
+	a.persistBoardSubscriptions(handle, rows)
+}
+
+func (a *webApp) setBoardWatched(handle string, boardID int64, watched bool) {
+	if watched {
+		a.setBoardSubscription(handle, boardID, boardSubscriptionWatch)
+		return
+	}
+	a.setBoardSubscription(handle, boardID, boardSubscriptionNone)
 }
 
 func filterBoardsByWatch(boards []domain.Board, watched map[int64]bool) []domain.Board {
@@ -9159,6 +9667,15 @@ func normalizeEventCategory(value string) string {
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return "social"
+	}
+}
+
+func normalizeEventRecurrence(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "daily", "weekly", "monthly", "weekdays":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return ""
 	}
 }
 
@@ -9198,7 +9715,14 @@ func (a *webApp) loadCommunityEvents() []communityEvent {
 		if row.ID == "" || row.Title == "" || row.StartsAt.IsZero() {
 			continue
 		}
+		if strings.TrimSpace(row.SeriesID) == "" {
+			row.SeriesID = row.ID
+		}
 		row.Category = normalizeEventCategory(row.Category)
+		row.Recurrence = normalizeEventRecurrence(row.Recurrence)
+		if !row.RepeatUntil.IsZero() {
+			row.RepeatUntil = row.RepeatUntil.UTC()
+		}
 		if row.CreatedAt.IsZero() {
 			row.CreatedAt = row.StartsAt
 		}
@@ -9216,6 +9740,19 @@ func (a *webApp) loadCommunityEvents() []communityEvent {
 func (a *webApp) persistCommunityEvents(rows []communityEvent) {
 	if a.adminRepo == nil {
 		return
+	}
+	for i := range rows {
+		rows[i].ID = strings.TrimSpace(rows[i].ID)
+		rows[i].SeriesID = strings.TrimSpace(rows[i].SeriesID)
+		if rows[i].SeriesID == "" {
+			rows[i].SeriesID = rows[i].ID
+		}
+		rows[i].Title = strings.TrimSpace(rows[i].Title)
+		rows[i].Category = normalizeEventCategory(rows[i].Category)
+		rows[i].Recurrence = normalizeEventRecurrence(rows[i].Recurrence)
+		if !rows[i].RepeatUntil.IsZero() {
+			rows[i].RepeatUntil = rows[i].RepeatUntil.UTC()
+		}
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].StartsAt.Equal(rows[j].StartsAt) {
@@ -9235,19 +9772,124 @@ func (a *webApp) persistCommunityEvents(rows []communityEvent) {
 	a.persistSystemSetting(sysSettingCommunityEvents, body)
 }
 
+func recurrenceSummary(row communityEvent) string {
+	if normalizeEventRecurrence(row.Recurrence) == "" {
+		return ""
+	}
+	label := strings.Title(row.Recurrence)
+	if row.RepeatUntil.IsZero() {
+		return label + " series"
+	}
+	return label + " until " + row.RepeatUntil.Local().Format("2006-01-02 15:04")
+}
+
+func nextCommunityEventStart(start time.Time, recurrence string) time.Time {
+	switch normalizeEventRecurrence(recurrence) {
+	case "daily":
+		return start.AddDate(0, 0, 1)
+	case "weekly":
+		return start.AddDate(0, 0, 7)
+	case "monthly":
+		return start.AddDate(0, 1, 0)
+	case "weekdays":
+		next := start.AddDate(0, 0, 1)
+		for next.Weekday() == time.Saturday || next.Weekday() == time.Sunday {
+			next = next.AddDate(0, 0, 1)
+		}
+		return next
+	default:
+		return time.Time{}
+	}
+}
+
+func eventDuration(row communityEvent) time.Duration {
+	if row.EndsAt.IsZero() || !row.EndsAt.After(row.StartsAt) {
+		return 0
+	}
+	return row.EndsAt.Sub(row.StartsAt)
+}
+
+func expandCommunityEvent(row communityEvent, windowStart, windowEnd time.Time, limit int) []communityEvent {
+	if row.StartsAt.IsZero() || limit == 0 {
+		return nil
+	}
+	if windowEnd.Before(windowStart) {
+		windowEnd = windowStart
+	}
+	duration := eventDuration(row)
+	current := row.StartsAt.UTC()
+	repeatUntil := row.RepeatUntil.UTC()
+	if normalizeEventRecurrence(row.Recurrence) != "" && repeatUntil.IsZero() {
+		repeatUntil = current.Add(90 * 24 * time.Hour)
+	}
+	out := make([]communityEvent, 0, 4)
+	for {
+		occurrence := row
+		occurrence.StartsAt = current
+		if duration > 0 {
+			occurrence.EndsAt = current.Add(duration)
+		} else {
+			occurrence.EndsAt = time.Time{}
+		}
+		occurrence.ID = row.ID + "@" + current.Format("20060102150405")
+		occurrence.SeriesID = row.SeriesID
+		end := occurrence.EndsAt
+		if end.IsZero() {
+			end = occurrence.StartsAt
+		}
+		if !end.Before(windowStart) && !occurrence.StartsAt.After(windowEnd) {
+			out = append(out, occurrence)
+			if limit > 0 && len(out) >= limit {
+				return out
+			}
+		}
+		recurrence := normalizeEventRecurrence(row.Recurrence)
+		if recurrence == "" {
+			break
+		}
+		next := nextCommunityEventStart(current, recurrence)
+		if next.IsZero() || !next.After(current) {
+			break
+		}
+		if !repeatUntil.IsZero() && next.After(repeatUntil) {
+			break
+		}
+		if next.After(windowEnd.Add(35 * 24 * time.Hour)) {
+			break
+		}
+		current = next
+	}
+	return out
+}
+
 func (a *webApp) upcomingCommunityEvents(limit int, now time.Time) []communityEvent {
 	rows := a.loadCommunityEvents()
 	out := make([]communityEvent, 0, len(rows))
+	windowEnd := now.Add(120 * 24 * time.Hour)
 	for _, row := range rows {
-		if row.EndsAt.IsZero() {
-			if row.StartsAt.Before(now.Add(-2 * time.Hour)) {
+		for _, occurrence := range expandCommunityEvent(row, now.Add(-2*time.Hour), windowEnd, limit) {
+			end := occurrence.EndsAt
+			if end.IsZero() {
+				end = occurrence.StartsAt
+			}
+			if end.Before(now) {
 				continue
 			}
-		} else if row.EndsAt.Before(now) {
-			continue
+			out = append(out, occurrence)
+			if limit > 0 && len(out) >= limit {
+				break
+			}
 		}
-		out = append(out, row)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
 	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].StartsAt.Equal(out[j].StartsAt) {
+			return strings.ToLower(out[i].Title) < strings.ToLower(out[j].Title)
+		}
+		return out[i].StartsAt.Before(out[j].StartsAt)
+	})
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
@@ -9257,18 +9899,24 @@ func (a *webApp) upcomingCommunityEvents(limit int, now time.Time) []communityEv
 func (a *webApp) recentCommunityEvents(limit int, now time.Time) []communityEvent {
 	rows := a.loadCommunityEvents()
 	out := make([]communityEvent, 0, len(rows))
+	windowStart := now.Add(-14 * 24 * time.Hour)
 	for _, row := range rows {
-		end := row.EndsAt
-		if end.IsZero() {
-			end = row.StartsAt
+		for _, occurrence := range expandCommunityEvent(row, windowStart, now, limit) {
+			end := occurrence.EndsAt
+			if end.IsZero() {
+				end = occurrence.StartsAt
+			}
+			if end.After(now) || end.Before(windowStart) {
+				continue
+			}
+			out = append(out, occurrence)
+			if limit > 0 && len(out) >= limit {
+				break
+			}
 		}
-		if end.After(now) {
-			continue
+		if limit > 0 && len(out) >= limit {
+			break
 		}
-		if end.Before(now.Add(-14 * 24 * time.Hour)) {
-			continue
-		}
-		out = append(out, row)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		left := out[i].EndsAt
@@ -9493,6 +10141,221 @@ func (a *webApp) clearAttentionDismissals(handle string) {
 	delete(a.attentionDismissed, handle)
 	a.Unlock()
 	a.persistAttentionDismissals(handle)
+}
+
+func attentionReadSettingKey(handle string) string {
+	handle = normalizeHandleKey(handle)
+	if handle == "" {
+		return ""
+	}
+	return sysSettingAttentionReadRoot + handle
+}
+
+func (a *webApp) ensureAttentionReadLoaded(handle string) {
+	handle = normalizeHandleKey(handle)
+	if handle == "" {
+		return
+	}
+
+	a.Lock()
+	if a.attentionReadLoaded == nil {
+		a.attentionReadLoaded = map[string]bool{}
+	}
+	if a.attentionRead == nil {
+		a.attentionRead = map[string]map[string]time.Time{}
+	}
+	if a.attentionReadLoaded[handle] {
+		a.Unlock()
+		return
+	}
+	a.attentionReadLoaded[handle] = true
+	a.Unlock()
+
+	rows := map[string]time.Time{}
+	if a.adminRepo != nil {
+		raw, err := a.adminRepo.GetSystemSetting(attentionReadSettingKey(handle))
+		if err == nil && strings.TrimSpace(raw) != "" {
+			decoded := map[string]string{}
+			if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+				a.addAppError("attention.persistence", fmt.Errorf("decode reads for %s: %w", handle, err))
+			} else {
+				cutoff := time.Now().UTC().Add(-14 * 24 * time.Hour)
+				for key, value := range decoded {
+					at, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(value))
+					if err != nil || !at.After(cutoff) {
+						continue
+					}
+					rows[strings.TrimSpace(key)] = at.UTC()
+				}
+			}
+		}
+	}
+
+	a.Lock()
+	if a.attentionRead == nil {
+		a.attentionRead = map[string]map[string]time.Time{}
+	}
+	if len(rows) == 0 {
+		delete(a.attentionRead, handle)
+	} else {
+		a.attentionRead[handle] = rows
+	}
+	a.Unlock()
+}
+
+func (a *webApp) persistAttentionReads(handle string) {
+	handle = normalizeHandleKey(handle)
+	if handle == "" || a.adminRepo == nil {
+		return
+	}
+	a.ensureAttentionReadLoaded(handle)
+
+	cutoff := time.Now().UTC().Add(-14 * 24 * time.Hour)
+	type readRow struct {
+		Key string
+		At  time.Time
+	}
+
+	a.Lock()
+	source := a.attentionRead[handle]
+	rows := make([]readRow, 0, len(source))
+	for key, at := range source {
+		key = strings.TrimSpace(key)
+		if key == "" || !at.After(cutoff) {
+			continue
+		}
+		rows = append(rows, readRow{Key: key, At: at.UTC()})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].At.Equal(rows[j].At) {
+			return rows[i].Key < rows[j].Key
+		}
+		return rows[i].At.After(rows[j].At)
+	})
+	if len(rows) > maxAttentionReadItems {
+		rows = rows[:maxAttentionReadItems]
+	}
+	if a.attentionRead == nil {
+		a.attentionRead = map[string]map[string]time.Time{}
+	}
+	if len(rows) == 0 {
+		delete(a.attentionRead, handle)
+	} else {
+		pruned := make(map[string]time.Time, len(rows))
+		for _, row := range rows {
+			pruned[row.Key] = row.At
+		}
+		a.attentionRead[handle] = pruned
+	}
+	a.Unlock()
+
+	encoded := map[string]string{}
+	for _, row := range rows {
+		encoded[row.Key] = row.At.Format(time.RFC3339Nano)
+	}
+	body := ""
+	if len(encoded) > 0 {
+		raw, err := json.Marshal(encoded)
+		if err != nil {
+			a.addAppError("attention.persistence", fmt.Errorf("encode reads for %s: %w", handle, err))
+			return
+		}
+		body = string(raw)
+	}
+	a.persistSystemSetting(attentionReadSettingKey(handle), body)
+}
+
+func (a *webApp) isAttentionKeyRead(handle, key string) bool {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return false
+	}
+	handle = normalizeHandleKey(handle)
+	if handle == "" {
+		return false
+	}
+	a.ensureAttentionReadLoaded(handle)
+	persist := false
+	a.Lock()
+	if a.attentionRead == nil {
+		a.attentionRead = map[string]map[string]time.Time{}
+	}
+	rows := a.attentionRead[handle]
+	if len(rows) == 0 {
+		a.Unlock()
+		return false
+	}
+	at, ok := rows[key]
+	if !ok {
+		a.Unlock()
+		return false
+	}
+	if time.Since(at) > 14*24*time.Hour {
+		delete(rows, key)
+		if len(rows) == 0 {
+			delete(a.attentionRead, handle)
+		}
+		persist = true
+	}
+	a.Unlock()
+	if persist {
+		a.persistAttentionReads(handle)
+		return false
+	}
+	return true
+}
+
+func (a *webApp) markAttentionItemRead(handle, key string) {
+	handle = normalizeHandleKey(handle)
+	key = strings.TrimSpace(key)
+	if handle == "" || key == "" {
+		return
+	}
+	a.ensureAttentionReadLoaded(handle)
+	a.Lock()
+	if a.attentionRead == nil {
+		a.attentionRead = map[string]map[string]time.Time{}
+	}
+	if a.attentionRead[handle] == nil {
+		a.attentionRead[handle] = map[string]time.Time{}
+	}
+	a.attentionRead[handle][key] = time.Now().UTC()
+	a.Unlock()
+	a.persistAttentionReads(handle)
+}
+
+func (a *webApp) markAttentionItemUnread(handle, key string) {
+	handle = normalizeHandleKey(handle)
+	key = strings.TrimSpace(key)
+	if handle == "" || key == "" {
+		return
+	}
+	a.ensureAttentionReadLoaded(handle)
+	a.Lock()
+	if a.attentionRead == nil {
+		a.Unlock()
+		return
+	}
+	if rows := a.attentionRead[handle]; rows != nil {
+		delete(rows, key)
+		if len(rows) == 0 {
+			delete(a.attentionRead, handle)
+		}
+	}
+	a.Unlock()
+	a.persistAttentionReads(handle)
+}
+
+func (a *webApp) markAttentionItemsRead(handle string, keys []string) int {
+	count := 0
+	for _, key := range keys {
+		if strings.TrimSpace(key) == "" {
+			continue
+		}
+		a.markAttentionItemRead(handle, key)
+		count++
+	}
+	return count
 }
 
 func (a *webApp) pruneExpiredWebSessions() int {
@@ -11988,7 +12851,7 @@ func (a *webApp) localMailPicks(currentHandle string, limit int) []string {
 
 func normalizeBoardMode(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "unread", "mine", "mentions", "watched":
+	case "unread", "mine", "mentions", "watched", "digest", "muted":
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return "all"

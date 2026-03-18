@@ -2636,6 +2636,50 @@ func TestStartAttentionOpsAndRichComposeSurfaces(t *testing.T) {
 		t.Fatalf("expected dismissible attention item in digest: %+v", digest.Items)
 	}
 	form := url.Values{}
+	form.Set("action", "mark_read")
+	form.Set("item_key", attentionItemKey(dismissItem))
+	form.Set("csrf_token", app.sessions[callerSID].csrf)
+	req = httptest.NewRequest(http.MethodPost, "/attention", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleAttentionCenter(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("mark attention read status = %d", rr.Code)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/attention", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleAttentionCenter(rr, req)
+	if !strings.Contains(rr.Body.String(), "Seen This Cycle") || !strings.Contains(rr.Body.String(), dismissItem.Line) {
+		t.Fatalf("expected read attention item to stay visible in seen state: %s", rr.Body.String())
+	}
+	rawRead, err := adminRepo.GetSystemSetting(attentionReadSettingKey("caller"))
+	if err != nil {
+		t.Fatalf("persisted attention reads missing: %v", err)
+	}
+	if !strings.Contains(rawRead, attentionItemKey(dismissItem)) {
+		t.Fatalf("persisted attention reads missing item key: %s", rawRead)
+	}
+	form = url.Values{}
+	form.Set("action", "mark_unread")
+	form.Set("item_key", attentionItemKey(dismissItem))
+	form.Set("csrf_token", app.sessions[callerSID].csrf)
+	req = httptest.NewRequest(http.MethodPost, "/attention", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleAttentionCenter(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("mark attention unread status = %d", rr.Code)
+	}
+	if clearedRead, err := adminRepo.GetSystemSetting(attentionReadSettingKey("caller")); err != nil {
+		t.Fatalf("load cleared attention reads: %v", err)
+	} else if strings.TrimSpace(clearedRead) != "" {
+		t.Fatalf("expected persisted attention reads to clear, got %q", clearedRead)
+	}
+
+	form = url.Values{}
 	form.Set("action", "dismiss")
 	form.Set("item_key", attentionItemKey(dismissItem))
 	form.Set("csrf_token", app.sessions[callerSID].csrf)
@@ -2762,6 +2806,9 @@ func TestStartAttentionOpsAndRichComposeSurfaces(t *testing.T) {
 		if !strings.Contains(rr.Body.String(), needle) {
 			t.Fatalf("mail compose missing %q: %s", needle, rr.Body.String())
 		}
+	}
+	if !strings.Contains(rr.Body.String(), `Compose`) {
+		t.Fatalf("mail compose missing compose heading: %s", rr.Body.String())
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/mail?id=1", nil)
@@ -2970,7 +3017,7 @@ func TestDiscoverDigestAndSavedSearch(t *testing.T) {
 	}
 }
 
-func TestBoardWatchEventsAndTodayBrief(t *testing.T) {
+func TestBoardSubscriptionsEventsAndTodayBrief(t *testing.T) {
 	userRepo := repository.NewInMemoryUserRepository()
 	boardRepo := repository.NewInMemoryBoardRepository()
 	msgRepo := repository.NewInMemoryMessageRepository()
@@ -3054,12 +3101,34 @@ func TestBoardWatchEventsAndTodayBrief(t *testing.T) {
 	if rr.Code != http.StatusFound {
 		t.Fatalf("watch board status = %d", rr.Code)
 	}
-	rawWatch, err := adminRepo.GetSystemSetting(boardWatchSettingKey("caller"))
+	rawSubs, err := adminRepo.GetSystemSetting(boardSubscriptionSettingKey("caller"))
 	if err != nil {
-		t.Fatalf("load watched boards: %v", err)
+		t.Fatalf("load board subscriptions: %v", err)
 	}
-	if !strings.Contains(rawWatch, "1") {
-		t.Fatalf("expected watched board persistence, got %q", rawWatch)
+	if !strings.Contains(rawSubs, `"1":"watch"`) {
+		t.Fatalf("expected watch tier persistence, got %q", rawSubs)
+	}
+
+	form = url.Values{}
+	form.Set("action", "digest")
+	form.Set("board_id", "2")
+	form.Set("csrf_token", app.sessions[callerSID].csrf)
+	req = httptest.NewRequest(http.MethodPost, "/boards", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleBoards(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("digest board status = %d", rr.Code)
+	}
+	rawSubs, err = adminRepo.GetSystemSetting(boardSubscriptionSettingKey("caller"))
+	if err != nil {
+		t.Fatalf("reload board subscriptions: %v", err)
+	}
+	for _, needle := range []string{`"1":"watch"`, `"2":"digest"`} {
+		if !strings.Contains(rawSubs, needle) {
+			t.Fatalf("expected persisted board subscriptions to contain %q in %q", needle, rawSubs)
+		}
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/boards?mode=watched", nil)
@@ -3076,18 +3145,33 @@ func TestBoardWatchEventsAndTodayBrief(t *testing.T) {
 	if strings.Contains(body, `<td><a href="/boards?board=2">Tooling Beta</a></td>`) {
 		t.Fatalf("expected unwatched board row to be absent in watched mode: %s", body)
 	}
-	if !strings.Contains(body, "Unwatch") {
-		t.Fatalf("expected unwatch action in watched mode: %s", body)
+	if !strings.Contains(body, `name="subscription_mode"`) || !strings.Contains(body, `option value="watch" selected`) {
+		t.Fatalf("expected watch tier selector in watched mode: %s", body)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/boards?mode=digest", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleBoards(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("digest boards status = %d", rr.Code)
+	}
+	body = rr.Body.String()
+	if !strings.Contains(body, "Tooling Beta") || strings.Contains(body, `<td><a href="/boards?board=1">General Alpha</a></td>`) {
+		t.Fatalf("expected digest mode to isolate digest board rows: %s", body)
 	}
 
 	startsAt := time.Now().Add(48 * time.Hour).Format("2006-01-02T15:04")
 	endsAt := time.Now().Add(50 * time.Hour).Format("2006-01-02T15:04")
+	repeatUntil := time.Now().Add(28 * 24 * time.Hour).Format("2006-01-02T15:04")
 	form = url.Values{}
 	form.Set("action", "create")
 	form.Set("title", "Friday Tournament Night")
 	form.Set("category", "tournament")
 	form.Set("starts_at", startsAt)
 	form.Set("ends_at", endsAt)
+	form.Set("recurrence", "weekly")
+	form.Set("repeat_until", repeatUntil)
 	form.Set("location", "#lobby")
 	form.Set("host", "sysop")
 	form.Set("audience", "all callers")
@@ -3109,8 +3193,11 @@ func TestBoardWatchEventsAndTodayBrief(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("events status = %d", rr.Code)
 	}
-	if !strings.Contains(rr.Body.String(), "Friday Tournament Night") {
+	if !strings.Contains(rr.Body.String(), "Friday Tournament Night") || !strings.Contains(rr.Body.String(), "Weekly until") {
 		t.Fatalf("expected public events page to show created event: %s", rr.Body.String())
+	}
+	if strings.Count(rr.Body.String(), "Friday Tournament Night") < 2 {
+		t.Fatalf("expected recurring event expansion on public calendar: %s", rr.Body.String())
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/today", nil)
@@ -3120,7 +3207,7 @@ func TestBoardWatchEventsAndTodayBrief(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("today status = %d", rr.Code)
 	}
-	for _, needle := range []string{"Today Brief", "Friday Tournament Night", "General Alpha", "watched boards"} {
+	for _, needle := range []string{"Today Brief", "Friday Tournament Night", "General Alpha", "Tooling Beta", "Digest Tier Boards", "watch tier"} {
 		if !strings.Contains(rr.Body.String(), needle) {
 			t.Fatalf("today brief missing %q: %s", needle, rr.Body.String())
 		}
@@ -3148,7 +3235,7 @@ func TestBoardWatchEventsAndTodayBrief(t *testing.T) {
 	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: reloadedSID})
 	rr = httptest.NewRecorder()
 	reloaded.handleToday(rr, req)
-	if !strings.Contains(rr.Body.String(), "Friday Tournament Night") || !strings.Contains(rr.Body.String(), "General Alpha") {
+	if !strings.Contains(rr.Body.String(), "Friday Tournament Night") || !strings.Contains(rr.Body.String(), "General Alpha") || !strings.Contains(rr.Body.String(), "Tooling Beta") {
 		t.Fatalf("expected today brief data to persist after reload: %s", rr.Body.String())
 	}
 
@@ -3181,10 +3268,12 @@ func TestBoardWatchEventsAndTodayBrief(t *testing.T) {
 	if rr.Code != http.StatusFound {
 		t.Fatalf("unwatch board status = %d", rr.Code)
 	}
-	if cleared, err := adminRepo.GetSystemSetting(boardWatchSettingKey("caller")); err != nil {
-		t.Fatalf("load cleared watch setting: %v", err)
-	} else if strings.TrimSpace(cleared) != "" {
-		t.Fatalf("expected watched boards to clear, got %q", cleared)
+	req = httptest.NewRequest(http.MethodGet, "/boards?mode=watched", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleBoards(rr, req)
+	if strings.Contains(rr.Body.String(), `<td><a href="/boards?board=1">General Alpha</a></td>`) {
+		t.Fatalf("expected cleared watch tier board to leave watched mode: %s", rr.Body.String())
 	}
 }
 

@@ -152,10 +152,12 @@ test("user web journey supports keyboard navigation and status/config visibility
   await expect(page.locator("body")).toContainText("Inbox Needs Action");
   await expect(page.locator("body")).toContainText("Direct Follow-Up");
   await expect(page.locator("body")).toContainText("Community Calendar");
+  await expect(page.getByRole("button", { name: "Mark Current Attention Read" })).toBeVisible();
 
   await page.goto("/today");
   await expect(page.locator("h1")).toContainText("Today Brief");
-  await expect(page.locator("body")).toContainText("Tracked Boards");
+  await expect(page.locator("body")).toContainText("Watch Tier Boards");
+  await expect(page.locator("body")).toContainText("Digest Tier Boards");
 
   await page.goto("/events");
   await expect(page.locator("h1")).toContainText("Community Calendar");
@@ -165,11 +167,20 @@ test("user web journey supports keyboard navigation and status/config visibility
   await expect(page.locator("h1")).toContainText("Message Boards");
   await expect(page.locator("#wolfbbsCommandButton")).toContainText(/Jump \/ Search/i);
   await expect(page.locator("body")).toContainText("Caller Cockpit");
-  await page.getByRole("button", { name: "Watch Board" }).first().click();
-  await expect(page.locator("body")).toContainText(/Board added to watch list|Board removed from watch list/);
+  const boardSubscriptionForms = page.locator('table form').filter({ has: page.locator('select[name="subscription_mode"]') });
+  await boardSubscriptionForms.first().locator('select[name="subscription_mode"]').selectOption("watch");
+  await boardSubscriptionForms.first().getByRole("button", { name: "Save" }).click();
+  await expect(page.locator("body")).toContainText(/Board set to watch|Board subscription cleared/);
+  if ((await boardSubscriptionForms.count()) > 1) {
+    await boardSubscriptionForms.nth(1).locator('select[name="subscription_mode"]').selectOption("digest");
+    await boardSubscriptionForms.nth(1).getByRole("button", { name: "Save" }).click();
+    await expect(page.locator("body")).toContainText(/Board set to digest|Board subscription cleared/);
+  }
   await page.goto("/boards?mode=watched");
   await expect(page.locator("body")).toContainText("Active Board Filters");
-  await expect(page.getByRole("button", { name: "Unwatch" }).first()).toBeVisible();
+  await expect(page.locator('table form').filter({ has: page.locator('select[name="subscription_mode"]') }).first().locator('select[name="subscription_mode"]')).toHaveValue("watch");
+  await page.goto("/boards?mode=digest");
+  await expect(page.locator("body")).toContainText("Active Board Filters");
   await page.goto("/boards?mode=mentions");
   await expect(page.locator("body")).toContainText("Personal Board Queue");
   await expect(page.locator("body")).toContainText("Mentions");
@@ -222,6 +233,8 @@ test("user web journey supports keyboard navigation and status/config visibility
   await expect(page.locator("h1")).toContainText("Private Mail");
   await expect(page.getByRole("button", { name: "Preview" }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Focus Mode" }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Fullscreen" }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Shortcuts" }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Insert Signature" }).first()).toBeVisible();
   await page.fill('textarea[name="body"]', "Draft survives reload.");
   await expect(page.locator(".wolfbbs-form-status").first()).toContainText("Draft saved", { timeout: 3000 });
@@ -233,6 +246,12 @@ test("user web journey supports keyboard navigation and status/config visibility
   await expect(page.locator('form[data-rich-compose="mail-compose"]')).toHaveClass(/wolfbbs-compose-focus/);
   await page.locator('textarea[name="body"]').press("Escape");
   await expect(page.locator('form[data-rich-compose="mail-compose"]')).not.toHaveClass(/wolfbbs-compose-focus/);
+  await page.getByRole("button", { name: "Fullscreen" }).first().click();
+  await expect(page.locator('form[data-rich-compose="mail-compose"]')).toHaveClass(/wolfbbs-compose-fullscreen/);
+  await page.locator('textarea[name="body"]').press("Escape");
+  await expect(page.locator('form[data-rich-compose="mail-compose"]')).not.toHaveClass(/wolfbbs-compose-fullscreen/);
+  await page.getByRole("button", { name: "Shortcuts" }).first().click();
+  await expect(page.locator(".wolfbbs-compose-help.active").first()).toContainText("Composer Shortcuts");
   await page.getByRole("button", { name: "Insert Signature" }).first().click();
   await expect(page.locator('textarea[name="body"]')).toHaveValue(new RegExp(`--\\s*\\n${USER_HANDLE}`, "i"));
   await page.goto("/mail?template=door_invite");
@@ -470,6 +489,8 @@ test("admin journey enforces RBAC and exposes sysop pages", async ({ browser }) 
     category: "tournament",
     starts_at: "2026-03-20T19:00",
     ends_at: "2026-03-20T21:00",
+    recurrence: "weekly",
+    repeat_until: "2026-04-17T19:00",
     location: "#lobby",
     host: ADMIN_HANDLE,
     audience: "all callers",
@@ -478,6 +499,7 @@ test("admin journey enforces RBAC and exposes sysop pages", async ({ browser }) 
   });
   await adminPage.goto("/admin/events");
   await expect(adminPage.locator("body")).toContainText(qaEventTitle);
+  await expect(adminPage.locator("body")).toContainText("Weekly until");
   csrf = await csrfFrom(adminPage);
   await postForm(adminPage, "/admin/events", {
     csrf_token: csrf,

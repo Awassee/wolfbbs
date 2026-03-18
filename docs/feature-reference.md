@@ -86,6 +86,7 @@ Reference: `docs/help-guides.md`, `docs/screens.md`.
 
 ### User routes (authenticated)
 
+- `GET /today`
 - `GET/POST /boards`
 - `GET/POST /mail`
 - `GET/POST /gateway`
@@ -94,6 +95,7 @@ Reference: `docs/help-guides.md`, `docs/screens.md`.
 - `GET /config`
 - `GET /bulletins`
 - `GET /directory`
+- `GET /attention`
 - `GET/POST /feedback`
 - `GET /finder`
 - `GET /newfiles`
@@ -109,11 +111,13 @@ Reference: `docs/help-guides.md`, `docs/screens.md`.
 - `GET /chat/online`
 - `GET /scores`
 - `GET /discover` (when enabled)
+- `GET /events`
 
 ### Moderation/sysop routes
 
 - `POST /chat/moderation` (moderator+)
 - `GET /admin` (sysop)
+- `GET/POST /admin/ops`
 - `GET/POST /admin/users`
 - `GET/POST /admin/boards`
 - `GET/POST /admin/mail`
@@ -127,6 +131,7 @@ Reference: `docs/help-guides.md`, `docs/screens.md`.
 - `GET /admin/system`
 - `GET /admin/node-state`
 - `GET /admin/audit`
+- `GET/POST /admin/events`
 
 ### Public operations routes
 
@@ -165,17 +170,23 @@ Documented in `docs/irc-compat.md`:
 ## Message Boards and Mail
 
 - Boards list, board message index, reader, new post, reply/quote
-- Caller-managed board watch list in web boards view
-- Daily brief at `/today` for watched boards, upcoming events, and direct follow-up
+- Caller-managed board subscription tiers in web boards view:
+  - `watch` for high-priority tracking
+  - `digest` for lower-noise daily brief inclusion
+  - `mute` to suppress board resurfacing in focused views
+- Attention Center at `/attention` with per-user read/unread and dismiss/restore state
+- Daily brief at `/today` for watch-tier boards, digest-tier boards, upcoming events, and direct follow-up
 - SSH boards include conference filter toggle (`C`) for area-focused browsing
 - Mail inbox/outbox, read by ID, compose local/external (policy-gated)
 - Newscan/digest integration for message/mail activity
+- Web composer supports preview, focus mode, fullscreen mode, quote context, signature insert, draft restore, and keyboard shortcuts
 
 ## Community Calendar
 
 - Public calendar at `/events`
 - Sysop event scheduling at `/admin/events`
 - Event metadata: category, start/end, location, host, audience, link, description
+- Event recurrence: daily, weekly, and monthly series with repeat-until support
 - Today brief integration so scheduled events appear in the daily caller loop
 
 ## Message Network Baseline
@@ -253,6 +264,7 @@ Reference: `docs/content-servers.md`, `docs/activitypub.md`.
 
 - admin audit log (`/admin/audit`)
 - WFC-style dashboard (`/admin/system`)
+- action-oriented Ops Center at `/admin/ops`
 - health/readiness/metrics endpoints
 - CLI ops (`cmd/oputil`)
 - optional ACS policy gate for admin routes (`WOLFBBS_ACS_ADMIN`)
