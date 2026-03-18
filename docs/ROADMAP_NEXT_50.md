@@ -35,27 +35,27 @@ Status: shipped in v1.1.14.
 ## Theme 6: Caller flow and social glue
 57. Scheduled bulletin publishing and timed announcements.
 Value: gives sysops a planned communication rhythm.
-Status: planned.
+Status: shipped in v1.1.15.
 
 58. Node-to-node paging for live caller attention requests.
 Value: restores a classic BBS interaction pattern in a modern way.
-Status: planned.
+Status: shipped in v1.1.15.
 
 59. Favorite caller list with quick-jump actions.
 Value: strengthens repeat social behavior.
-Status: planned.
+Status: shipped in v1.1.15.
 
 60. Caller follow graph and recurring-correspondent insights.
 Value: makes community habits visible.
-Status: planned.
+Status: shipped in v1.1.15.
 
 61. Presence-aware direct message handoff between chat and mail.
 Value: reduces dead-end communication.
-Status: planned.
+Status: shipped in v1.1.15.
 
 62. Shared staff notes on caller profiles.
 Value: improves moderation and support continuity.
-Status: planned.
+Status: shipped in v1.1.15.
 
 63. Per-caller notification quiet hours.
 Value: keeps follow-up useful instead of noisy.
@@ -212,3 +212,7 @@ Status: planned.
 100. Plugin framework for widgets, doors, bulletin feeds, and automations.
 Value: scales the platform beyond core code changes.
 Status: later.
+
+## Continuation
+
+The ordered backlog continues in `docs/ROADMAP_101_150.md`.

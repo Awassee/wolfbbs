@@ -52,6 +52,7 @@ Auto-generated from `docs/function-registry.json`.
 | `web:/.well-known/webfinger` | `web_route` | N | N | N | N | `/admin/config` | `/status` |
 | `web:/admin` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/audit` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
+| `web:/admin/bulletins` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/boards` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/chat` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/config` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |

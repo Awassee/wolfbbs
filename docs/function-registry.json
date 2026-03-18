@@ -60,6 +60,19 @@
       "notes": "Discovered from cmd/wolfbbs-web route registration."
     },
     {
+      "id": "web:/admin/bulletins",
+      "type": "web_route",
+      "entrypoint": "/admin/bulletins",
+      "user_tui": false,
+      "user_web": false,
+      "admin_tui": false,
+      "admin_web": true,
+      "config_ui": "/admin/config",
+      "status_ui": "/admin/system",
+      "state_visibility": "scheduled announcements and admin actions visible through bulletins, audit, and system views",
+      "notes": "Discovered from cmd/wolfbbs-web route registration."
+    },
+    {
       "id": "web:/admin/boards",
       "type": "web_route",
       "entrypoint": "/admin/boards",

@@ -135,6 +135,7 @@ Reference: `docs/help-guides.md`, `docs/screens.md`.
 - `GET /admin/node-state`
 - `GET /admin/audit`
 - `GET/POST /admin/events`
+- `GET/POST /admin/bulletins`
 
 ### Public operations routes
 
@@ -178,6 +179,7 @@ Documented in `docs/irc-compat.md`:
   - `digest` for lower-noise daily brief inclusion
   - `mute` to suppress board resurfacing in focused views
 - Attention Center at `/attention` with per-user read/unread and dismiss/restore state
+- Attention Center also surfaces live caller pages with mail handoff links
 - Read-Later Queue at `/bookmarks` for persistent saved board posts and mail
 - Daily brief at `/today` for watch-tier boards, digest-tier boards, upcoming events, and direct follow-up
 - Daily Digest at `/digest` with per-user opt-in preferences from `/settings`
@@ -186,6 +188,7 @@ Documented in `docs/irc-compat.md`:
 - `/settings` includes saved home-route preference for `/today`, `/digest`, `/boards`, `/chat`, or `/doors`
 - SSH boards include conference filter toggle (`C`) for area-focused browsing
 - Mail inbox/outbox, read by ID, compose local/external (policy-gated)
+- Mail compose adds presence-aware handoff guidance when the local recipient is online now
 - Newscan/digest integration for message/mail activity
 - Web composer supports preview, focus mode, fullscreen mode, quote context, signature insert, draft restore, and keyboard shortcuts
 - Web composer and chat input now include handle assist for mentions and local-recipient lookup
@@ -198,6 +201,17 @@ Documented in `docs/irc-compat.md`:
 - Event metadata: category, start/end, location, host, audience, link, description
 - Event recurrence: daily, weekly, and monthly series with repeat-until support
 - Today brief integration so scheduled events appear in the daily caller loop
+
+## Bulletins, Directory, and Caller Presence
+
+- Public Bulletins Center at `/bulletins`
+- Sysop Bulletin Scheduler at `/admin/bulletins`
+- Timed announcements publish from the scheduler into the bulletins wire and caller-facing bulletin cards
+- Caller Directory at `/directory` includes live node, idle time, origin, and verified/role filtering
+- Favorite Callers with quick actions and dedicated filter lane
+- Recurring Correspondents surface on caller profiles to show repeat communication patterns
+- Live paging from caller profiles into the recipient's Attention Center
+- Moderator/sysop staff notes on caller profiles for continuity across support and moderation work
 
 ## Message Network Baseline
 

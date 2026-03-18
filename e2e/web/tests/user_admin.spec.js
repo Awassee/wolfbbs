@@ -46,6 +46,12 @@ async function canConnect(host, port, timeoutMs = 1000) {
   });
 }
 
+function datetimeLocalMinutes(offsetMinutes = 0) {
+  const value = new Date(Date.now() + offsetMinutes * 60 * 1000);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}T${pad(value.getHours())}:${pad(value.getMinutes())}`;
+}
+
 async function sendIrcMessage({
   host = "127.0.0.1",
   port = Number(process.env.WOLFBBS_E2E_IRC_PORT || "6667"),
@@ -219,6 +225,13 @@ test("user web journey supports keyboard navigation and status/config visibility
   await expect(page.locator("body")).toContainText("Caller Card");
   await expect(page.locator("body")).toContainText("visible callers");
   await expect(page.locator("body")).toContainText("Origin");
+  await page.goto(`/directory?handle=${ADMIN_HANDLE}`);
+  await expect(page.locator("body")).toContainText("Favorite Callers");
+  await page.getByRole("button", { name: /Add Favorite Caller|Remove Favorite Caller/ }).click();
+  await expect(page.locator("body")).toContainText(/Added to favorite callers|Removed from favorite callers/);
+  await page.goto("/directory?favorites=1");
+  await expect(page.locator("body")).toContainText("Favorite Callers");
+  await expect(page.locator("body")).toContainText(ADMIN_HANDLE);
 
   await page.goto(`/finder?q=${USER_HANDLE}&author=${USER_HANDLE}&tracker=post`);
   await expect(page.locator("h1")).toContainText("Message Finder");
@@ -389,6 +402,18 @@ test("admin journey enforces RBAC and exposes sysop pages", async ({ browser }) 
   await expect(adminPage.locator("body")).toContainText("Recent Audit Trail");
   await adminPage.goto("/admin/events");
   await expect(adminPage.locator("h1")).toContainText("Events Admin");
+  await adminPage.goto("/admin/bulletins");
+  await expect(adminPage.locator("h1")).toContainText("Scheduled Bulletins");
+  await adminPage.fill('input[name="title"]', `QA Bulletin ${Date.now().toString(36)}`);
+  await adminPage.fill('input[name="starts_at"]', datetimeLocalMinutes(-5));
+  await adminPage.fill('input[name="ends_at"]', datetimeLocalMinutes(55));
+  await adminPage.fill('textarea[name="body"]', "Playwright scheduled bulletin body");
+  await adminPage.fill('input[name="link"]', "/tournaments");
+  await adminPage.getByRole("button", { name: "Create Bulletin" }).click();
+  await expect(adminPage.locator("body")).toContainText("Scheduled bulletin created");
+  await adminPage.goto("/bulletins");
+  await expect(adminPage.locator("body")).toContainText("Timed Announcements");
+  await expect(adminPage.locator("body")).toContainText("Playwright scheduled bulletin body");
   await adminPage.goto("/admin");
 
   await adminPage.locator('a[href="/admin/users"]').first().focus();
