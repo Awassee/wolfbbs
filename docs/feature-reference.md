@@ -91,7 +91,9 @@ Reference: `docs/help-guides.md`, `docs/screens.md`.
 - `GET/POST /boards`
 - `GET/POST /mail`
 - `GET/POST /bookmarks`
+- `GET /collections`
 - `GET/POST /gateway`
+- `GET/POST /offline`
 - `GET/POST /settings`
 - `GET /profile/export`
 - `GET/POST /circles`
@@ -266,7 +268,12 @@ Documented in `docs/irc-compat.md`:
 
 - File tags, ratings, saved filters, SHA-256 dedupe index
 - Browser-native upload intake in `/admin/files` with metadata extraction and moderation hold queue
-- Caller-facing FileBase preview pages show descriptions, tags, related uploads, and direct queue/ticket actions
+- Caller-facing FileBase preview pages show descriptions, tags, related uploads, curator notes, duplicate candidates, featured collections, and direct queue/ticket actions
+- Caller-facing FileBase now includes a request queue so callers can ask staff for missing uploads without leaving the file surface
+- `/admin/files` now includes request ownership, upload drafts, featured collection curation, and repair actions for broken or orphaned file entries
+- `/collections` provides curated featured file bundles for guided browsing
+- `/offline` exports watched-board packets in JSON or text and imports offline local-mail replies
+- Uploaders surface reputation tiers so trusted contributors can move through intake with less friction
 - Held uploads stay out of caller-facing file surfaces until approved
 - SSH files menu includes indexed search (`I`) and legacy queue manager (`D`)
 - Queue manager supports remove, one-time ticket issue, and batch zip handoff via gateway

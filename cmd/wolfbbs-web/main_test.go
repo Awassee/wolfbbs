@@ -5687,6 +5687,274 @@ func TestGatewayFilesShowsPreviewAndRelatedUploads(t *testing.T) {
 	}
 }
 
+func TestGatewayFileRequestCollectionsAndOfflineWorkflow(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	adminRepo := repository.NewInMemoryAdminRepository()
+	boardRepo := repository.NewInMemoryBoardRepository()
+	msgRepo := repository.NewInMemoryMessageRepository()
+	mailRepo := repository.NewInMemoryPrivateMailRepository()
+
+	caller, err := authSvc.Register("caller", "password123")
+	if err != nil {
+		t.Fatalf("register caller: %v", err)
+	}
+	sysop, err := authSvc.Register("sysop", "password123")
+	if err != nil {
+		t.Fatalf("register sysop: %v", err)
+	}
+
+	area := &domain.FileArea{Name: "Uploads", Path: t.TempDir(), Description: "test area"}
+	if err := adminRepo.CreateFileArea(area); err != nil {
+		t.Fatalf("create area: %v", err)
+	}
+	fileA := filepath.Join(area.Path, "ansi-pack.zip")
+	if err := os.WriteFile(fileA, []byte("ansi-pack"), 0o644); err != nil {
+		t.Fatalf("write fileA: %v", err)
+	}
+	fileB := filepath.Join(area.Path, "ansi-pack-v2.zip")
+	if err := os.WriteFile(fileB, []byte("ansi-pack-v2"), 0o644); err != nil {
+		t.Fatalf("write fileB: %v", err)
+	}
+	entry := &domain.FileEntry{AreaID: area.ID, Name: "ansi-pack.zip", Path: fileA, Description: "ANSI collection", Tags: []string{"ansi", "pack"}, SHA256: "abc", SizeBytes: 9, UploaderID: caller.ID, UploadedAt: time.Now().UTC()}
+	if err := adminRepo.UpsertFileEntry(entry); err != nil {
+		t.Fatalf("upsert entry: %v", err)
+	}
+	related := &domain.FileEntry{AreaID: area.ID, Name: "ansi-pack-v2.zip", Path: fileB, Description: "Duplicate candidate", Tags: []string{"ansi", "pack"}, SHA256: "abc", SizeBytes: 12, UploaderID: caller.ID, UploadedAt: time.Now().UTC()}
+	if err := adminRepo.UpsertFileEntry(related); err != nil {
+		t.Fatalf("upsert related: %v", err)
+	}
+
+	board := &domain.Board{Name: "General", Conference: "Local", CreatedBy: caller.ID}
+	if err := boardRepo.Create(board); err != nil {
+		t.Fatalf("create board: %v", err)
+	}
+	msg := &domain.Message{BoardID: board.ID, AuthorID: sysop.ID, Subject: "Packet subject", Body: "Offline packet body"}
+	if err := msgRepo.CreateMessage(msg); err != nil {
+		t.Fatalf("create message: %v", err)
+	}
+
+	app := &webApp{
+		authSvc:   authSvc,
+		adminRepo: adminRepo,
+		boardRepo: boardRepo,
+		msgRepo:   msgRepo,
+		mailRepo:  mailRepo,
+		sessions:  map[string]sessionState{},
+	}
+	app.setCuratorNote(entry.ID, fileCuratorNote{Curator: "sysop", Note: "Start here for curated ANSI picks."})
+	app.upsertFeaturedCollection(featuredFileCollection{
+		ID:          "featured-ansi",
+		Title:       "ANSI Starter Pack",
+		Description: "A guided bundle of classic ANSI files.",
+		FileIDs:     []int64{entry.ID, related.ID},
+		Tags:        []string{"ansi", "pack"},
+		Curator:     "sysop",
+	})
+	app.setBoardSubscription(caller.Handle, board.ID, boardSubscriptionWatch)
+
+	sid, ok := app.createSession("caller")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+	csrf := app.sessions[sid].csrf
+
+	form := url.Values{}
+	form.Set("action", "request_file")
+	form.Set("title", "Need ANSI docs")
+	form.Set("description", "Looking for a curated guide to ANSI workflows.")
+	form.Set("desired_area", strconv.FormatInt(area.ID, 10))
+	form.Set("return_to", "/gateway?view=files")
+	form.Set("csrf_token", csrf)
+	req := httptest.NewRequest(http.MethodPost, "/gateway", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.handleGateway(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("request file status = %d", rr.Code)
+	}
+	requests := app.loadFileRequests()
+	if len(requests) != 1 || requests[0].Title != "Need ANSI docs" {
+		t.Fatalf("expected saved file request, got %+v", requests)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/gateway?view=files&id="+strconv.FormatInt(entry.ID, 10), nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleGateway(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("gateway preview status = %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, needle := range []string{"Curator Note", "Duplicate Check", "ANSI Starter Pack", "Need ANSI docs"} {
+		if !strings.Contains(body, needle) {
+			t.Fatalf("expected %q in gateway preview body: %s", needle, body)
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/collections", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleCollections(rr, req)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "ANSI Starter Pack") {
+		t.Fatalf("collections page missing curated bundle: status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/offline?download=watched&format=json", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleOffline(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("offline export status = %d", rr.Code)
+	}
+	var packet offlinePacket
+	if err := json.Unmarshal(rr.Body.Bytes(), &packet); err != nil {
+		t.Fatalf("decode packet: %v", err)
+	}
+	if len(packet.Boards) == 0 || packet.Boards[0].Name != "General" {
+		t.Fatalf("expected watched board in packet, got %+v", packet)
+	}
+
+	replyPayload := `{"replies":[{"to":"sysop","subject":"Re: packet catch-up","body":"Imported offline reply","urgency":"normal"}]}`
+	form = url.Values{}
+	form.Set("action", "import_mail_replies")
+	form.Set("payload", replyPayload)
+	form.Set("csrf_token", csrf)
+	req = httptest.NewRequest(http.MethodPost, "/offline", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleOffline(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("offline import status = %d", rr.Code)
+	}
+	inbox, err := mailRepo.ListInbox(sysop.ID, 10)
+	if err != nil || len(inbox) != 1 || !strings.Contains(inbox[0].Body, "Imported offline reply") {
+		t.Fatalf("expected imported offline mail, got err=%v inbox=%+v", err, inbox)
+	}
+}
+
+func TestAdminFilesWorkflowSectionsAndRepairTools(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	adminRepo := repository.NewInMemoryAdminRepository()
+
+	sysop, err := authSvc.Register("sysop", "password123")
+	if err != nil {
+		t.Fatalf("register sysop: %v", err)
+	}
+	if err := authSvc.SetRole("sysop", roleAdmin); err != nil {
+		t.Fatalf("set role: %v", err)
+	}
+	area := &domain.FileArea{Name: "Uploads", Path: t.TempDir(), Description: "test area"}
+	if err := adminRepo.CreateFileArea(area); err != nil {
+		t.Fatalf("create area: %v", err)
+	}
+	brokenPath := filepath.Join(area.Path, "broken.zip")
+	if err := os.WriteFile(brokenPath, []byte("broken"), 0o644); err != nil {
+		t.Fatalf("write broken file: %v", err)
+	}
+	entry := &domain.FileEntry{
+		AreaID:      area.ID,
+		Name:        "broken.zip",
+		Path:        brokenPath,
+		Description: "Needs hash repair",
+		Tags:        []string{"repair"},
+		UploaderID:  sysop.ID,
+		UploadedAt:  time.Now().UTC(),
+	}
+	if err := adminRepo.UpsertFileEntry(entry); err != nil {
+		t.Fatalf("upsert entry: %v", err)
+	}
+
+	app := &webApp{
+		authSvc:   authSvc,
+		adminRepo: adminRepo,
+		sessions:  map[string]sessionState{},
+	}
+	app.upsertFileRequest(fileRequestItem{
+		ID:          "req-1",
+		Requester:   "caller",
+		Title:       "Upload docs",
+		Description: "Please add docs to the filebase.",
+		DesiredArea: area.ID,
+		Status:      "open",
+		CreatedAt:   time.Now().UTC(),
+	})
+	sid, ok := app.createSession("sysop")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+	csrf := app.sessions[sid].csrf
+
+	form := url.Values{}
+	form.Set("action", "save_upload_draft")
+	form.Set("draft_name", "door-docs.zip")
+	form.Set("draft_area_id", strconv.FormatInt(area.ID, 10))
+	form.Set("draft_status", "review")
+	form.Set("draft_reviewer", "sysop")
+	form.Set("draft_tags", "docs,door")
+	form.Set("draft_source", "request")
+	form.Set("draft_notes", "waiting on packaging")
+	form.Set("csrf_token", csrf)
+	req := httptest.NewRequest(http.MethodPost, "/admin/files", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.mustBeRole(roleAdmin, http.HandlerFunc(app.handleAdminFiles)).ServeHTTP(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("save draft status = %d", rr.Code)
+	}
+
+	form = url.Values{}
+	form.Set("action", "save_collection")
+	form.Set("collection_title", "Docs Bundle")
+	form.Set("collection_tags", "docs")
+	form.Set("collection_file_ids", strconv.FormatInt(entry.ID, 10))
+	form.Set("collection_description", "Documentation picks.")
+	form.Set("csrf_token", csrf)
+	req = httptest.NewRequest(http.MethodPost, "/admin/files", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.mustBeRole(roleAdmin, http.HandlerFunc(app.handleAdminFiles)).ServeHTTP(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("save collection status = %d", rr.Code)
+	}
+
+	form = url.Values{}
+	form.Set("action", "repair_hash")
+	form.Set("file_id", strconv.FormatInt(entry.ID, 10))
+	form.Set("csrf_token", csrf)
+	req = httptest.NewRequest(http.MethodPost, "/admin/files", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.mustBeRole(roleAdmin, http.HandlerFunc(app.handleAdminFiles)).ServeHTTP(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("repair hash status = %d", rr.Code)
+	}
+	updated, err := adminRepo.GetFileEntry(entry.ID)
+	if err != nil || strings.TrimSpace(updated.SHA256) == "" {
+		t.Fatalf("expected repaired hash, got err=%v entry=%+v", err, updated)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/admin/files", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.mustBeRole(roleAdmin, http.HandlerFunc(app.handleAdminFiles)).ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("admin files status = %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, needle := range []string{"File Request Queue", "Upload Drafts", "Featured Collections", "Recovery Assistant", "Upload docs", "door-docs.zip", "Docs Bundle"} {
+		if !strings.Contains(body, needle) {
+			t.Fatalf("expected %q on admin files page: %s", needle, body)
+		}
+	}
+}
+
 func TestAdminBoardsShowsModerationHints(t *testing.T) {
 	userRepo := repository.NewInMemoryUserRepository()
 	boardRepo := repository.NewInMemoryBoardRepository()

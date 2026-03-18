@@ -708,6 +708,10 @@ const (
 	sysSettingWeeklyDigestSentRoot   = "web.digest_mail_sent."
 	sysSettingStaffNotesRoot         = "staff.notes."
 	sysSettingFileReviewQueue        = "web.file_review.queue"
+	sysSettingFileRequests           = "web.file_requests"
+	sysSettingUploadDrafts           = "web.file_upload_drafts"
+	sysSettingCuratorNotes           = "web.file_curator_notes"
+	sysSettingFeaturedCollections    = "web.file_featured_collections"
 	maxAdminErrorEntries             = 300
 	maxActivityPubInboxBytes         = 1 << 20
 	maxJSONRequestBytes              = 1 << 20
@@ -1069,6 +1073,8 @@ func main() {
 	http.Handle("/feedback", app.authRequired(http.HandlerFunc(app.handleFeedback)))
 	http.Handle("/finder", app.authRequired(http.HandlerFunc(app.handleFinder)))
 	http.Handle("/newfiles", app.authRequired(http.HandlerFunc(app.handleNewFiles)))
+	http.Handle("/collections", app.authRequired(http.HandlerFunc(app.handleCollections)))
+	http.Handle("/offline", app.authRequired(http.HandlerFunc(app.handleOffline)))
 	http.Handle("/radar", app.authRequired(http.HandlerFunc(app.handleRadar)))
 	http.Handle("/clubhouse", app.authRequired(http.HandlerFunc(app.handleClubhouse)))
 	http.Handle("/doors", app.authRequired(http.HandlerFunc(app.handleDoors)))
@@ -13143,6 +13149,10 @@ func (a *webApp) handleAdminFiles(w http.ResponseWriter, r *http.Request) {
 		}
 		action := strings.ToLower(strings.TrimSpace(r.FormValue("action")))
 		redirectURL := "/admin/files"
+		if a.adminFileWorkflowAction(user, r, &redirectURL) {
+			http.Redirect(w, r, redirectURL, http.StatusFound)
+			return
+		}
 		switch action {
 		case "create":
 			area := &domain.FileArea{
@@ -13502,6 +13512,7 @@ func (a *webApp) handleAdminFiles(w http.ResponseWriter, r *http.Request) {
 		activeFilters = append(activeFilters, "saved filter: "+appliedFilterName)
 	}
 	filterSummary := renderActiveFilterPanel("Active File Filters", "/admin/files", activeFilters)
+	workflowSections := a.renderAdminFileWorkflowSections(r, user, areaOptionRows.String(), areaNames)
 
 	page := `<html><body><h1>Files</h1><p><a href="/admin">back</a> | <a href="/gateway">gateway</a> | <a href="/help">help</a></p>` + ticketNotice +
 		`<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Upload intake is browser-native now</strong><p>Use the upload form to land a file directly into a file area, extract metadata, and optionally put it on hold for review.</p></article><article class="wolfbbs-helper-card"><strong>Review before public exposure</strong><p>Hold status keeps a file out of caller-facing file lists until a sysop approves it.</p></article><article class="wolfbbs-helper-card"><strong>Use saved filters deliberately</strong><p>Saved filters are now actionable. Apply one to reload the indexed table instead of manually retyping the search every time.</p></article></section>` + filterSummary +
@@ -13515,7 +13526,9 @@ func (a *webApp) handleAdminFiles(w http.ResponseWriter, r *http.Request) {
 		`<h2>Saved Filters</h2><form method="POST">` + csrf + `<input type="hidden" name="action" value="save_filter"><label>User ID <input name="filter_user_id" value="` + strconv.FormatInt(maxInt64(filterUserID, user.ID), 10) + `" size="8"></label> <label>Name <input name="name" size="16"></label> <label>Query <input name="query" size="24"></label> <label>Tags <input name="tags" size="24" placeholder="tag1,tag2"></label> <button type="submit">save</button></form>` +
 		`<table border="1"><tr><th>ID</th><th>User</th><th>Name</th><th>Query</th><th>Tags</th><th>Action</th></tr>` + filterRows.String() + `</table>` +
 		`<h2>Download Queue</h2><form method="GET"><label>User ID <input name="queue_user" value="` + strconv.FormatInt(maxInt64(queueUserID, user.ID), 10) + `" size="8"></label><button type="submit">view queue</button></form>` +
-		`<table border="1"><tr><th>ID</th><th>User</th><th>File</th><th>Queued At</th><th>Actions</th></tr>` + queueRows.String() + `</table></body></html>`
+		`<table border="1"><tr><th>ID</th><th>User</th><th>File</th><th>Queued At</th><th>Actions</th></tr>` + queueRows.String() + `</table>` +
+		workflowSections +
+		`</body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
 }
@@ -19245,6 +19258,10 @@ func webQuickJumpPath(raw string) string {
 		return "/finder"
 	case "newfiles", "files", "nf":
 		return "/newfiles"
+	case "collections", "packs", "curated":
+		return "/collections"
+	case "offline", "packet", "packets":
+		return "/offline"
 	case "feedback", "fb":
 		return "/feedback"
 	case "radar", "mission", "r":

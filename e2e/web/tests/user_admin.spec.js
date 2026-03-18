@@ -243,6 +243,13 @@ test("user web journey supports keyboard navigation and status/config visibility
   await expect(page.locator("body")).toContainText("Download Desk");
   await expect(page.locator("body")).toContainText("visible uploads");
 
+  await page.goto("/collections");
+  await expect(page.locator("h1")).toContainText("Featured Collections");
+
+  await page.goto("/offline");
+  await expect(page.locator("h1")).toContainText("Offline Center");
+  await expect(page.locator("body")).toContainText("Offline Mail Reply Import");
+
   await page.goto("/feedback");
   await expect(page.locator("h1")).toContainText("Feedback to Sysop");
 
@@ -346,6 +353,14 @@ test("user web journey supports keyboard navigation and status/config visibility
   await expect(page.locator("h1")).toContainText(/Gateway/i);
   await expect(page.locator("body")).toContainText("Example Domain");
   await expect(page.locator("body")).toContainText("Saved to:");
+
+  await page.goto("/gateway?view=files");
+  await expect(page.locator("h1")).toContainText("Gateway FileBase");
+  await page.fill('input[name="title"]', "Playwright file request");
+  await page.fill('input[name="description"]', "Need a curated workflow pack.");
+  await page.getByRole("button", { name: "Queue Request" }).click();
+  await expect(page.locator("body")).toContainText("File request queued for review");
+  await expect(page.locator("body")).toContainText("Playwright file request");
 
   await page.goto("/settings");
   await page.check('input[name="digest_enabled"]');

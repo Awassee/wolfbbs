@@ -396,6 +396,9 @@ func (a *webApp) handleGatewayFileAction(w http.ResponseWriter, r *http.Request,
 	if action == "" || action == "fetch" {
 		return false
 	}
+	if a.handleGatewayExtendedFileAction(w, r, user) {
+		return true
+	}
 	redirectPath := safeLocalRedirectPath(r.FormValue("return_to"), "/gateway?view=files")
 	if a.adminRepo == nil {
 		redirectWithError(w, r, redirectPath, "FileBase is unavailable.")
@@ -650,12 +653,46 @@ func (a *webApp) renderGatewayFiles(w http.ResponseWriter, r *http.Request, user
 	previewBlock := ``
 	if fileID > 0 {
 		if entry, err := a.adminRepo.GetFileEntry(fileID); err == nil && entry != nil && a.fileVisibleToCallers(entry.ID) {
+			uploaderTier := a.fileUploaderTier(entry.UploaderID)
+			curatorNote := a.loadCuratorNotes()[entry.ID]
 			relatedRows := strings.Builder{}
 			for _, related := range a.relatedVisibleFiles(entry, 6) {
 				relatedRows.WriteString(`<li><a href="/gateway?view=files&id=` + strconv.FormatInt(related.ID, 10) + `">` + htmlEscape(related.Name) + `</a> <span class="wolfbbs-muted">` + htmlEscape(strings.Join(related.Tags, ", ")) + `</span></li>`)
 			}
 			if relatedRows.Len() == 0 {
 				relatedRows.WriteString(`<li>No related uploads yet.</li>`)
+			}
+			duplicateRows := strings.Builder{}
+			for _, duplicate := range a.fileDuplicateCandidates(entry, 5) {
+				duplicateRows.WriteString(`<li><a href="/gateway?view=files&id=` + strconv.FormatInt(duplicate.ID, 10) + `">` + htmlEscape(duplicate.Name) + `</a> <span class="wolfbbs-muted">sha ` + htmlEscape(cleanOneLiner(duplicate.SHA256, 14)) + `</span></li>`)
+			}
+			if duplicateRows.Len() == 0 {
+				duplicateRows.WriteString(`<li>No likely duplicates detected.</li>`)
+			}
+			doorRows := strings.Builder{}
+			for _, label := range a.relatedDoorsForFile(entry, 4) {
+				doorRows.WriteString(`<li>` + htmlEscape(label) + `</li>`)
+			}
+			if doorRows.Len() == 0 {
+				doorRows.WriteString(`<li>No related doors matched this upload yet.</li>`)
+			}
+			eventRows := strings.Builder{}
+			for _, event := range a.relatedEventsForFile(entry, 4) {
+				label := htmlEscape(event.Title)
+				if strings.TrimSpace(event.Link) != "" {
+					label = `<a href="` + htmlEscape(event.Link) + `">` + htmlEscape(event.Title) + `</a>`
+				}
+				eventRows.WriteString(`<li>` + label + ` <span class="wolfbbs-muted">` + event.StartsAt.Local().Format("Jan 2 15:04") + `</span></li>`)
+			}
+			if eventRows.Len() == 0 {
+				eventRows.WriteString(`<li>No live event bundle matches yet.</li>`)
+			}
+			collectionRows := strings.Builder{}
+			for _, collection := range a.collectionsContainingFile(entry.ID) {
+				collectionRows.WriteString(`<li><a href="/collections">` + htmlEscape(collection.Title) + `</a></li>`)
+			}
+			if collectionRows.Len() == 0 {
+				collectionRows.WriteString(`<li>Not in a featured collection yet.</li>`)
 			}
 			tagLinks := strings.Builder{}
 			for _, tag := range entry.Tags {
@@ -671,17 +708,35 @@ func (a *webApp) renderGatewayFiles(w http.ResponseWriter, r *http.Request, user
 			if tagLinks.Len() == 0 {
 				tagLinks.WriteString(`<span class="wolfbbs-muted">No tags yet.</span>`)
 			}
-			previewBlock = `<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>File Preview</h2><p><strong>` + htmlEscape(entry.Name) + `</strong> in ` + htmlEscape(areaNames[entry.AreaID]) + `</p><p>` + htmlEscape(defaultIfBlank(entry.Description, "No description provided yet.")) + `</p><ul class="wolfbbs-list-clean"><li>Size: ` + strconv.FormatInt(entry.SizeBytes, 10) + ` bytes</li><li>Uploaded: ` + entry.UploadedAt.Local().Format("2006-01-02 15:04") + `</li><li>Rating: ` + fmt.Sprintf("%.2f", entry.RatingAvg) + ` from ` + strconv.Itoa(entry.RatingCount) + ` votes</li><li>SHA-256: <code>` + htmlEscape(entry.SHA256) + `</code></li></ul><p><strong>Tags:</strong> ` + tagLinks.String() + `</p><div class="wolfbbs-inline-actions"><form method="POST" action="/gateway">` + csrf + `<input type="hidden" name="action" value="queue_add"><input type="hidden" name="file_id" value="` + strconv.FormatInt(entry.ID, 10) + `"><input type="hidden" name="return_to" value="/gateway?view=files&id=` + strconv.FormatInt(entry.ID, 10) + `"><button type="submit">Add To Queue</button></form><form method="POST" action="/gateway">` + csrf + `<input type="hidden" name="action" value="ticket"><input type="hidden" name="file_id" value="` + strconv.FormatInt(entry.ID, 10) + `"><input type="hidden" name="return_to" value="/gateway?view=files&id=` + strconv.FormatInt(entry.ID, 10) + `"><input name="ttl_minutes" size="4" value="15"><button type="submit">Issue Ticket</button></form></div></article><article class="wolfbbs-card"><h2>Related Uploads</h2><ul>` + relatedRows.String() + `</ul></article></section>`
+			curatorBlock := `<p class="wolfbbs-muted">No curator note yet.</p>`
+			if strings.TrimSpace(curatorNote.Note) != "" {
+				curatorBlock = `<blockquote>` + htmlEscape(curatorNote.Note) + `</blockquote><p class="wolfbbs-muted">Curated by ` + htmlEscape(defaultIfBlank(curatorNote.Curator, "staff")) + ` on ` + curatorNote.UpdatedAt.Local().Format("2006-01-02 15:04") + `</p>`
+			}
+			previewBlock = `<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>File Preview</h2><p><strong>` + htmlEscape(entry.Name) + `</strong> in ` + htmlEscape(areaNames[entry.AreaID]) + `</p><p>` + htmlEscape(defaultIfBlank(entry.Description, "No description provided yet.")) + `</p><ul class="wolfbbs-list-clean"><li>Size: ` + strconv.FormatInt(entry.SizeBytes, 10) + ` bytes</li><li>Uploaded: ` + entry.UploadedAt.Local().Format("2006-01-02 15:04") + `</li><li>Rating: ` + fmt.Sprintf("%.2f", entry.RatingAvg) + ` from ` + strconv.Itoa(entry.RatingCount) + ` votes</li><li>SHA-256: <code>` + htmlEscape(entry.SHA256) + `</code></li><li>Uploader tier: ` + htmlEscape(uploaderTier.Label) + `</li></ul><p><strong>Tags:</strong> ` + tagLinks.String() + `</p><div class="wolfbbs-inline-actions"><form method="POST" action="/gateway">` + csrf + `<input type="hidden" name="action" value="queue_add"><input type="hidden" name="file_id" value="` + strconv.FormatInt(entry.ID, 10) + `"><input type="hidden" name="return_to" value="/gateway?view=files&id=` + strconv.FormatInt(entry.ID, 10) + `"><button type="submit">Add To Queue</button></form><form method="POST" action="/gateway">` + csrf + `<input type="hidden" name="action" value="ticket"><input type="hidden" name="file_id" value="` + strconv.FormatInt(entry.ID, 10) + `"><input type="hidden" name="return_to" value="/gateway?view=files&id=` + strconv.FormatInt(entry.ID, 10) + `"><input name="ttl_minutes" size="4" value="15"><button type="submit">Issue Ticket</button></form></div><h3>Curator Note</h3>` + curatorBlock + `</article><article class="wolfbbs-card"><h2>Related Uploads</h2><ul>` + relatedRows.String() + `</ul><h3>Duplicate Check</h3><ul>` + duplicateRows.String() + `</ul><h3>Collections</h3><ul>` + collectionRows.String() + `</ul><h3>Door Packs</h3><ul>` + doorRows.String() + `</ul><h3>Event Bundles</h3><ul>` + eventRows.String() + `</ul></article></section>`
 		}
+	}
+	requestRows := strings.Builder{}
+	for _, row := range a.loadFileRequests() {
+		if row.Status != "open" && row.Status != "claimed" {
+			continue
+		}
+		requestRows.WriteString(`<li><strong>` + htmlEscape(row.Title) + `</strong> <span class="wolfbbs-muted">wanted by ` + htmlEscape(row.Requester) + `</span><br>` + htmlEscape(cleanOneLiner(row.Description, 120)) + `</li>`)
+		if requestRows.Len() > 800 {
+			break
+		}
+	}
+	if requestRows.Len() == 0 {
+		requestRows.WriteString(`<li>No active caller file requests yet.</li>`)
 	}
 
 	page := `<html><body>
 	<h1>Gateway FileBase</h1>
-	<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/gateway">gateway</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>` +
+	<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/gateway">gateway</a> | <a href="/collections">collections</a> | <a href="/offline">offline</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>` +
 		messageBlock +
 		issuedBlock +
 		previewBlock +
-		`<p><strong>Tip:</strong> Queue files first, then issue one-time tickets or download the batch ZIP.</p>` +
+		`<p><strong>Tip:</strong> Queue files first, then issue one-time tickets or download the batch ZIP. Curated collections and offline packets now sit alongside the raw file list.</p>` +
+		`<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Request A File</h2><form method="POST" action="/gateway">` + csrf + `<input type="hidden" name="action" value="request_file"><input type="hidden" name="return_to" value="` + htmlEscape(returnTo) + `"><label>Title <input name="title" size="24" placeholder="ANSI pack, docs, utility"></label><label>Area <input name="desired_area" size="6" value="` + strconv.FormatInt(fileAreaID, 10) + `"></label><br><label>Description <input name="description" size="64" placeholder="What you need and why callers would care"></label><button type="submit">Queue Request</button></form><ul>` + requestRows.String() + `</ul></article><article class="wolfbbs-card"><h2>Curated Paths</h2><p><a href="/collections">Featured collections</a> group related uploads into browseable bundles.</p><p><a href="/offline">Offline center</a> exports watched-board packets and imports offline mail replies.</p></article></section>` +
 		`<form method="GET" action="/gateway">
 			<input type="hidden" name="view" value="files">
 			<label>Area ID <input name="area" value="` + strconv.FormatInt(fileAreaID, 10) + `" size="6"></label>

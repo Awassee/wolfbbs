@@ -86,6 +86,7 @@ Auto-generated from `docs/function-registry.json`.
 | `web:/chat/stream` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/circles` | `web_route` | N | Y | N | Y | `/settings` | `/status` |
 | `web:/clubhouse` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
+| `web:/collections` | `web_route` | N | Y | N | Y | `/admin/files` | `/status` |
 | `web:/config` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/connect` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/digest` | `web_route` | Y | Y | N | N | `/settings` | `/status` |
@@ -106,6 +107,7 @@ Auto-generated from `docs/function-registry.json`.
 | `web:/mail/inbound` | `web_route` | N | N | N | N | `/admin/gateways` | `/admin/system` |
 | `web:/metrics` | `web_route` | N | N | N | N | `N/A (operational endpoint)` | `/admin/system` |
 | `web:/newfiles` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
+| `web:/offline` | `web_route` | N | Y | N | Y | `/admin/files + /settings` | `/status` |
 | `web:/profile/export` | `web_route` | N | Y | N | Y | `/settings` | `/status` |
 | `web:/radar` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/readyz` | `web_route` | N | N | N | N | `N/A (operational endpoint)` | `/admin/system` |

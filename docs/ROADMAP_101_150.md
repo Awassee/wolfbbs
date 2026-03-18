@@ -133,43 +133,43 @@ Status: implemented in current tree.
 ## Theme 14: Files, downloads, and offline depth
 131. File request fulfillment queue with ownership.
 Value: turns requests into a trackable workflow.
-Status: planned.
+Status: shipped in v1.1.18.
 
 132. Upload draft area with collaborative review.
 Value: improves content quality before public release.
-Status: planned.
+Status: shipped in v1.1.18.
 
 133. Curator notes on file previews.
 Value: adds editorial context around important uploads.
-Status: planned.
+Status: shipped in v1.1.18.
 
 134. Smart duplicate detection for uploads.
 Value: reduces waste and moderation overhead.
-Status: planned.
+Status: shipped in v1.1.18.
 
 135. Related-door packs and event bundles.
 Value: connects files to the rest of the product.
-Status: planned.
+Status: shipped in v1.1.18.
 
 136. Offline watched-board packet builder.
 Value: supports asynchronous callers.
-Status: planned.
+Status: shipped in v1.1.18.
 
 137. Offline mail reply import.
 Value: completes the packet workflow instead of making it read-only.
-Status: planned.
+Status: shipped in v1.1.18.
 
 138. File reputation tiers for uploaders.
 Value: lowers friction for trusted contributors.
-Status: planned.
+Status: shipped in v1.1.18.
 
 139. Public featured collections landing page.
 Value: makes the filebase feel curated.
-Status: planned.
+Status: shipped in v1.1.18.
 
 140. Recovery tools for broken or orphaned file entries.
 Value: improves operator safety.
-Status: planned.
+Status: shipped in v1.1.18.
 
 ## Theme 15: Platform, retention, and extension
 141. Event attendance tracking and post-event recap.

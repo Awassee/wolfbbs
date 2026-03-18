@@ -1074,6 +1074,19 @@
       "notes": "Discovered from cmd/wolfbbs-web route registration."
     },
     {
+      "id": "web:/collections",
+      "type": "web_route",
+      "entrypoint": "/collections",
+      "user_tui": false,
+      "user_web": true,
+      "admin_tui": false,
+      "admin_web": true,
+      "config_ui": "/admin/files",
+      "status_ui": "/status",
+      "state_visibility": "featured file bundles and related browse paths surfaced through FileBase and Files admin",
+      "notes": "Discovered from cmd/wolfbbs-web route registration."
+    },
+    {
       "id": "web:/config",
       "type": "web_route",
       "entrypoint": "/config",
@@ -1331,6 +1344,19 @@
       "config_ui": "/admin/config",
       "status_ui": "/status",
       "state_visibility": "enabled/configured/healthy surfaced via status center",
+      "notes": "Discovered from cmd/wolfbbs-web route registration."
+    },
+    {
+      "id": "web:/offline",
+      "type": "web_route",
+      "entrypoint": "/offline",
+      "user_tui": false,
+      "user_web": true,
+      "admin_tui": false,
+      "admin_web": true,
+      "config_ui": "/admin/files + /settings",
+      "status_ui": "/status",
+      "state_visibility": "offline board packet export and offline local-mail import surfaced through caller tools and Files admin",
       "notes": "Discovered from cmd/wolfbbs-web route registration."
     },
     {
