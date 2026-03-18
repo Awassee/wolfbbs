@@ -68,6 +68,7 @@ Auto-generated from `docs/function-registry.json`.
 | `web:/admin/mail` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/node-state` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/ops` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
+| `web:/admin/release` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/setup` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/system` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/upgrade-safety` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |

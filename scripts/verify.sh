@@ -459,6 +459,7 @@ run_static_checks() {
   must "INS-008" "installer has post-install verification hooks" check_installer_verification_hooks
   must "INS-009" "installer prints connection summary strings" check_installer_summary_strings
   must "INS-010" "standalone installer dry-run works without git by using archive fallback" check_installer_no_git_dry_run
+  must "INS-011" "installer regression harness covers uninstall/upgrade edge cases" bash -c "test -x scripts/test-installer-regressions.sh && scripts/test-installer-regressions.sh >/dev/null"
   must "INS-LNX-001" "installer detects linux distro and package manager" check_installer_linux_detection
   must "INS-LNX-002" "linux prereqs documented" check_linux_prereq_docs
   must "INS-LNX-003" "curl|bash bootstrap documented" check_bootstrap_docs

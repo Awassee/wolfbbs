@@ -101,9 +101,12 @@ The installer prints a first-login block. Use it in this order:
 3. finish `/admin/setup`
 4. review `/admin/config`
 5. create at least one non-sysop user
-6. verify SSH, web chat, boards, and doors
-7. run `bash install.sh --status`
-8. if anything feels wrong, run `bash install.sh --doctor`
+6. schedule one event in `/admin/events` and confirm `/events` + `/events/recaps`
+7. define one active season in `/admin/challenges` and confirm `/challenges` + `/clubhouse`
+8. review `/admin/upgrade-safety` and `/admin/backups`
+9. verify SSH, web chat, boards, and doors
+10. run `bash install.sh --status`
+11. if anything feels wrong, run `bash install.sh --doctor`
 
 ## Install From GitHub Release Bundle
 
@@ -185,9 +188,12 @@ Use this sequence:
 1. sign in as the bootstrap sysop
 2. finish `/admin/setup`
 3. review `/admin/config`
-4. open `/boards`, `/chat`, `/doors`, and `/scores`
-5. connect via SSH and verify the ANSI menus
-6. run `bash install.sh --doctor`
+4. open `/admin/events` and add one event, then verify `/events` and `/events/recaps`
+5. open `/admin/challenges` and define one season + one goal, then verify `/challenges` and `/clubhouse`
+6. open `/admin/upgrade-safety` and `/admin/backups`
+7. open `/boards`, `/chat`, `/doors`, and `/scores`
+8. connect via SSH and verify the ANSI menus
+9. run `bash install.sh --doctor`
 
 ## Which Command Should I Run?
 
@@ -201,6 +207,16 @@ Use this sequence:
 | pull latest shipped images | `bash install.sh --upgrade` |
 | rebuild local source changes quickly | `bash install.sh --rapid-upgrade` |
 | fully remove the running install | `bash install.sh --uninstall --purge --yes` |
+
+## New Operator Surfaces (v1.1.19+)
+
+- `/admin/events`: schedule events and post event recaps.
+- `/events/recaps`: public recap feed with attendance outcomes.
+- `/admin/challenges`: configure seasonal scoring and shared goals.
+- `/challenges`: caller-facing seasonal leaderboard.
+- `/admin/upgrade-safety`: pre-upgrade risk/trust dashboard.
+- `/admin/backups`: backup artifact browser with validation states.
+- `/admin/release`: release cockpit linking roadmap, QA, docs, and artifacts.
 
 ## What the Installer Does
 

@@ -254,10 +254,15 @@ The web sysop panel stores these keys in DB-backed `system_settings`:
 - `site.guest_tour_enable`
 - `site.discover_enable`
 - `chat.locked_channels` (comma-separated channels)
+- `events.attendance` (event occurrence -> checked-in handle map)
+- `events.recaps` (published event recap rows)
+- `community.season_challenges` (season scoring windows and weights)
+- `community.clubhouse.goals` (shared clubhouse goal definitions)
 
 ## Installer and Bootstrap Control
 
 - `WOLFBBS_REPO_URL`: fallback repo URL consumed by `install.sh --repo-url`.
+- `WOLFBBS_INSTALL_PREFIX`: optional install prefix override consumed by installer and web upgrade-safety/backup surfaces.
 
 ## Notes on Defaults
 

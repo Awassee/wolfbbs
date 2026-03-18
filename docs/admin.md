@@ -48,6 +48,22 @@ This version ships a read/write web-first control panel with role-aware routes a
   - per-door role overrides
   - reset door leaderboards
   - usage stats and door event logs
+- Events + Recaps
+  - schedule one-time/recurring events
+  - collect caller event check-ins
+  - publish post-event recaps with attendance and highlights
+  - expose recap feed at `/events/recaps`
+- Challenges + Shared Goals
+  - define active seasonal challenge windows
+  - configure board/chat/door scoring weights
+  - define clubhouse goals tied to boards and doors
+  - track caller contributions from `/clubhouse`
+- Upgrade Safety
+  - pre-upgrade trust checklist from install + runtime signals
+  - operator recommendations before upgrade windows
+- Backup Browser
+  - inspect backup artifacts (service snapshots, menu backups, offline packets)
+  - run lightweight validation and triage warnings
 - System
   - `/admin/setup` is the primary first-run setup UX
   - setup grouped as a 4-step wizard:
@@ -96,6 +112,13 @@ This version ships a read/write web-first control panel with role-aware routes a
 - `/admin/config` also includes menu editor controls for HJSON menu files
 - `/admin/errors` (runtime web error log)
 - `/admin/doors` (door policy + stats + logs + leaderboard reset)
+- `/admin/events` (event scheduling + recap publishing)
+- `/events/recaps` (public recap feed)
+- `/challenges` (public seasonal leaderboard)
+- `/admin/challenges` (seasonal scoring + clubhouse goals)
+- `/admin/upgrade-safety` (upgrade trust dashboard)
+- `/admin/backups` (backup artifact browser + validation)
+- `/admin/release` (roadmap + QA + docs + artifacts release cockpit)
 - `/admin/system` (system summary)
 - `/admin/node-state` (JSON diagnostics: persisted node sessions + caller history)
 - `/admin/audit` (persisted audit trail)

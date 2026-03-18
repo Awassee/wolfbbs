@@ -7104,6 +7104,9 @@ func TestWebQuickJumpPath(t *testing.T) {
 	if got := webQuickJumpPath("backups"); got != "/admin/backups" {
 		t.Fatalf("expected /admin/backups, got %q", got)
 	}
+	if got := webQuickJumpPath("release"); got != "/admin/release" {
+		t.Fatalf("expected /admin/release, got %q", got)
+	}
 	if got := webQuickJumpPath("unknown"); got != "" {
 		t.Fatalf("expected empty path for unknown target, got %q", got)
 	}
@@ -7695,6 +7698,54 @@ func TestAdminMailSharedInboxAndMerge(t *testing.T) {
 		}
 	}
 	_ = sysop
+}
+
+func TestAdminReleaseDashboardRendersArtifacts(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	if _, err := authSvc.Register("sysop", "password123"); err != nil {
+		t.Fatalf("register sysop: %v", err)
+	}
+	if err := authSvc.SetRole("sysop", roleAdmin); err != nil {
+		t.Fatalf("set sysop role: %v", err)
+	}
+	app := &webApp{
+		authSvc:   authSvc,
+		userRepo:  userRepo,
+		adminRepo: repository.NewInMemoryAdminRepository(),
+		sessions:  map[string]sessionState{},
+	}
+	sid, ok := app.createSession("sysop")
+	if !ok {
+		t.Fatal("create sysop session failed")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/release", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.handleAdminReleaseDashboard(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("release dashboard status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, needle := range []string{
+		"Release Dashboard",
+		"Roadmap Tranche 146-150",
+		"docs/manual-acceptance-latest.md",
+		"docs/function-registry.json",
+	} {
+		if !strings.Contains(body, needle) {
+			t.Fatalf("expected %q in release dashboard: %s", needle, body)
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/admin/release", strings.NewReader("x=1"))
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleAdminReleaseDashboard(rr, req)
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405 for non-GET release dashboard, got %d", rr.Code)
+	}
 }
 
 func TestEventAttendanceAndRecapPublishFlow(t *testing.T) {

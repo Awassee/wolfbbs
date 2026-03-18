@@ -93,8 +93,11 @@ After install, WolfBBS prints the connection summary and bootstrap sysop credent
 3. Open `/admin/config` to tune site text, runtime flags, services, and operator preferences.
 4. Seed default boards and confirm the mailbot bootstrap action.
 5. Create at least one non-sysop user or moderator from `/admin/users`.
-6. Connect over SSH and verify the caller-facing ANSI flow.
-7. Open `/boards`, `/chat`, `/doors`, and `/scores` to confirm the public experience.
+6. Schedule at least one event in `/admin/events`, then verify `/events` and `/events/recaps`.
+7. Configure an active season in `/admin/challenges`, then verify `/challenges` and `/clubhouse`.
+8. Run upgrade safety checks in `/admin/upgrade-safety` and validate artifacts in `/admin/backups`.
+9. Connect over SSH and verify the caller-facing ANSI flow.
+10. Open `/boards`, `/chat`, `/doors`, and `/scores` to confirm the public experience.
 
 The installer also writes:
 
@@ -149,8 +152,8 @@ Then in the SSH main menu press `/` and enter `/app upgrade`.
 ## Core Product Areas
 
 - `Callers`: ANSI login, guest tour, boards, private mail, bulletins, who’s online, last callers, files, doors, chat
-- `Community`: IRC bridge, one-liners, clubhouse, directory, discovery queue, public events calendar, today brief, scoreboards, file picks
-- `Operators`: admin setup wizard, config center, users, boards, files, doors, gateways, audit, health, diagnostics
+- `Community`: IRC bridge, one-liners, clubhouse, seasonal challenges, directory, discovery queue, events calendar + recaps, today brief, scoreboards, file picks
+- `Operators`: admin setup wizard, config center, users, boards, files, doors, events/challenges, upgrade safety, backup browser, release dashboard, audit, health, diagnostics
 - `Distribution`: release bundles, bootstrap installer, upgrade flows, smoke verification, packaging checksums
 
 ## What Success Looks Like In 15 Minutes

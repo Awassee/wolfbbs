@@ -194,20 +194,20 @@ Status: shipped in v1.1.19.
 
 146. Plugin manifest, capability model, and sandbox contract.
 Value: prepares the platform for safe extension.
-Status: planned.
+Status: in progress (kickoff contract added in docs/ROADMAP_146_150_KICKOFF.md).
 
 147. Theme marketplace / import path.
 Value: broadens customization without code edits.
-Status: planned.
+Status: in progress (kickoff contract added in docs/ROADMAP_146_150_KICKOFF.md).
 
 148. External webhook bridge for board events.
 Value: improves integration potential.
-Status: planned.
+Status: in progress (kickoff contract added in docs/ROADMAP_146_150_KICKOFF.md).
 
 149. Embedded product analytics summary for sysops.
 Value: helps prioritize improvements from real usage.
-Status: planned.
+Status: in progress (kickoff contract added in docs/ROADMAP_146_150_KICKOFF.md).
 
 150. Release dashboard linking roadmap, QA, docs, and artifacts.
 Value: closes the loop between product planning and shipping.
-Status: planned.
+Status: in progress (alpha shipped at /admin/release; follow-on items tracked in docs/ROADMAP_146_150_KICKOFF.md).

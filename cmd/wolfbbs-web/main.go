@@ -1090,6 +1090,7 @@ func main() {
 	http.Handle("/admin/doors", app.mustBeRole(roleAdmin, app.handleAdminDoors))
 	http.Handle("/admin/events", app.mustBeRole(roleAdmin, app.handleAdminEvents))
 	http.Handle("/admin/challenges", app.mustBeRole(roleAdmin, app.handleAdminChallenges))
+	http.Handle("/admin/release", app.mustBeRole(roleAdmin, app.handleAdminReleaseDashboard))
 	http.Handle("/admin/bulletins", app.mustBeRole(roleAdmin, app.handleAdminBulletins))
 	http.Handle("/admin/launch", app.mustBeRole(roleAdmin, app.handleAdminLaunch))
 	http.Handle("/admin/ops", app.mustBeRole(roleAdmin, app.handleAdminOps))
@@ -4002,7 +4003,7 @@ func (a *webApp) handleAdminOps(w http.ResponseWriter, r *http.Request) {
 	}
 
 	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Ops Center</title></head><body>
-<p><a href="/admin">admin</a> | <a href="/admin/launch">launch</a> | <a href="/admin/setup">setup</a> | <a href="/admin/challenges">challenges</a> | <a href="/admin/upgrade-safety">upgrade safety</a> | <a href="/admin/backups">backups</a> | <a href="/admin/system">system</a> | <a href="/admin/errors">errors</a> | <a href="/admin/audit">audit</a> | <a href="/status">status</a> | <a href="/help">help</a></p>
+<p><a href="/admin">admin</a> | <a href="/admin/launch">launch</a> | <a href="/admin/setup">setup</a> | <a href="/admin/challenges">challenges</a> | <a href="/admin/upgrade-safety">upgrade safety</a> | <a href="/admin/backups">backups</a> | <a href="/admin/release">release</a> | <a href="/admin/system">system</a> | <a href="/admin/errors">errors</a> | <a href="/admin/audit">audit</a> | <a href="/status">status</a> | <a href="/help">help</a></p>
 ` + pageMessageBlock(r) + `
 <h1>Ops Center</h1>
 <p>Operator triage for launch readiness, runtime warnings, recent errors, audits, and active caller state.</p>
@@ -4018,7 +4019,7 @@ func (a *webApp) handleAdminOps(w http.ResponseWriter, r *http.Request) {
 </section>
 <section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Readiness before polish</strong><p>Use launch and status signals to decide whether you have a real blocker or just a minor cleanup item.</p></article><article class="wolfbbs-helper-card"><strong>Errors change the meaning of green</strong><p>If runtime errors are piling up, treat every passing screen as provisional until you understand the failures.</p></article><article class="wolfbbs-helper-card"><strong>Audit + sessions explain surprises</strong><p>When callers report something odd, the fastest answers usually come from the recent audit trail and who is online right now.</p></article></section>
 <section class="wolfbbs-grid">
-<article><h2>Current Operator Focus</h2><ul>` + nextActions.String() + `</ul><p><a href="/admin/launch">Launch Center</a> | <a href="/admin/setup">Setup Wizard</a> | <a href="/admin/upgrade-safety">Upgrade Safety</a> | <a href="/admin/backups">Backup Browser</a> | <a href="/status">Caller Status</a></p></article>
+<article><h2>Current Operator Focus</h2><ul>` + nextActions.String() + `</ul><p><a href="/admin/launch">Launch Center</a> | <a href="/admin/setup">Setup Wizard</a> | <a href="/admin/upgrade-safety">Upgrade Safety</a> | <a href="/admin/backups">Backup Browser</a> | <a href="/admin/release">Release Dashboard</a> | <a href="/status">Caller Status</a></p></article>
 <article><h2>Operator Controls</h2><div class="wolfbbs-inline-actions"><form method="POST" action="/admin/ops"><input type="hidden" name="action" value="clear_errors">` + csrf + `<button type="submit">Clear Runtime Errors</button></form><form method="POST" action="/admin/ops" class="wolfbbs-inline-form"><input type="hidden" name="action" value="prune_idle_sessions">` + csrf + `<label>Prune idle sessions older than <input name="idle_minutes" value="30" inputmode="numeric"></label><button type="submit">Prune Sessions</button></form><form method="POST" action="/admin/ops"><input type="hidden" name="action" value="purge_web_sessions">` + csrf + `<button type="submit">Purge Expired Web Sessions</button></form><form method="POST" action="/admin/ops"><input type="hidden" name="action" value="clear_rate_limits">` + csrf + `<button type="submit">Clear Rate Limits</button></form></div><p><strong>Live counters:</strong> ` + strconv.Itoa(webSessionCount) + ` web sessions / ` + strconv.Itoa(rateLimitCount) + ` rate-limit buckets</p><h3>Operator Commands</h3><pre>bash install.sh --status
 bash install.sh --doctor
 bash install.sh --logs
@@ -11606,7 +11607,7 @@ func (a *webApp) handleStatusCenter(w http.ResponseWriter, r *http.Request) {
 	adminLink := ""
 	launchBlock := ""
 	if a.hasRole(user, roleAdmin) {
-		adminLink = ` | <a href="/admin/ops">ops center</a> | <a href="/admin/system">sysop system</a> | <a href="/admin/upgrade-safety">upgrade safety</a> | <a href="/admin/backups">backup browser</a>`
+		adminLink = ` | <a href="/admin/ops">ops center</a> | <a href="/admin/system">sysop system</a> | <a href="/admin/upgrade-safety">upgrade safety</a> | <a href="/admin/backups">backup browser</a> | <a href="/admin/release">release dashboard</a>`
 		readiness := a.buildSetupReadinessSnapshot(user)
 		launchBlock = `<h2>Launch Readiness</h2>` +
 			`<p><strong>Verdict:</strong> ` + htmlEscape(launchVerdictText(readiness)) + ` | ` + strconv.Itoa(readiness.Summary.Pass) + `/` + strconv.Itoa(readiness.Summary.Total) + ` launch checks PASS</p>` +
@@ -11665,6 +11666,7 @@ func (a *webApp) handleConfigCenter(w http.ResponseWriter, r *http.Request) {
 			`<li><a href="/admin/ops">/admin/ops</a> for errors, sessions, audits, and operator triage.</li>` +
 			`<li><a href="/admin/upgrade-safety">/admin/upgrade-safety</a> for change-risk checks before upgrades.</li>` +
 			`<li><a href="/admin/backups">/admin/backups</a> to validate backup artifacts and offline packets.</li>` +
+			`<li><a href="/admin/release">/admin/release</a> for roadmap/QA/doc artifact release coordination.</li>` +
 			`<li><a href="/admin/setup">/admin/setup</a> for identity, safety, and bootstrap actions.</li>` +
 			`<li><a href="/admin/config">/admin/config</a> for runtime services, flags, and exposure.</li>` +
 			`<li><a href="/admin/users">/admin/users</a> to create the first real caller.</li>` +
@@ -11683,6 +11685,7 @@ func (a *webApp) handleConfigCenter(w http.ResponseWriter, r *http.Request) {
 			`<tr><td>Chat channels + moderation</td><td><a href="/admin/chat">/admin/chat</a></td><td><a href="/admin/system">/admin/system</a></td></tr>` +
 			`<tr><td>Doors + turns + scores</td><td><a href="/admin/doors">/admin/doors</a></td><td><a href="/admin/system">/admin/system</a></td></tr>` +
 			`<tr><td>Upgrade + backup safety</td><td><a href="/admin/upgrade-safety">/admin/upgrade-safety</a> / <a href="/admin/backups">/admin/backups</a></td><td><a href="/status">/status</a></td></tr>` +
+			`<tr><td>Release cockpit</td><td><a href="/admin/release">/admin/release</a></td><td><a href="/status">/status</a></td></tr>` +
 			`<tr><td>Errors + audit logs</td><td><a href="/admin/errors">/admin/errors</a> / <a href="/admin/audit">/admin/audit</a></td><td><a href="/admin/system">/admin/system</a></td></tr>` +
 			`</table>`
 	}
@@ -11762,11 +11765,11 @@ func (a *webApp) handleAdmin(w http.ResponseWriter, r *http.Request) {
 	if adminActions.Len() == 0 {
 		adminActions.WriteString(`<li>No launch blockers detected. Walk the caller path once more, then announce the board.</li>`)
 	}
-	adminActionGrid := `<section class="wolfbbs-action-grid"><a class="wolfbbs-action-card" href="/admin/launch"><strong>Launch Center</strong><span>go-live verdict, next-best actions, operator commands</span></a><a class="wolfbbs-action-card" href="/admin/ops"><strong>Ops Center</strong><span>errors, sessions, audits, and triage</span></a><a class="wolfbbs-action-card" href="/admin/setup"><strong>Setup Wizard</strong><span>identity, safety, bootstrap, launch checklist</span></a><a class="wolfbbs-action-card" href="/admin/users"><strong>User Ops</strong><span>create callers, role changes, bans, resets</span></a><a class="wolfbbs-action-card" href="/admin/challenges"><strong>Challenges</strong><span>season engine + clubhouse shared goals</span></a><a class="wolfbbs-action-card" href="/admin/upgrade-safety"><strong>Upgrade Safety</strong><span>change-risk checks before rollout</span></a><a class="wolfbbs-action-card" href="/admin/backups"><strong>Backup Browser</strong><span>artifact validation and recovery confidence</span></a><a class="wolfbbs-action-card" href="/admin/system"><strong>System</strong><span>runtime health, service state, deeper operator detail</span></a></section>`
+	adminActionGrid := `<section class="wolfbbs-action-grid"><a class="wolfbbs-action-card" href="/admin/launch"><strong>Launch Center</strong><span>go-live verdict, next-best actions, operator commands</span></a><a class="wolfbbs-action-card" href="/admin/ops"><strong>Ops Center</strong><span>errors, sessions, audits, and triage</span></a><a class="wolfbbs-action-card" href="/admin/setup"><strong>Setup Wizard</strong><span>identity, safety, bootstrap, launch checklist</span></a><a class="wolfbbs-action-card" href="/admin/users"><strong>User Ops</strong><span>create callers, role changes, bans, resets</span></a><a class="wolfbbs-action-card" href="/admin/challenges"><strong>Challenges</strong><span>season engine + clubhouse shared goals</span></a><a class="wolfbbs-action-card" href="/admin/upgrade-safety"><strong>Upgrade Safety</strong><span>change-risk checks before rollout</span></a><a class="wolfbbs-action-card" href="/admin/backups"><strong>Backup Browser</strong><span>artifact validation and recovery confidence</span></a><a class="wolfbbs-action-card" href="/admin/release"><strong>Release Dashboard</strong><span>roadmap, QA, docs, and artifact cockpit</span></a><a class="wolfbbs-action-card" href="/admin/system"><strong>System</strong><span>runtime health, service state, deeper operator detail</span></a></section>`
 	page := `<html><body><h1>Sysop Control Panel</h1><p>Logged in as ` + user.Handle + `</p>` +
 		`<p><a href="/admin/users">Users</a> | <a href="/admin/boards">Boards</a> | <a href="/admin/mail">Mail</a> | ` +
 		`<a href="/admin/files">Files</a> | <a href="/admin/gateways">Gateways</a> | <a href="/admin/chat">Chat</a> | ` +
-		`<a href="/admin/doors">Doors</a> | <a href="/admin/bulletins">Bulletins</a> | <a href="/admin/challenges">Challenges</a> | <a href="/admin/launch">Launch Center</a> | <a href="/admin/ops">Ops Center</a> | <a href="/admin/upgrade-safety">Upgrade Safety</a> | <a href="/admin/backups">Backups</a> | <a href="/admin/setup">Setup</a> | <a href="/admin/config">Config</a> | ` +
+		`<a href="/admin/doors">Doors</a> | <a href="/admin/bulletins">Bulletins</a> | <a href="/admin/challenges">Challenges</a> | <a href="/admin/launch">Launch Center</a> | <a href="/admin/ops">Ops Center</a> | <a href="/admin/upgrade-safety">Upgrade Safety</a> | <a href="/admin/backups">Backups</a> | <a href="/admin/release">Release</a> | <a href="/admin/setup">Setup</a> | <a href="/admin/config">Config</a> | ` +
 		`<a href="/admin/system">System</a> | <a href="/admin/errors">Errors</a> | <a href="/admin/audit">Audit Log</a> | <a href="/help">Help</a></p>` +
 		`<h2>Launch Digest</h2>` +
 		`<p><strong>Verdict:</strong> ` + htmlEscape(launchVerdictText(readiness)) + ` | ` + strconv.Itoa(readiness.Summary.Pass) + `/` + strconv.Itoa(readiness.Summary.Total) + ` launch checks PASS | ` + strconv.Itoa(statusSnapshot.Summary.Warn) + ` runtime warnings | ` + strconv.Itoa(errorCount) + ` runtime errors logged</p>` +
@@ -11782,7 +11785,7 @@ func (a *webApp) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		`<li>Message networks: spool import/export via oputil + status in WFC</li>` +
 		`<li>Built-in mods: onelinerz, rumorz, bbs list, who's online lifecycle</li>` +
 		`<li>Gateway controls, setup checks, runtime config, and server health</li>` +
-		`<li>Upgrade safety dashboard and backup browser for release confidence</li></ul>` +
+		`<li>Upgrade safety dashboard, backup browser, and release dashboard for release confidence</li></ul>` +
 		`<p><a href="/scores">Door Scores & Trophies</a></p>` +
 		`<p>Read-only mode: ` + boolToText(a.readOnly) + ` | Runtime errors logged: ` + strconv.Itoa(errorCount) + `</p></body></html>`
 	w.WriteHeader(http.StatusOK)
@@ -11866,7 +11869,7 @@ func (a *webApp) handleAdminLaunch(w http.ResponseWriter, r *http.Request) {
 	}
 	launchHelperBlock := `<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Use Launch Center as home base</strong><p>This page is the operator control room when the board is almost ready but not obviously done.</p></article><article class="wolfbbs-helper-card"><strong>Walk real caller paths</strong><p>Do not treat green config alone as done; validate boards, chat, doors, and mail like a normal user would.</p></article><article class="wolfbbs-helper-card"><strong>Keep commands close</strong><p>The operator commands below are copyable so recovery and upgrades do not require hunting through docs.</p></article></section>`
 	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Launch Center</title></head><body><h1>Launch Center</h1>` +
-		`<p><a href="/admin">back</a> | <a href="/admin/ops">ops</a> | <a href="/admin/setup">setup</a> | <a href="/admin/challenges">challenges</a> | <a href="/admin/upgrade-safety">upgrade safety</a> | <a href="/admin/backups">backups</a> | <a href="/admin/config">config</a> | <a href="/admin/system">system</a> | <a href="/status">status</a> | <a href="/help">help</a></p>` +
+		`<p><a href="/admin">back</a> | <a href="/admin/ops">ops</a> | <a href="/admin/setup">setup</a> | <a href="/admin/challenges">challenges</a> | <a href="/admin/upgrade-safety">upgrade safety</a> | <a href="/admin/backups">backups</a> | <a href="/admin/release">release</a> | <a href="/admin/config">config</a> | <a href="/admin/system">system</a> | <a href="/status">status</a> | <a href="/help">help</a></p>` +
 		pageMessageBlock(r) +
 		`<p>Use this page as the sysop home base for first-run, pre-launch review, and support triage.</p>` +
 		launchHelperBlock +
@@ -11879,7 +11882,7 @@ func (a *webApp) handleAdminLaunch(w http.ResponseWriter, r *http.Request) {
 		`<h2>Next Best Actions</h2><ul>` + launchActionRows.String() + `</ul>` +
 		`<h2>Run In This Order</h2><ol>` +
 		`<li><a href="/admin/setup">/admin/setup</a> for identity, safety, and bootstrap actions.</li>` +
-		`<li><a href="/admin/upgrade-safety">/admin/upgrade-safety</a> and <a href="/admin/backups">/admin/backups</a> before rollout windows.</li>` +
+		`<li><a href="/admin/upgrade-safety">/admin/upgrade-safety</a>, <a href="/admin/backups">/admin/backups</a>, and <a href="/admin/release">/admin/release</a> before rollout windows.</li>` +
 		`<li><a href="/admin/config">/admin/config</a> for runtime flags, services, and public-facing behavior.</li>` +
 		`<li><a href="/admin/users">/admin/users</a> and <a href="/admin/challenges">/admin/challenges</a> to create real caller loops.</li>` +
 		`<li><a href="/boards">/boards</a>, <a href="/chat">/chat</a>, <a href="/doors">/doors</a>, <a href="/scores">/scores</a>, and <a href="/challenges">/challenges</a> as a real user.</li>` +
@@ -19430,6 +19433,8 @@ func webQuickJumpPath(raw string) string {
 		return "/admin/upgrade-safety"
 	case "backup", "backups":
 		return "/admin/backups"
+	case "release", "release-dashboard", "ship", "shipboard":
+		return "/admin/release"
 	case "admin-bulletins", "bulletin-admin", "wire":
 		return "/admin/bulletins"
 	default:
