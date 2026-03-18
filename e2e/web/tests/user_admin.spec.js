@@ -144,7 +144,7 @@ test("user web journey supports keyboard navigation and status/config visibility
   await expectNoCriticalA11y(page);
 
   await login(page, USER_HANDLE, USER_PASSWORD);
-  await expect(page).toHaveURL(/\/boards$/);
+  await expect(page).toHaveURL(/\/(boards|today)$/);
   await page.goto("/start");
   await expect(page.locator("body")).toContainText("Attention Center");
   await page.goto("/attention");
@@ -158,6 +158,22 @@ test("user web journey supports keyboard navigation and status/config visibility
   await expect(page.locator("h1")).toContainText("Today Brief");
   await expect(page.locator("body")).toContainText("Watch Tier Boards");
   await expect(page.locator("body")).toContainText("Digest Tier Boards");
+
+  await page.goto("/first-call");
+  await expect(page.locator("h1")).toContainText("First Caller Session");
+  await expect(page.locator("body")).toContainText("Starter Board Post");
+  await page.fill('form[action="/first-call"] input[name="subject"]', "First Call Browser Post");
+  await page.locator('form[action="/first-call"] textarea[name="body"]').first().fill("First-call browser post body.");
+  await page.getByRole("button", { name: "Create starter post" }).click();
+  await expect(page.locator("body")).toContainText("Starter board post created");
+  await page.fill('form[action="/first-call"] input[name="body"]', "First-call browser lobby line.");
+  await page.getByRole("button", { name: "Send lobby message" }).click();
+  await expect(page.locator("body")).toContainText("Starter lobby message sent");
+  await page.locator('form[action="/first-call"] input[name="to"]').fill(ADMIN_HANDLE);
+  await page.locator('form[action="/first-call"] input[name="subject"]').nth(1).fill("First Call Browser Mail");
+  await page.locator('form[action="/first-call"] textarea[name="body"]').nth(1).fill("First-call browser mail body.");
+  await page.getByRole("button", { name: "Send private mail" }).click();
+  await expect(page.locator("body")).toContainText("Starter private mail sent");
 
   await page.goto("/events");
   await expect(page.locator("h1")).toContainText("Community Calendar");
@@ -290,12 +306,17 @@ test("user web journey supports keyboard navigation and status/config visibility
   await expect(page.locator("body")).toContainText("Saved to:");
 
   await page.goto("/settings");
+  await page.selectOption('select[name="home_route"]', "/today");
   await page.uncheck('input[name="ansi_enabled"]');
   await page.getByRole("button", { name: "Save Preferences" }).click();
   await expect(page.locator("body")).toContainText("ANSI: false");
+  await expect(page.locator("body")).toContainText("Home route: /today");
   await page.check('input[name="ansi_enabled"]');
   await page.getByRole("button", { name: "Save Preferences" }).click();
   await expect(page.locator("body")).toContainText("ANSI: true");
+  await page.goto("/logout");
+  await login(page, USER_HANDLE, USER_PASSWORD);
+  await expect(page).toHaveURL(/\/today$/);
 
   await page.goto("/status");
   await expect(page.locator("h1")).toContainText("Status Center");
@@ -321,6 +342,8 @@ test("admin journey enforces RBAC and exposes sysop pages", async ({ browser }) 
   await expect(adminPage.locator("body")).toContainText("Operator Commands");
   await expect(adminPage.locator("body")).toContainText("docs/OPERATOR_PLAYBOOK.md");
   await expect(adminPage.locator("body")).toContainText("Use Launch Center as home base");
+  await expect(adminPage.locator("body")).toContainText("Go-Live Checkpoints");
+  await expect(adminPage.locator("body")).toContainText("Rollback Steps");
   await adminPage.goto("/admin/ops");
   await expect(adminPage.locator("h1")).toContainText("Ops Center");
   await expect(adminPage.locator("body")).toContainText("Current Operator Focus");

@@ -87,6 +87,7 @@ Reference: `docs/help-guides.md`, `docs/screens.md`.
 ### User routes (authenticated)
 
 - `GET /today`
+- `GET/POST /first-call`
 - `GET/POST /boards`
 - `GET/POST /mail`
 - `GET/POST /gateway`
@@ -176,6 +177,9 @@ Documented in `docs/irc-compat.md`:
   - `mute` to suppress board resurfacing in focused views
 - Attention Center at `/attention` with per-user read/unread and dismiss/restore state
 - Daily brief at `/today` for watch-tier boards, digest-tier boards, upcoming events, and direct follow-up
+- Guided onboarding at `/first-call` to create a first post, lobby line, private mail, and saved home route
+- Guest `/start` and caller `/today` surfaces now carry persistent quick-start checklists
+- `/settings` includes saved home-route preference for `/today`, `/boards`, `/chat`, or `/doors`
 - SSH boards include conference filter toggle (`C`) for area-focused browsing
 - Mail inbox/outbox, read by ID, compose local/external (policy-gated)
 - Newscan/digest integration for message/mail activity

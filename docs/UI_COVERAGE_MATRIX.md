@@ -87,6 +87,7 @@ Auto-generated from `docs/function-registry.json`.
 | `web:/bulletins` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/directory` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/feedback` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
+| `web:/first-call` | `web_route` | Y | Y | N | N | `/admin/setup` | `/status` |
 | `web:/finder` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/newfiles` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/radar` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |

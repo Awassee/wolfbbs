@@ -20,19 +20,19 @@ Status: shipped in v1.1.11.
 ## Theme 1: Onboarding and daily-use clarity
 4. Guided first caller session that creates one post, one chat message, and one mail.
 Value: reduces first-session confusion.
-Status: next.
+Status: shipped in v1.1.13.
 5. Sysop go-live wizard with explicit readiness checkpoints and rollback steps.
 Value: reduces fragile launches.
-Status: next.
+Status: shipped in v1.1.13.
 6. Role-aware empty states across boards, chat, files, and doors.
 Value: explains why a page looks empty instead of looking broken.
-Status: next.
+Status: shipped in v1.1.13.
 7. Persistent quick-start checklist for guests and newly registered callers.
 Value: improves activation rate.
-Status: next.
+Status: shipped in v1.1.13.
 8. Saved home route preference (`/today`, `/boards`, `/chat`, `/doors`).
 Value: makes repeat visits faster.
-Status: planned.
+Status: shipped in v1.1.13.
 9. Daily digest email or web summary opt-in.
 Value: supports return behavior outside active sessions.
 Status: planned.
@@ -169,7 +169,7 @@ Value: keeps product improvement tied to operational quality.
 Status: later.
 
 ## Next recommended tranche
-- Guided first caller session and persistent quick-start checklist.
-- Sysop go-live wizard and role-aware empty states.
 - Tournament scaffolding on top of the recurring events system.
 - File upload modernization.
+- Daily digest email or web summary opt-in.
+- Mobile-first connect guidance for SSH, web terminal, and IRC.

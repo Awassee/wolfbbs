@@ -319,6 +319,33 @@ type boardSubscriptionStat struct {
 	Count int
 }
 
+type onboardingTask struct {
+	Key    string
+	Title  string
+	Detail string
+	Href   string
+	Done   bool
+}
+
+type firstCallSnapshot struct {
+	TargetBoardID   int64
+	TargetBoardName string
+	MailTarget      string
+	HomeRoute       string
+	PostDone        bool
+	ChatDone        bool
+	MailDone        bool
+	HomeDone        bool
+	Tasks           []onboardingTask
+}
+
+type launchCheckpoint struct {
+	Key    string
+	Title  string
+	Detail string
+	Done   bool
+}
+
 type sessionState struct {
 	handle string
 	expire time.Time
@@ -402,6 +429,8 @@ const (
 	sysSettingBoardWatchRoot         = "web.board_watch."
 	sysSettingAttentionDismissedRoot = "web.attention.dismissed."
 	sysSettingAttentionReadRoot      = "web.attention.read."
+	sysSettingLaunchChecklistRoot    = "web.launch_checklist."
+	sysSettingHomeRouteRoot          = "web.home_route."
 	maxAdminErrorEntries             = 300
 	maxActivityPubInboxBytes         = 1 << 20
 	maxJSONRequestBytes              = 1 << 20
@@ -717,6 +746,7 @@ func main() {
 
 	http.HandleFunc("/", app.handleRoot)
 	http.HandleFunc("/start", app.handleStartCenter)
+	http.Handle("/first-call", app.authRequired(http.HandlerFunc(app.handleFirstCallSession)))
 	http.Handle("/today", app.authRequired(http.HandlerFunc(app.handleToday)))
 	http.HandleFunc("/events", app.handleEventsCalendar)
 	http.HandleFunc("/connect", app.handleConnect)
@@ -825,8 +855,8 @@ func startOptionalContentServers(runtimeCfg config.Runtime, boardRepo repository
 }
 
 func (a *webApp) handleRoot(w http.ResponseWriter, r *http.Request) {
-	if _, ok := a.currentUser(r); ok {
-		http.Redirect(w, r, "/boards", http.StatusFound)
+	if user, ok := a.currentUser(r); ok {
+		http.Redirect(w, r, a.preferredHomeRoute(user), http.StatusFound)
 		return
 	}
 	if a.modernOnRamp {
@@ -834,6 +864,358 @@ func (a *webApp) handleRoot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/login", http.StatusFound)
+}
+
+func homeRouteSettingKey(handle string) string {
+	handle = normalizeHandleKey(handle)
+	if handle == "" {
+		return ""
+	}
+	return sysSettingHomeRouteRoot + handle
+}
+
+func normalizeHomeRoute(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "/today":
+		return "/today"
+	case "/boards":
+		return "/boards"
+	case "/chat":
+		return "/chat"
+	case "/doors":
+		return "/doors"
+	default:
+		return ""
+	}
+}
+
+func homeRouteOptionRows(current string) string {
+	options := []struct {
+		Value string
+		Label string
+	}{
+		{Value: "/today", Label: "/today"},
+		{Value: "/boards", Label: "/boards"},
+		{Value: "/chat", Label: "/chat"},
+		{Value: "/doors", Label: "/doors"},
+	}
+	var out strings.Builder
+	for _, option := range options {
+		selected := ""
+		if option.Value == current {
+			selected = ` selected`
+		}
+		out.WriteString(`<option value="` + option.Value + `"` + selected + `>` + option.Label + `</option>`)
+	}
+	return out.String()
+}
+
+func (a *webApp) loadHomeRoute(handle string) string {
+	if a.adminRepo == nil {
+		return ""
+	}
+	key := homeRouteSettingKey(handle)
+	if key == "" {
+		return ""
+	}
+	raw, err := a.adminRepo.GetSystemSetting(key)
+	if err != nil {
+		return ""
+	}
+	return normalizeHomeRoute(raw)
+}
+
+func (a *webApp) persistHomeRoute(handle, route string) {
+	key := homeRouteSettingKey(handle)
+	if key == "" {
+		return
+	}
+	a.persistSystemSetting(key, normalizeHomeRoute(route))
+}
+
+func (a *webApp) preferredHomeRoute(user *domain.User) string {
+	if user == nil {
+		return "/boards"
+	}
+	if route := a.loadHomeRoute(user.Handle); route != "" {
+		return route
+	}
+	return "/boards"
+}
+
+func launchChecklistSettingKey(handle string) string {
+	handle = normalizeHandleKey(handle)
+	if handle == "" {
+		return ""
+	}
+	return sysSettingLaunchChecklistRoot + handle
+}
+
+func (a *webApp) launchChecklist(handle string) map[string]bool {
+	out := map[string]bool{}
+	if a.adminRepo == nil {
+		return out
+	}
+	key := launchChecklistSettingKey(handle)
+	if key == "" {
+		return out
+	}
+	raw, err := a.adminRepo.GetSystemSetting(key)
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return out
+	}
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		a.addAppError("launch.checklist", fmt.Errorf("decode launch checklist for %s: %w", handle, err))
+		return map[string]bool{}
+	}
+	return out
+}
+
+func (a *webApp) persistLaunchChecklist(handle string, rows map[string]bool) {
+	key := launchChecklistSettingKey(handle)
+	if key == "" {
+		return
+	}
+	filtered := map[string]bool{}
+	for key, done := range rows {
+		key = strings.TrimSpace(key)
+		if key == "" || !done {
+			continue
+		}
+		filtered[key] = true
+	}
+	body := ""
+	if len(filtered) > 0 {
+		raw, err := json.Marshal(filtered)
+		if err != nil {
+			a.addAppError("launch.checklist", fmt.Errorf("encode launch checklist for %s: %w", handle, err))
+			return
+		}
+		body = string(raw)
+	}
+	a.persistSystemSetting(key, body)
+}
+
+func (a *webApp) setLaunchCheckpoint(handle, checkpoint string, done bool) {
+	handle = normalizeHandleKey(handle)
+	checkpoint = strings.TrimSpace(checkpoint)
+	if handle == "" || checkpoint == "" {
+		return
+	}
+	rows := a.launchChecklist(handle)
+	if done {
+		rows[checkpoint] = true
+	} else {
+		delete(rows, checkpoint)
+	}
+	a.persistLaunchChecklist(handle, rows)
+}
+
+func (a *webApp) firstWritableBoardFor(user *domain.User) *domain.Board {
+	for _, board := range a.visibleBoardsFor(user) {
+		board := board
+		if a.canWriteBoard(user, &board) {
+			return &board
+		}
+	}
+	return nil
+}
+
+func (a *webApp) defaultFirstCallMailTarget(user *domain.User) string {
+	if sysop := a.primarySysopUser(); sysop != nil && user != nil && !strings.EqualFold(sysop.Handle, user.Handle) {
+		return sysop.Handle
+	}
+	users, err := a.authSvc.ListUsers()
+	if err != nil {
+		return "sysop"
+	}
+	for _, row := range users {
+		if user != nil && strings.EqualFold(row.Handle, user.Handle) {
+			continue
+		}
+		if rbac.NormalizeRole(row.Role) == roleAdmin {
+			return row.Handle
+		}
+	}
+	for _, row := range users {
+		if user != nil && strings.EqualFold(row.Handle, user.Handle) {
+			continue
+		}
+		return row.Handle
+	}
+	return "sysop"
+}
+
+func (a *webApp) hasUserBoardPost(user *domain.User) bool {
+	if user == nil || a.msgRepo == nil {
+		return false
+	}
+	for _, board := range a.visibleBoardsFor(user) {
+		msgs, err := a.msgRepo.ListByBoard(board.ID)
+		if err != nil {
+			continue
+		}
+		for _, msg := range msgs {
+			if msg.AuthorID == user.ID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (a *webApp) hasUserChatPost(user *domain.User) bool {
+	if user == nil || a.chatSvc == nil {
+		return false
+	}
+	channels := a.chatSvc.ListChannels()
+	if len(channels) == 0 {
+		channels = []string{"#lobby"}
+	}
+	for _, channel := range channels {
+		for _, msg := range a.chatSvc.History(channel, 200) {
+			if strings.EqualFold(strings.TrimSpace(msg.From), user.Handle) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (a *webApp) hasUserSentMail(user *domain.User) bool {
+	if user == nil || a.mailRepo == nil {
+		return false
+	}
+	rows, err := a.mailRepo.ListOutbox(user.ID, 50)
+	if err != nil {
+		return false
+	}
+	return len(rows) > 0
+}
+
+func (a *webApp) buildFirstCallSnapshot(user *domain.User) firstCallSnapshot {
+	snapshot := firstCallSnapshot{
+		MailTarget: a.defaultFirstCallMailTarget(user),
+		HomeRoute:  a.preferredHomeRoute(user),
+	}
+	if board := a.firstWritableBoardFor(user); board != nil {
+		snapshot.TargetBoardID = board.ID
+		snapshot.TargetBoardName = board.Name
+	}
+	snapshot.PostDone = a.hasUserBoardPost(user)
+	snapshot.ChatDone = a.hasUserChatPost(user)
+	snapshot.MailDone = a.hasUserSentMail(user)
+	snapshot.HomeDone = a.loadHomeRoute(user.Handle) != ""
+	snapshot.Tasks = []onboardingTask{
+		{
+			Key:    "first_post",
+			Title:  "Create your first board post",
+			Detail: "Make one visible post so boards stop feeling theoretical.",
+			Href:   "/first-call",
+			Done:   snapshot.PostDone,
+		},
+		{
+			Key:    "first_chat",
+			Title:  "Send one lobby message",
+			Detail: "Break the empty-room feeling and prove chat is live.",
+			Href:   "/first-call",
+			Done:   snapshot.ChatDone,
+		},
+		{
+			Key:    "first_mail",
+			Title:  "Send one private mail",
+			Detail: "Confirm the board supports private follow-up, not just public posting.",
+			Href:   "/first-call",
+			Done:   snapshot.MailDone,
+		},
+		{
+			Key:    "home_route",
+			Title:  "Choose your home route",
+			Detail: "Pick the page that should open first on future sign-ins.",
+			Href:   "/settings",
+			Done:   snapshot.HomeDone,
+		},
+	}
+	return snapshot
+}
+
+func renderOnboardingChecklist(title string, tasks []onboardingTask) string {
+	var items strings.Builder
+	done := 0
+	for _, task := range tasks {
+		state := "open"
+		action := ""
+		if task.Done {
+			state = "done"
+			done++
+		} else if strings.TrimSpace(task.Href) != "" {
+			action = ` <a href="` + htmlEscape(task.Href) + `">Open</a>`
+		}
+		items.WriteString(`<li><strong>` + htmlEscape(task.Title) + `</strong> <span class="wolfbbs-muted">[` + state + `]</span><br>` + htmlEscape(task.Detail) + action + `</li>`)
+	}
+	return `<article class="wolfbbs-card"><h2>` + htmlEscape(title) + `</h2><p><strong>` + strconv.Itoa(done) + `/` + strconv.Itoa(len(tasks)) + `</strong> complete.</p><ul>` + items.String() + `</ul></article>`
+}
+
+func guestQuickStartChecklistHTML() string {
+	return `<article class="wolfbbs-card"><h2>Guest Quick-Start Checklist</h2><p>This checklist persists in this browser so guests can leave and come back without losing their place.</p><ul class="wolfbbs-list-clean" id="guestQuickStartList"><li><label><input type="checkbox" data-guest-check="connect"> Pick a client from /connect.</label></li><li><label><input type="checkbox" data-guest-check="tour"> Open the guided tour or help hub.</label></li><li><label><input type="checkbox" data-guest-check="account"> Create or use an account and sign in.</label></li></ul><script>(function(){const key='wolfbbs:guest-quickstart';let state={};try{state=JSON.parse(localStorage.getItem(key)||'{}')||{};}catch(_err){state={};}document.querySelectorAll('[data-guest-check]').forEach(function(node){const id=node.getAttribute('data-guest-check');node.checked=Boolean(state[id]);node.addEventListener('change',function(){state[id]=node.checked;try{localStorage.setItem(key,JSON.stringify(state));}catch(_err){}});});})();</script></article>`
+}
+
+func (a *webApp) renderRoleAwareEmptyState(user *domain.User, surface string) string {
+	role := roleUser
+	if user != nil {
+		role = rbac.NormalizeRole(user.Role)
+	}
+	title := "Nothing here yet"
+	body := "This surface needs a first real interaction so it feels like a board instead of an empty shell."
+	links := []string{`<a href="/start">Start Center</a>`, `<a href="/help">Help</a>`}
+	switch surface {
+	case "boards":
+		title = "Boards need a first conversation"
+		if role == roleAdmin {
+			body = "Caller-visible boards are empty or filtered away. Seed starter boards, create one real caller, and make the first public post."
+			links = []string{`<a href="/admin/setup?step=4">Bootstrap Step</a>`, `<a href="/admin/boards">Board Admin</a>`, `<a href="/first-call">First Caller Session</a>`}
+		} else {
+			body = "If the board list feels empty, use First Caller Session to make the first post and give the message area some shape."
+			links = []string{`<a href="/first-call">First Caller Session</a>`, `<a href="/today">Today Brief</a>`, `<a href="/attention">Attention Center</a>`}
+		}
+	case "board_detail":
+		title = "This board has no threads yet"
+		if role == roleAdmin {
+			body = "A starter topic here will make the board feel intentional immediately."
+			links = []string{`<a href="/admin/boards">Board Admin</a>`, `<a href="/first-call">First Caller Session</a>`}
+		} else {
+			body = "Start the thread yourself and give the next caller something to answer."
+			links = []string{`<a href="/first-call">First Caller Session</a>`, `<a href="/today">Today Brief</a>`}
+		}
+	case "chat":
+		title = "Chat needs a first line"
+		if role == roleAdmin || role == roleModerator {
+			body = "A silent lobby reads like a broken feature. Post the opening line, then schedule or announce a concrete reason to be here."
+			links = []string{`<a href="/first-call">First Caller Session</a>`, `<a href="/admin/events">Events Admin</a>`, `<a href="/admin/chat">Chat Admin</a>`}
+		} else {
+			body = "Be the first voice in the room. One short hello is enough to prove the lobby is alive."
+			links = []string{`<a href="/first-call">First Caller Session</a>`, `<a href="/events">Community Calendar</a>`}
+		}
+	case "files":
+		title = "FileBase needs a seed upload"
+		if role == roleAdmin {
+			body = "Recent uploads are empty. Index a starter area or upload one canonical pack so callers see a real file desk."
+			links = []string{`<a href="/admin/files">Files Admin</a>`, `<a href="/gateway?view=files">FileBase Browser</a>`}
+		} else {
+			body = "The file desk is available, but it has not been seeded yet. Check back after the sysop indexes starter uploads."
+			links = []string{`<a href="/gateway?view=files">FileBase Browser</a>`, `<a href="/bulletins">Bulletins</a>`}
+		}
+	case "doors":
+		title = "Doors are loaded but not lived in yet"
+		if role == roleAdmin {
+			body = "The door catalog exists, but nobody has given it heat yet. Launch a first run, verify scores, and schedule a return event."
+			links = []string{`<a href="/admin/doors">Doors Admin</a>`, `<a href="/admin/events">Events Admin</a>`, `<a href="/scores">Scores</a>`}
+		} else {
+			body = "Play the first door session and the cockpit will start to fill with recent activity, favorites, and trophies."
+			links = []string{`<a href="/scores">Scores</a>`, `<a href="/events">Community Calendar</a>`}
+		}
+	}
+	return `<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>` + htmlEscape(title) + `</h2><p>` + htmlEscape(body) + `</p><p>` + strings.Join(links, ` | `) + `</p></article></section>`
 }
 
 func (a *webApp) handleStartCenter(w http.ResponseWriter, r *http.Request) {
@@ -848,7 +1230,7 @@ func (a *webApp) handleStartCenter(w http.ResponseWriter, r *http.Request) {
 	kpis := `<section class="wolfbbs-kpi-grid"><article class="wolfbbs-kpi-card"><strong>Guest</strong><span>tour, connect, evaluate</span></article><article class="wolfbbs-kpi-card"><strong>Caller</strong><span>boards, attention, doors</span></article><article class="wolfbbs-kpi-card"><strong>Sysop</strong><span>setup, ops, launch</span></article></section>`
 	laneGrid := `<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Just exploring</h2><div class="wolfbbs-action-grid"><a class="wolfbbs-action-card" href="/connect"><strong>Connect</strong><span>SSH, web terminal, IRC, and clipboard-ready commands</span></a><a class="wolfbbs-action-card" href="/tour"><strong>Guided Tour</strong><span>Read-only walkthrough of the product shape</span></a><a class="wolfbbs-action-card" href="/help"><strong>Help</strong><span>Route map and surface guide</span></a></div></article><article class="wolfbbs-card"><h2>What success looks like</h2><ul class="wolfbbs-list-clean"><li>Guests should understand what the board does in under five minutes.</li><li>Callers should know where to go next after the first login.</li><li>Sysops should know whether the board is truly launch-ready.</li></ul></article></section>`
 	if user == nil {
-		page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>` + htmlEscape(pageTitle) + `</title></head><body><h1>` + htmlEscape(pageTitle) + `</h1><p>` + nav + `</p>` + intro + kpis + laneGrid + `<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Caller path</h2><ol><li>Open <a href="/connect">/connect</a> or <a href="/tour">/tour</a>.</li><li>Create or use an account and sign in.</li><li>Start with boards, chat, doors, and mail.</li></ol></article><article class="wolfbbs-card"><h2>Sysop path</h2><ol><li>Sign in as sysop.</li><li>Finish <a href="/admin/setup">/admin/setup</a>.</li><li>Use <a href="/admin/launch">/admin/launch</a> and <a href="/status">/status</a> before inviting callers.</li></ol></article></section></body></html>`
+		page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>` + htmlEscape(pageTitle) + `</title></head><body><h1>` + htmlEscape(pageTitle) + `</h1><p>` + nav + `</p>` + intro + kpis + laneGrid + guestQuickStartChecklistHTML() + `<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Caller path</h2><ol><li>Open <a href="/connect">/connect</a> or <a href="/tour">/tour</a>.</li><li>Create or use an account and sign in.</li><li>Start with boards, chat, doors, and mail.</li></ol></article><article class="wolfbbs-card"><h2>Sysop path</h2><ol><li>Sign in as sysop.</li><li>Finish <a href="/admin/setup">/admin/setup</a>.</li><li>Use <a href="/admin/launch">/admin/launch</a> and <a href="/status">/status</a> before inviting callers.</li></ol></article></section></body></html>`
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(page))
 		return
@@ -864,7 +1246,185 @@ func (a *webApp) handleStartCenter(w http.ResponseWriter, r *http.Request) {
 		readiness := a.buildSetupReadinessSnapshot(user)
 		hero = `<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Operator Lane</h2><div class="wolfbbs-action-grid"><a class="wolfbbs-action-card" href="/admin/setup"><strong>Setup Wizard</strong><span>identity, safety, bootstrap</span></a><a class="wolfbbs-action-card" href="/admin/ops"><strong>Ops Center</strong><span>alerts, audits, active sessions, next actions</span></a><a class="wolfbbs-action-card" href="/admin/events"><strong>Events Admin</strong><span>schedule reasons for callers to return</span></a><a class="wolfbbs-action-card" href="/admin/launch"><strong>Launch Center</strong><span>go-live verdict and launch checklist</span></a><a class="wolfbbs-action-card" href="/status"><strong>Status Center</strong><span>caller-facing health snapshot</span></a></div></article><article class="wolfbbs-card"><h2>Launch Verdict</h2><p><strong>` + htmlEscape(launchVerdictText(readiness)) + `</strong></p><p>` + strconv.Itoa(readiness.Summary.Pass) + `/` + strconv.Itoa(readiness.Summary.Total) + ` checks passing.</p></article></section>`
 	}
-	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>` + htmlEscape(pageTitle) + `</title></head><body><h1>` + htmlEscape(pageTitle) + `</h1><p>` + nav + `</p>` + intro + kpis + hero + `<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Use Today first</strong><p><a href="/today">/today</a> is the shortest daily caller loop once you are signed in.</p></article><article class="wolfbbs-helper-card"><strong>Use Discover for narrative catch-up</strong><p>When you want a broader digest instead of direct action items, open <a href="/discover">/discover</a>.</p></article><article class="wolfbbs-helper-card"><strong>Use SSH when you want the full board feel</strong><p><a href="/connect">/connect</a> remains the best starting point for the terminal-first experience.</p></article></section></body></html>`
+	firstCallBlock := ``
+	snapshot := a.buildFirstCallSnapshot(user)
+	doneCount := 0
+	for _, task := range snapshot.Tasks {
+		if task.Done {
+			doneCount++
+		}
+	}
+	if doneCount < len(snapshot.Tasks) {
+		firstCallBlock = renderOnboardingChecklist("First Caller Session", snapshot.Tasks) + `<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Why this matters</h2><p>New caller friction is highest on the first login. Finish these four tasks once and the rest of the board starts to feel real instead of merely configured.</p><p><a href="/first-call">Open guided first caller session</a> | <a href="/settings">Choose home route</a></p></article></section>`
+	}
+	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>` + htmlEscape(pageTitle) + `</title></head><body><h1>` + htmlEscape(pageTitle) + `</h1><p>` + nav + `</p>` + intro + kpis + hero + firstCallBlock + `<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Use Today first</strong><p><a href="/today">/today</a> is the shortest daily caller loop once you are signed in.</p></article><article class="wolfbbs-helper-card"><strong>Use Discover for narrative catch-up</strong><p>When you want a broader digest instead of direct action items, open <a href="/discover">/discover</a>.</p></article><article class="wolfbbs-helper-card"><strong>Use SSH when you want the full board feel</strong><p><a href="/connect">/connect</a> remains the best starting point for the terminal-first experience.</p></article></section></body></html>`
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(page))
+}
+
+func (a *webApp) handleFirstCallSession(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+
+	if r.Method == http.MethodPost {
+		if !a.requireCSRF(w, r) {
+			return
+		}
+		snapshot := a.buildFirstCallSnapshot(user)
+		action := strings.ToLower(strings.TrimSpace(r.FormValue("action")))
+		switch action {
+		case "starter_post":
+			if a.msgRepo == nil || a.boardRepo == nil {
+				redirectWithError(w, r, "/first-call", "Board service is unavailable.")
+				return
+			}
+			boardID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("board_id")), 10, 64)
+			if boardID <= 0 {
+				boardID = snapshot.TargetBoardID
+			}
+			if boardID <= 0 {
+				redirectWithError(w, r, "/first-call", "No writable board is available yet.")
+				return
+			}
+			board, err := a.boardRepo.Get(boardID)
+			if err != nil || board == nil {
+				redirectWithError(w, r, "/first-call", "Starter board not found.")
+				return
+			}
+			if !a.canWriteBoard(user, board) {
+				http.Error(w, "post denied by board ACS", http.StatusForbidden)
+				return
+			}
+			subject := strings.TrimSpace(r.FormValue("subject"))
+			body := strings.TrimSpace(r.FormValue("body"))
+			if subject == "" {
+				subject = "First call check-in"
+			}
+			if body == "" {
+				body = "Running the guided first caller session. Boards are live."
+			}
+			if err := a.msgRepo.CreateMessage(&domain.Message{
+				BoardID:   boardID,
+				AuthorID:  user.ID,
+				Subject:   subject,
+				Body:      body,
+				CreatedAt: time.Now().UTC(),
+			}); err != nil {
+				redirectWithError(w, r, "/first-call", "Could not create starter post.")
+				return
+			}
+			redirectWithNotice(w, r, "/first-call", "Starter board post created.")
+			return
+		case "starter_chat":
+			if a.chatSvc == nil {
+				redirectWithError(w, r, "/first-call", "Chat service is unavailable.")
+				return
+			}
+			channel := chat.NormalizeChannel(strings.TrimSpace(r.FormValue("channel")))
+			if channel == "" {
+				channel = "#lobby"
+			}
+			body := strings.TrimSpace(r.FormValue("body"))
+			if body == "" {
+				body = "Checking in from First Caller Session."
+			}
+			if _, err := a.chatSvc.Post(user.Handle, channel, body); err != nil {
+				redirectWithError(w, r, "/first-call", "Could not send lobby message.")
+				return
+			}
+			redirectWithNotice(w, r, "/first-call", "Starter lobby message sent.")
+			return
+		case "starter_mail":
+			if a.mailRepo == nil || a.authSvc == nil {
+				redirectWithError(w, r, "/first-call", "Mail service is unavailable.")
+				return
+			}
+			targetHandle := strings.TrimSpace(r.FormValue("to"))
+			if targetHandle == "" {
+				targetHandle = snapshot.MailTarget
+			}
+			if targetHandle == "" {
+				redirectWithError(w, r, "/first-call", "No mail target is available yet.")
+				return
+			}
+			target, err := a.authSvc.GetUser(targetHandle)
+			if err != nil || target == nil {
+				redirectWithError(w, r, "/first-call", "Starter mail target not found.")
+				return
+			}
+			subject := strings.TrimSpace(r.FormValue("subject"))
+			body := strings.TrimSpace(r.FormValue("body"))
+			if subject == "" {
+				subject = "First-call hello"
+			}
+			if body == "" {
+				body = "This is my first private mail from the guided caller session."
+			}
+			if err := a.mailRepo.CreateMail(&domain.PrivateMail{
+				FromUserID: user.ID,
+				ToUserID:   target.ID,
+				Subject:    subject,
+				Body:       body,
+				CreatedAt:  time.Now().UTC(),
+			}); err != nil {
+				redirectWithError(w, r, "/first-call", "Could not send starter mail.")
+				return
+			}
+			redirectWithNotice(w, r, "/first-call", "Starter private mail sent.")
+			return
+		case "save_home_route":
+			route := normalizeHomeRoute(r.FormValue("home_route"))
+			if route == "" {
+				redirectWithError(w, r, "/first-call", "Choose a home route first.")
+				return
+			}
+			a.persistHomeRoute(user.Handle, route)
+			redirectWithNotice(w, r, "/first-call", "Home route saved.")
+			return
+		default:
+			redirectWithError(w, r, "/first-call", "Unsupported first caller action.")
+			return
+		}
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	snapshot := a.buildFirstCallSnapshot(user)
+	doneCount := 0
+	for _, task := range snapshot.Tasks {
+		if task.Done {
+			doneCount++
+		}
+	}
+	progressBlock := renderOnboardingChecklist("First Caller Session Progress", snapshot.Tasks)
+	successBlock := ``
+	if doneCount == len(snapshot.Tasks) {
+		successBlock = `<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Caller baseline complete</h2><p>You have crossed the first-call threshold: boards, chat, private mail, and home-route preference are all proven.</p><p><a href="` + htmlEscape(a.preferredHomeRoute(user)) + `">Open your home route</a> | <a href="/today">Today Brief</a> | <a href="/attention">Attention Center</a></p></article></section>`
+	}
+	boardTarget := `No writable board available yet.`
+	if snapshot.TargetBoardID > 0 {
+		boardTarget = htmlEscape(snapshot.TargetBoardName) + ` (#` + strconv.FormatInt(snapshot.TargetBoardID, 10) + `)`
+	}
+	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>First Caller Session</title></head><body>
+<p><a href="/start">start</a> | <a href="/today">today</a> | <a href="/attention">attention</a> | <a href="/boards">boards</a> | <a href="/chat">chat</a> | <a href="/mail">mail</a> | <a href="/settings">settings</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
+` + pageMessageBlock(r) + `
+<h1>First Caller Session</h1>
+<p>Do the four things that prove the board is usable for a normal caller: make one post, send one chat line, send one private mail, and choose the page you want to land on after sign-in.</p>
+` + progressBlock + successBlock + `
+<section class="wolfbbs-grid">
+<article class="wolfbbs-card"><h2>Starter Board Post</h2><p><strong>Target board:</strong> ` + boardTarget + `</p><form method="POST" action="/first-call" data-draft-key="first-call-post" data-rich-compose="first-call-post" data-compose-signature="` + htmlEscape(user.Handle) + `"><input type="hidden" name="action" value="starter_post"><input type="hidden" name="board_id" value="` + strconv.FormatInt(snapshot.TargetBoardID, 10) + `">` + a.csrfHiddenInput(r) + `<label>Subject <input name="subject" value="First call check-in" size="60"></label><br><label>Body<br><textarea name="body" rows="8" cols="80">Running the guided first caller session. Boards are live.</textarea></label><br><button type="submit">Create starter post</button></form></article>
+<article class="wolfbbs-card"><h2>Lobby Hello</h2><p><strong>Channel:</strong> #lobby</p><form method="POST" action="/first-call"><input type="hidden" name="action" value="starter_chat">` + a.csrfHiddenInput(r) + `<input type="hidden" name="channel" value="#lobby"><label>Message <input name="body" size="64" value="Checking in from First Caller Session."></label><button type="submit">Send lobby message</button></form><p class="wolfbbs-muted">One line is enough to prove the room is live.</p></article>
+</section>
+<section class="wolfbbs-grid">
+<article class="wolfbbs-card"><h2>Private Mail Check</h2><p><strong>Target:</strong> ` + htmlEscape(snapshot.MailTarget) + `</p><form method="POST" action="/first-call" data-draft-key="first-call-mail" data-rich-compose="first-call-mail" data-compose-signature="` + htmlEscape(user.Handle) + `"><input type="hidden" name="action" value="starter_mail">` + a.csrfHiddenInput(r) + `<label>To <input name="to" value="` + htmlEscape(snapshot.MailTarget) + `" size="32"></label><br><label>Subject <input name="subject" value="First-call hello" size="60"></label><br><label>Body<br><textarea name="body" rows="8" cols="80">This is my first private mail from the guided caller session.</textarea></label><br><button type="submit">Send private mail</button></form></article>
+<article class="wolfbbs-card"><h2>Choose Home Route</h2><p>Pick the page that should open first after future sign-ins.</p><form method="POST" action="/first-call"><input type="hidden" name="action" value="save_home_route">` + a.csrfHiddenInput(r) + `<label>Home route <select name="home_route">` + homeRouteOptionRows(snapshot.HomeRoute) + `</select></label><button type="submit">Save home route</button></form><p class="wolfbbs-muted">You can still change this later in <a href="/settings">Settings</a>.</p></article>
+</section>
+</body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
 }
@@ -1387,6 +1947,17 @@ func (a *webApp) handleToday(w http.ResponseWriter, r *http.Request) {
 	if dashboard.RecommendedDoor != "" {
 		recommendedDoor = dashboard.RecommendedDoor
 	}
+	snapshot := a.buildFirstCallSnapshot(user)
+	onboardingBlock := ``
+	doneCount := 0
+	for _, task := range snapshot.Tasks {
+		if task.Done {
+			doneCount++
+		}
+	}
+	if doneCount < len(snapshot.Tasks) {
+		onboardingBlock = renderOnboardingChecklist("Quick-Start Checklist", snapshot.Tasks)
+	}
 
 	nextRows := strings.Builder{}
 	nextCount := 0
@@ -1483,6 +2054,7 @@ func (a *webApp) handleToday(w http.ResponseWriter, r *http.Request) {
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(upcoming)) + `</strong><span>upcoming events</span></article>
 <article class="wolfbbs-kpi-card"><strong>` + htmlEscape(recommendedDoor) + `</strong><span>recommended door</span></article>
 </section>
+` + onboardingBlock + `
 <section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Use Today first</strong><p>Start here when you want the shortest path through what changed.</p></article><article class="wolfbbs-helper-card"><strong>Subscription tiers matter</strong><p>Watch boards escalate into Attention Center, digest boards land here, and mute hides a board from routine loops without unsubscribing from it permanently.</p></article><article class="wolfbbs-helper-card"><strong>Events give callers a reason to return</strong><p>Use <a href="/events">/events</a> for the public calendar and <a href="/admin/events">/admin/events</a> to schedule recurring rhythms.</p></article></section>
 <section class="wolfbbs-grid">
 <article class="wolfbbs-card"><h2>Needs Response</h2><ul>` + nextRows.String() + `</ul><p><a href="/attention">Open Attention Center</a> | <a href="/discover">Open Discover</a></p></article>
@@ -3900,8 +4472,8 @@ func passwordResetRecipient(handle string) string {
 }
 
 func (a *webApp) handleConnect(w http.ResponseWriter, r *http.Request) {
-	if _, ok := a.currentUser(r); ok {
-		http.Redirect(w, r, "/boards", http.StatusFound)
+	if user, ok := a.currentUser(r); ok {
+		http.Redirect(w, r, a.preferredHomeRoute(user), http.StatusFound)
 		return
 	}
 	if r.Method != http.MethodGet {
@@ -4305,7 +4877,7 @@ func (a *webApp) handleLogin(w http.ResponseWriter, r *http.Request) {
 			if user != nil && a.hasRole(user, roleAdmin) && strings.HasPrefix(r.URL.Path, "/admin") {
 				http.Redirect(w, r, "/admin", http.StatusFound)
 			} else {
-				http.Redirect(w, r, "/boards", http.StatusFound)
+				http.Redirect(w, r, a.preferredHomeRoute(user), http.StatusFound)
 			}
 			return
 		}
@@ -4354,6 +4926,8 @@ func (a *webApp) handleLogin(w http.ResponseWriter, r *http.Request) {
 	redirectTo := "/boards"
 	if strings.HasPrefix(r.URL.Path, "/admin") && a.hasRole(user, roleAdmin) {
 		redirectTo = "/admin"
+	} else {
+		redirectTo = a.preferredHomeRoute(user)
 	}
 	http.Redirect(w, r, redirectTo, http.StatusFound)
 }
@@ -5006,6 +5580,10 @@ func (a *webApp) handleNewFiles(w http.ResponseWriter, r *http.Request) {
 	if queueRows.Len() == 0 {
 		queueRows.WriteString(`<tr><td colspan="3">Queue is empty.</td></tr>`)
 	}
+	emptyFilesHelper := ``
+	if len(snapshot.RecentUploads) == 0 && len(snapshot.TopRated) == 0 {
+		emptyFilesHelper = a.renderRoleAwareEmptyState(user, "files")
+	}
 	sinceOptionRows := strings.Builder{}
 	for _, row := range []string{"24h", "7d", "30d", "all"} {
 		selected := ""
@@ -5057,6 +5635,7 @@ func (a *webApp) handleNewFiles(w http.ResponseWriter, r *http.Request) {
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(snapshot.SavedFilters)) + `</strong><span>saved filters</span></article>
 </section>
 <form method="GET" action="/newfiles" class="wolfbbs-inline-form"><label>Window <select name="since">` + sinceOptionRows.String() + `</select></label><label>Tag <input name="tag" value="` + htmlEscape(tagFilter) + `" placeholder="zip, ansi, docs"></label><label>Sort <select name="sort">` + sortOptionRows.String() + `</select></label><button type="submit">Filter</button></form>
+` + emptyFilesHelper + `
 <section class="wolfbbs-grid">
 <article><h2>Top Rated Picks</h2><ul>` + topRows.String() + `</ul></article>
 <article><h2>Saved Filters</h2><ul>` + filterRows.String() + `</ul><p><a href="/gateway?view=files">Open full FileBase browser</a></p></article>
@@ -5328,6 +5907,7 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 		emptyBoardHelper := ""
 		if rows.Len() == 0 {
 			rows.WriteString(`<tr><td colspan="10">No boards matched the current filters.</td></tr>`)
+			emptyBoardHelper = a.renderRoleAwareEmptyState(user, "boards")
 			if a.hasRole(user, roleAdmin) {
 				emptyBoardHelper = `<article class="wolfbbs-card"><h2>Board Launch Tip</h2><p>The board list is empty from the caller point of view. That usually means setup is not finished, content has not been seeded, or the current filters are too narrow.</p><p><a href="/admin/launch">Launch Center</a> | <a href="/admin/setup?step=4">Seed Default Boards</a> | <a href="/admin/boards">Board Admin</a></p></article>`
 			}
@@ -5501,13 +6081,17 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(a.announcement) != "" {
 		announcementBlock = `<p><strong>Announcement:</strong> ` + htmlEscape(a.announcement) + `</p>`
 	}
+	emptyBoardDetail := ``
+	if len(msgs) == 0 {
+		emptyBoardDetail = a.renderRoleAwareEmptyState(user, "board_detail")
+	}
 	page := `<html><body><h1>Board: ` + htmlEscape(board.Name) + `</h1>` +
 		`<p><a href="/start">start</a> | <a href="/today">today</a> | <a href="/attention">attention</a> | <a href="/events">events</a> | <a href="/boards">all boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/doors">doors</a> | <a href="/status">status</a> | <a href="/config">config</a>` + discoverLink + ` | <a href="/help">help</a> | <a href="/logout">logout</a></p>` +
 		messageBlock +
 		`<p><strong>Reader keys:</strong> open subject to read, use Reply form, and Report for abuse/moderation queue.</p>` +
 		`<p><strong>Conference:</strong> ` + htmlEscape(defaultConferenceValue(board.Conference)) + `</p>` +
 		`<form method="POST" action="/boards" class="wolfbbs-inline-actions"><input type="hidden" name="action" value="subscribe"><input type="hidden" name="board_id" value="` + strconv.FormatInt(boardID, 10) + `">` + csrf + `<label>Subscription <select name="subscription_mode">` + boardSubscriptionOptionRows(normalizeBoardSubscriptionMode(string(subscriptions[board.ID]))) + `</select></label><button type="submit">Save</button></form>` +
-		motdBlock + announcementBlock + boardHelperBlock +
+		motdBlock + announcementBlock + boardHelperBlock + emptyBoardDetail +
 		`<table border="1"><tr><th>ID</th><th>New</th><th>Subject</th><th>Author</th><th>When</th></tr>` + rows.String() + `</table>`
 	if a.canWriteBoard(user, board) {
 		page += `<h3>New Post</h3><form method="POST" action="/boards" data-draft-key="board-` + strconv.FormatInt(boardID, 10) + `-post" data-rich-compose="board-post" data-compose-signature="` + htmlEscape(user.Handle) + `"><input type="hidden" name="board_id" value="` + strconv.FormatInt(boardID, 10) + `">` + csrf +
@@ -5901,9 +6485,13 @@ func (a *webApp) handleSettings(w http.ResponseWriter, r *http.Request) {
 			ansiEnabled := parseCheckbox(r.FormValue("ansi_enabled"))
 			pagingEnabled := parseCheckbox(r.FormValue("paging_enabled"))
 			timeFormat24h := parseCheckbox(r.FormValue("time_format_24h"))
+			homeRoute := normalizeHomeRoute(r.FormValue("home_route"))
 			if err := a.authSvc.SetPreferences(user.Handle, theme, ansiEnabled, pagingEnabled, timeFormat24h); err != nil {
 				redirectWithError(w, r, "/settings", "Preference update failed.")
 				return
+			}
+			if homeRoute != "" {
+				a.persistHomeRoute(user.Handle, homeRoute)
 			}
 			notice = "Display preferences saved."
 		case "enable_2fa":
@@ -5943,6 +6531,7 @@ func (a *webApp) handleSettings(w http.ResponseWriter, r *http.Request) {
 	csrf := a.csrfHiddenInput(r)
 	messageBlock := pageMessageBlock(r)
 	themeOptions := buildThemeOptionsHTML(user.Theme)
+	homeRoute := a.preferredHomeRoute(user)
 	var secondFactorBlock strings.Builder
 	adminSettingsBlock := ""
 	if a.hasRole(user, roleAdmin) {
@@ -5961,12 +6550,14 @@ func (a *webApp) handleSettings(w http.ResponseWriter, r *http.Request) {
 		`<li>ANSI: ` + boolToText(user.ANSIEnabled) + `</li>` +
 		`<li>Paging: ` + boolToText(user.PagingEnabled) + `</li>` +
 		`<li>Time format 24h: ` + boolToText(user.TimeFormat24h) + `</li>` +
+		`<li>Home route: ` + htmlEscape(homeRoute) + `</li>` +
 		`</ul>` +
 		`<h2>Display Preferences</h2><form method="POST" action="/settings"><input type="hidden" name="action" value="update_prefs">` + csrf +
 		`<label>Theme: <select name="theme">` + themeOptions + `</select></label><br>` +
 		`<label><input type="checkbox" name="ansi_enabled" value="1" ` + checkedAttr(user.ANSIEnabled) + `> ANSI enabled</label><br>` +
 		`<label><input type="checkbox" name="paging_enabled" value="1" ` + checkedAttr(user.PagingEnabled) + `> Paging enabled</label><br>` +
 		`<label><input type="checkbox" name="time_format_24h" value="1" ` + checkedAttr(user.TimeFormat24h) + `> 24-hour time format</label><br>` +
+		`<label>Home route <select name="home_route">` + homeRouteOptionRows(homeRoute) + `</select></label><br>` +
 		`<button type="submit">Save Preferences</button></form>` +
 		`<h2>Password</h2><form method="POST" action="/settings"><input type="hidden" name="action" value="change_password">` + csrf +
 		`<label>New password: <input name="password" type="password"></label><br>` +
@@ -6524,6 +7115,10 @@ func (a *webApp) handleDoors(w http.ResponseWriter, r *http.Request) {
 	if directoryRows.Len() == 0 {
 		directoryRows.WriteString(`<tr><td colspan="7">No doors matched the current filter.</td></tr>`)
 	}
+	emptyDoorsHelper := ``
+	if len(catalog) == 0 || (len(filtered) == 0 && strings.TrimSpace(q) == "") || (totalFavorites == 0 && totalRecent == 0 && totalAchievements == 0) {
+		emptyDoorsHelper = a.renderRoleAwareEmptyState(user, "doors")
+	}
 
 	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Door Cockpit</title></head><body>
 <p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/radar">radar</a> | <a href="/clubhouse">clubhouse</a> | <a href="/doors">doors</a> | <a href="/scores">scores</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
@@ -6537,6 +7132,7 @@ func (a *webApp) handleDoors(w http.ResponseWriter, r *http.Request) {
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(totalAchievements) + `</strong><span>achievements</span></article>
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(totalTurns) + `</strong><span>turns available now</span></article>
 </section>
+` + emptyDoorsHelper + `
 <section class="wolfbbs-grid">
 <article><h2>Recommended For This Caller</h2><div class="wolfbbs-card-grid">` + recommendedHTML.String() + `</div></article>
 <article><h2>Recent Activity</h2><ul>` + activityRows.String() + `</ul></article>
@@ -6985,12 +7581,42 @@ func (a *webApp) handleAdminLaunch(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
+	if r.Method == http.MethodPost {
+		if !a.requireAdminWrite(w, r) {
+			return
+		}
+		action := strings.ToLower(strings.TrimSpace(r.FormValue("action")))
+		switch action {
+		case "toggle_checkpoint":
+			checkpoint := strings.TrimSpace(r.FormValue("checkpoint"))
+			done := parseCheckbox(r.FormValue("done"))
+			if checkpoint == "" {
+				redirectWithError(w, r, "/admin/launch", "Checkpoint is required.")
+				return
+			}
+			a.setLaunchCheckpoint(user.Handle, checkpoint, done)
+			a.recordAdminAction(user.Handle, "launch", "toggle_checkpoint", checkpoint+"="+boolToText(done))
+			redirectWithNotice(w, r, "/admin/launch", "Launch checkpoint updated.")
+			return
+		default:
+			redirectWithError(w, r, "/admin/launch", "Unsupported launch action.")
+			return
+		}
+	}
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 	readiness := a.buildSetupReadinessSnapshot(user)
 	runtime := a.buildStatusSnapshot(user)
+	checkpointState := a.launchChecklist(user.Handle)
+	checkpoints := []launchCheckpoint{
+		{Key: "identity_reviewed", Title: "Identity reviewed", Detail: "Board name, host, MOTD, and announcement read like a public system, not a local test box.", Done: checkpointState["identity_reviewed"]},
+		{Key: "safety_reviewed", Title: "Safety reviewed", Detail: "Secure-cookie, verified-email, and basic moderation posture were checked before inviting real callers.", Done: checkpointState["safety_reviewed"]},
+		{Key: "bootstrap_reviewed", Title: "Bootstrap reviewed", Detail: "Boards, mailbot, doors, and starter content were seeded so first-time callers do not hit empty shells.", Done: checkpointState["bootstrap_reviewed"]},
+		{Key: "caller_walk_reviewed", Title: "Caller path walked", Detail: "A non-sysop login was tested through boards, chat, mail, and at least one door.", Done: checkpointState["caller_walk_reviewed"]},
+		{Key: "rollback_ready", Title: "Rollback ready", Detail: "You know which command restores service, where the logs live, and how to back out a bad upgrade quickly.", Done: checkpointState["rollback_ready"]},
+	}
 	readinessRows := strings.Builder{}
 	for _, row := range readiness.Checks {
 		readinessRows.WriteString(statusRow(row.Name, row.OK, row.Detail))
@@ -7009,14 +7635,31 @@ func (a *webApp) handleAdminLaunch(w http.ResponseWriter, r *http.Request) {
 	if launchActionRows.Len() == 0 {
 		launchActionRows.WriteString(`<li>No immediate issues detected. Validate the real caller path and publish the board.</li>`)
 	}
+	checkpointRows := strings.Builder{}
+	checkpointDone := 0
+	csrf := a.csrfHiddenInput(r)
+	for _, row := range checkpoints {
+		if row.Done {
+			checkpointDone++
+		}
+		buttonLabel := "Mark Complete"
+		nextDone := "1"
+		if row.Done {
+			buttonLabel = "Mark Open"
+			nextDone = "0"
+		}
+		checkpointRows.WriteString(`<tr><td><strong>` + htmlEscape(row.Title) + `</strong><br><span class="wolfbbs-muted">` + htmlEscape(row.Detail) + `</span></td><td>` + boolToText(row.Done) + `</td><td><form method="POST" action="/admin/launch" class="wolfbbs-inline-actions"><input type="hidden" name="action" value="toggle_checkpoint"><input type="hidden" name="checkpoint" value="` + htmlEscape(row.Key) + `"><input type="hidden" name="done" value="` + nextDone + `">` + csrf + `<button type="submit">` + buttonLabel + `</button></form></td></tr>`)
+	}
 	launchHelperBlock := `<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Use Launch Center as home base</strong><p>This page is the operator control room when the board is almost ready but not obviously done.</p></article><article class="wolfbbs-helper-card"><strong>Walk real caller paths</strong><p>Do not treat green config alone as done; validate boards, chat, doors, and mail like a normal user would.</p></article><article class="wolfbbs-helper-card"><strong>Keep commands close</strong><p>The operator commands below are copyable so recovery and upgrades do not require hunting through docs.</p></article></section>`
 	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Launch Center</title></head><body><h1>Launch Center</h1>` +
 		`<p><a href="/admin">back</a> | <a href="/admin/ops">ops</a> | <a href="/admin/setup">setup</a> | <a href="/admin/config">config</a> | <a href="/admin/system">system</a> | <a href="/status">status</a> | <a href="/help">help</a></p>` +
+		pageMessageBlock(r) +
 		`<p>Use this page as the sysop home base for first-run, pre-launch review, and support triage.</p>` +
 		launchHelperBlock +
 		`<h2>Launch Summary</h2>` +
 		`<p><strong>Verdict:</strong> ` + htmlEscape(launchVerdictText(readiness)) + ` | ` + strconv.Itoa(readiness.Summary.Pass) + `/` + strconv.Itoa(readiness.Summary.Total) + ` launch checks PASS | runtime ` + strconv.Itoa(runtime.Summary.Warn) + ` WARN</p>` +
 		`<p><a href="/admin/setup">Setup Wizard</a> | <a href="/admin/users">Create Caller</a> | <a href="/boards">Walk Boards</a> | <a href="/chat">Walk Chat</a> | <a href="/doors">Walk Doors</a></p>` +
+		`<h2>Go-Live Checkpoints</h2><p><strong>` + strconv.Itoa(checkpointDone) + `/` + strconv.Itoa(len(checkpoints)) + `</strong> operator checkpoints complete.</p><table border="1"><tr><th>Checkpoint</th><th>Done</th><th>Action</th></tr>` + checkpointRows.String() + `</table>` +
 		`<h2>Launch Checks</h2><table border="1"><tr><th>Check</th><th>Status</th><th>Details</th></tr>` + readinessRows.String() + `</table>` +
 		`<h2>Runtime Checks</h2><table border="1"><tr><th>Check</th><th>Status</th><th>Details</th></tr>` + runtimeRows.String() + `</table>` +
 		`<h2>Next Best Actions</h2><ul>` + launchActionRows.String() + `</ul>` +
@@ -7032,6 +7675,7 @@ bash install.sh --doctor
 bash install.sh --repair
 bash install.sh --logs
 bash install.sh --upgrade</pre>` +
+		`<h2>Rollback Steps</h2><ol><li>Run <code>bash install.sh --status</code> to confirm the active layout and service state.</li><li>Run <code>bash install.sh --logs</code> to capture the failing service before changing anything.</li><li>If the last upgrade caused the fault, use <code>bash install.sh --repair</code> or redeploy the previous tagged bundle.</li><li>Re-walk <a href="/start">/start</a>, <a href="/today">/today</a>, <a href="/boards">/boards</a>, <a href="/chat">/chat</a>, and <a href="/doors">/doors</a> after recovery.</li></ol>` +
 		`<h2>Operator Docs</h2><ul>` +
 		`<li><code>docs/START_HERE.md</code></li>` +
 		`<li><code>docs/LAUNCH_CHECKLIST.md</code></li>` +
@@ -10668,6 +11312,11 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 			</section>`
 	}
 
+	chatEmptyHelper := ``
+	if len(a.chatSvc.History("#lobby", 1)) == 0 {
+		chatEmptyHelper = a.renderRoleAwareEmptyState(user, "chat")
+	}
+
 	chatPage := `<!doctype html>
 	<html>
 	<body>
@@ -10675,6 +11324,7 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 		<p>Logged in as ` + user.Handle + `</p>
 		<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/settings">settings</a> | <a href="/doors">doors</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
 		<p><strong>Quick keys:</strong> Enter sends message, Ctrl+L clears chat pane, channel selector switches rooms instantly.</p>
+		` + chatEmptyHelper + `
 		<p><label>Channel:
 			<select id="channelSelect"></select>
 		</label></p>

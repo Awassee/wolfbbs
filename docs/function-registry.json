@@ -515,6 +515,19 @@
       "notes": "Discovered from cmd/wolfbbs-web route registration."
     },
     {
+      "id": "web:/first-call",
+      "type": "web_route",
+      "entrypoint": "/first-call",
+      "user_tui": true,
+      "user_web": true,
+      "admin_tui": false,
+      "admin_web": false,
+      "config_ui": "/admin/setup",
+      "status_ui": "/status",
+      "state_visibility": "enabled/configured/healthy surfaced via status center",
+      "notes": "Discovered from cmd/wolfbbs-web route registration."
+    },
+    {
       "id": "web:/finder",
       "type": "web_route",
       "entrypoint": "/finder",

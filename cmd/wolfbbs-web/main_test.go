@@ -1914,13 +1914,15 @@ func TestHealthReadyMetricsHandlers(t *testing.T) {
 
 func TestSettingsRequiresCSRFAndUpdatesPreferences(t *testing.T) {
 	userRepo := repository.NewInMemoryUserRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
 	authSvc := auth.NewService(userRepo)
 	_, _ = authSvc.Register("prefs", "password123")
 
 	app := &webApp{
-		authSvc:  authSvc,
-		userRepo: userRepo,
-		sessions: map[string]sessionState{},
+		authSvc:   authSvc,
+		userRepo:  userRepo,
+		adminRepo: adminRepo,
+		sessions:  map[string]sessionState{},
 	}
 	sid, ok := app.createSession("prefs")
 	if !ok {
@@ -1936,6 +1938,7 @@ func TestSettingsRequiresCSRFAndUpdatesPreferences(t *testing.T) {
 	form.Set("ansi_enabled", "0")
 	form.Set("paging_enabled", "0")
 	form.Set("time_format_24h", "1")
+	form.Set("home_route", "/today")
 
 	req := httptest.NewRequest(http.MethodPost, "/settings", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1964,6 +1967,9 @@ func TestSettingsRequiresCSRFAndUpdatesPreferences(t *testing.T) {
 	}
 	if updated.Theme != "teal" || updated.ANSIEnabled || updated.PagingEnabled || !updated.TimeFormat24h {
 		t.Fatalf("unexpected preferences after save: %+v", updated)
+	}
+	if route := app.loadHomeRoute("prefs"); route != "/today" {
+		t.Fatalf("expected persisted home route /today, got %q", route)
 	}
 }
 
@@ -2183,6 +2189,7 @@ func TestConnectAndTourPages(t *testing.T) {
 	boardRepo := repository.NewInMemoryBoardRepository()
 	msgRepo := repository.NewInMemoryMessageRepository()
 	doorRepo := repository.NewInMemoryDoorRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
 	authSvc := auth.NewService(userRepo)
 	if _, err := authSvc.Register("touruser", "password123"); err != nil {
 		t.Fatalf("register: %v", err)
@@ -2199,6 +2206,7 @@ func TestConnectAndTourPages(t *testing.T) {
 		userRepo:      userRepo,
 		boardRepo:     boardRepo,
 		msgRepo:       msgRepo,
+		adminRepo:     adminRepo,
 		doorRepo:      doorRepo,
 		chatSvc:       chat.NewServiceForTest(),
 		sessions:      map[string]sessionState{},
@@ -2243,6 +2251,21 @@ func TestConnectAndTourPages(t *testing.T) {
 	}
 	if strings.Contains(body, "if (!v) return;") {
 		t.Fatalf("connect page still blocks empty line submit")
+	}
+	sid, ok := app.createSession("touruser")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+	app.persistHomeRoute("touruser", "/today")
+	req := httptest.NewRequest(http.MethodGet, "/connect", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleConnect(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("connect redirect status = %d", rr.Code)
+	}
+	if got := rr.Result().Header.Get("Location"); got != "/today" {
+		t.Fatalf("expected connect redirect to preferred home route, got %q", got)
 	}
 
 	rr = httptest.NewRecorder()
@@ -2413,6 +2436,29 @@ func TestAdminLaunchDashboardAndBoardsEmptyState(t *testing.T) {
 			t.Fatalf("admin launch missing %q: %s", needle, rr.Body.String())
 		}
 	}
+	for _, needle := range []string{"Go-Live Checkpoints", "Rollback Steps"} {
+		if !strings.Contains(rr.Body.String(), needle) {
+			t.Fatalf("admin launch missing %q: %s", needle, rr.Body.String())
+		}
+	}
+	form := url.Values{}
+	form.Set("action", "toggle_checkpoint")
+	form.Set("checkpoint", "rollback_ready")
+	form.Set("done", "1")
+	form.Set("csrf_token", app.sessions[sid].csrf)
+	req = httptest.NewRequest(http.MethodPost, "/admin/launch", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleAdminLaunch(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("admin launch checkpoint status = %d", rr.Code)
+	}
+	if raw, err := adminRepo.GetSystemSetting(launchChecklistSettingKey("sysop")); err != nil {
+		t.Fatalf("load launch checklist: %v", err)
+	} else if !strings.Contains(raw, "rollback_ready") {
+		t.Fatalf("expected persisted launch checkpoint, got %q", raw)
+	}
 
 	req = httptest.NewRequest(http.MethodGet, "/status", nil)
 	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
@@ -2449,6 +2495,80 @@ func TestAdminLaunchDashboardAndBoardsEmptyState(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "Board Launch Tip") {
 		t.Fatalf("boards empty state missing launch tip: %s", rr.Body.String())
+	}
+}
+
+func TestRoleAwareEmptyStatesSurfaceAcrossCallerPages(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	boardRepo := repository.NewInMemoryBoardRepository()
+	msgRepo := repository.NewInMemoryMessageRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
+	doorRepo := repository.NewInMemoryDoorRepository()
+	authSvc := auth.NewService(userRepo)
+	if _, err := authSvc.Register("caller", "password123"); err != nil {
+		t.Fatalf("register caller: %v", err)
+	}
+	doorRegistry := doors.NewRegistry()
+	doorRegistry.SetRepository(doorRepo)
+	app := &webApp{
+		authSvc:      authSvc,
+		userRepo:     userRepo,
+		boardRepo:    boardRepo,
+		msgRepo:      msgRepo,
+		adminRepo:    adminRepo,
+		doorRepo:     doorRepo,
+		doorRegistry: doorRegistry,
+		chatSvc:      chat.NewServiceForTest(),
+		sessions:     map[string]sessionState{},
+		runtimeCfg:   config.DefaultRuntime(),
+	}
+	sid, ok := app.createSession("caller")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/boards", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.handleBoards(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("boards status = %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "Boards need a first conversation") {
+		t.Fatalf("caller boards empty state missing: %s", rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/chat", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleChat(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("chat status = %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "Chat needs a first line") {
+		t.Fatalf("chat empty state missing: %s", rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/newfiles", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleNewFiles(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("newfiles status = %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "FileBase needs a seed upload") {
+		t.Fatalf("newfiles empty state missing: %s", rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/doors", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleDoors(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("doors status = %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "Doors are loaded but not lived in yet") {
+		t.Fatalf("doors empty state missing: %s", rr.Body.String())
 	}
 }
 
@@ -2590,7 +2710,7 @@ func TestStartAttentionOpsAndRichComposeSurfaces(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("guest start status = %d", rr.Code)
 	}
-	for _, needle := range []string{"Start Center", "Caller path", "Sysop path"} {
+	for _, needle := range []string{"Start Center", "Caller path", "Sysop path", "Guest Quick-Start Checklist"} {
 		if !strings.Contains(rr.Body.String(), needle) {
 			t.Fatalf("guest start missing %q: %s", needle, rr.Body.String())
 		}
@@ -2603,10 +2723,96 @@ func TestStartAttentionOpsAndRichComposeSurfaces(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("caller start status = %d", rr.Code)
 	}
-	for _, needle := range []string{"Attention Center", "everything that needs follow-up", "Use Today first"} {
+	for _, needle := range []string{"Attention Center", "everything that needs follow-up", "Use Today first", "First Caller Session", "Create your first board post"} {
 		if !strings.Contains(rr.Body.String(), needle) {
 			t.Fatalf("caller start missing %q: %s", needle, rr.Body.String())
 		}
+	}
+	req = httptest.NewRequest(http.MethodGet, "/today", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleToday(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("today preflight status = %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "Quick-Start Checklist") {
+		t.Fatalf("expected today to surface onboarding checklist: %s", rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/first-call", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleFirstCallSession(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("first-call status = %d", rr.Code)
+	}
+	for _, needle := range []string{"First Caller Session", "Starter Board Post", "Lobby Hello", "Private Mail Check", "Choose Home Route"} {
+		if !strings.Contains(rr.Body.String(), needle) {
+			t.Fatalf("first-call page missing %q: %s", needle, rr.Body.String())
+		}
+	}
+	form := url.Values{}
+	form.Set("action", "starter_post")
+	form.Set("board_id", "1")
+	form.Set("subject", "Starter subject")
+	form.Set("body", "Starter body")
+	form.Set("csrf_token", app.sessions[callerSID].csrf)
+	req = httptest.NewRequest(http.MethodPost, "/first-call", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleFirstCallSession(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("first-call starter post status = %d", rr.Code)
+	}
+	form = url.Values{}
+	form.Set("action", "starter_chat")
+	form.Set("channel", "#lobby")
+	form.Set("body", "Starter lobby line")
+	form.Set("csrf_token", app.sessions[callerSID].csrf)
+	req = httptest.NewRequest(http.MethodPost, "/first-call", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleFirstCallSession(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("first-call starter chat status = %d", rr.Code)
+	}
+	form = url.Values{}
+	form.Set("action", "starter_mail")
+	form.Set("to", "friend")
+	form.Set("subject", "Starter mail")
+	form.Set("body", "Starter private mail body")
+	form.Set("csrf_token", app.sessions[callerSID].csrf)
+	req = httptest.NewRequest(http.MethodPost, "/first-call", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleFirstCallSession(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("first-call starter mail status = %d", rr.Code)
+	}
+	form = url.Values{}
+	form.Set("action", "save_home_route")
+	form.Set("home_route", "/today")
+	form.Set("csrf_token", app.sessions[callerSID].csrf)
+	req = httptest.NewRequest(http.MethodPost, "/first-call", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleFirstCallSession(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("first-call home route status = %d", rr.Code)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleRoot(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("root redirect status = %d", rr.Code)
+	}
+	if got := rr.Result().Header.Get("Location"); got != "/today" {
+		t.Fatalf("expected root redirect to /today, got %q", got)
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/attention", nil)
@@ -2635,7 +2841,7 @@ func TestStartAttentionOpsAndRichComposeSurfaces(t *testing.T) {
 	if dismissItem.Line == "" {
 		t.Fatalf("expected dismissible attention item in digest: %+v", digest.Items)
 	}
-	form := url.Values{}
+	form = url.Values{}
 	form.Set("action", "mark_read")
 	form.Set("item_key", attentionItemKey(dismissItem))
 	form.Set("csrf_token", app.sessions[callerSID].csrf)
