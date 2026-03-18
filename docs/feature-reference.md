@@ -165,9 +165,18 @@ Documented in `docs/irc-compat.md`:
 ## Message Boards and Mail
 
 - Boards list, board message index, reader, new post, reply/quote
+- Caller-managed board watch list in web boards view
+- Daily brief at `/today` for watched boards, upcoming events, and direct follow-up
 - SSH boards include conference filter toggle (`C`) for area-focused browsing
 - Mail inbox/outbox, read by ID, compose local/external (policy-gated)
 - Newscan/digest integration for message/mail activity
+
+## Community Calendar
+
+- Public calendar at `/events`
+- Sysop event scheduling at `/admin/events`
+- Event metadata: category, start/end, location, host, audience, link, description
+- Today brief integration so scheduled events appear in the daily caller loop
 
 ## Message Network Baseline
 

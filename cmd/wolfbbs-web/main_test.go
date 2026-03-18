@@ -2603,7 +2603,7 @@ func TestStartAttentionOpsAndRichComposeSurfaces(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("caller start status = %d", rr.Code)
 	}
-	for _, needle := range []string{"Attention Center", "everything that needs follow-up", "Use Attention first"} {
+	for _, needle := range []string{"Attention Center", "everything that needs follow-up", "Use Today first"} {
 		if !strings.Contains(rr.Body.String(), needle) {
 			t.Fatalf("caller start missing %q: %s", needle, rr.Body.String())
 		}
@@ -2967,6 +2967,224 @@ func TestDiscoverDigestAndSavedSearch(t *testing.T) {
 	}
 	if len(app.savedSearchList("discoverer")) == 0 {
 		t.Fatal("expected saved search entry")
+	}
+}
+
+func TestBoardWatchEventsAndTodayBrief(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	boardRepo := repository.NewInMemoryBoardRepository()
+	msgRepo := repository.NewInMemoryMessageRepository()
+	mailRepo := repository.NewInMemoryPrivateMailRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
+	authSvc := auth.NewService(userRepo)
+
+	caller, err := authSvc.Register("caller", "password123")
+	if err != nil {
+		t.Fatalf("register caller: %v", err)
+	}
+	friend, err := authSvc.Register("friend", "password123")
+	if err != nil {
+		t.Fatalf("register friend: %v", err)
+	}
+	if _, err := authSvc.Register("sysop", "password123"); err != nil {
+		t.Fatalf("register sysop: %v", err)
+	}
+	if err := authSvc.SetRole("sysop", roleAdmin); err != nil {
+		t.Fatalf("set sysop role: %v", err)
+	}
+
+	if err := boardRepo.Create(&domain.Board{Name: "General Alpha", Description: "watched board", Conference: "Public", CreatedBy: caller.ID}); err != nil {
+		t.Fatalf("create board 1: %v", err)
+	}
+	if err := boardRepo.Create(&domain.Board{Name: "Tooling Beta", Description: "unwatched board", Conference: "Ops", CreatedBy: caller.ID}); err != nil {
+		t.Fatalf("create board 2: %v", err)
+	}
+	if err := msgRepo.CreateMessage(&domain.Message{
+		BoardID:   1,
+		AuthorID:  friend.ID,
+		Subject:   "Tracked update",
+		Body:      "watch this board",
+		CreatedAt: time.Now().UTC().Add(-2 * time.Hour),
+	}); err != nil {
+		t.Fatalf("create tracked message: %v", err)
+	}
+	if err := msgRepo.CreateMessage(&domain.Message{
+		BoardID:   2,
+		AuthorID:  friend.ID,
+		Subject:   "Other update",
+		Body:      "do not watch this board",
+		CreatedAt: time.Now().UTC().Add(-90 * time.Minute),
+	}); err != nil {
+		t.Fatalf("create untracked message: %v", err)
+	}
+
+	app := &webApp{
+		authSvc:       authSvc,
+		userRepo:      userRepo,
+		boardRepo:     boardRepo,
+		msgRepo:       msgRepo,
+		mailRepo:      mailRepo,
+		adminRepo:     adminRepo,
+		sessions:      map[string]sessionState{},
+		rateLimits:    map[string][]time.Time{},
+		runtimeCfg:    config.DefaultRuntime(),
+		discover:      true,
+		quickJump:     true,
+		savedSearches: map[string][]string{},
+	}
+
+	callerSID, ok := app.createSession("caller")
+	if !ok {
+		t.Fatal("caller session creation failed")
+	}
+	sysopSID, ok := app.createSession("sysop")
+	if !ok {
+		t.Fatal("sysop session creation failed")
+	}
+
+	form := url.Values{}
+	form.Set("action", "watch")
+	form.Set("board_id", "1")
+	form.Set("csrf_token", app.sessions[callerSID].csrf)
+	req := httptest.NewRequest(http.MethodPost, "/boards", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr := httptest.NewRecorder()
+	app.handleBoards(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("watch board status = %d", rr.Code)
+	}
+	rawWatch, err := adminRepo.GetSystemSetting(boardWatchSettingKey("caller"))
+	if err != nil {
+		t.Fatalf("load watched boards: %v", err)
+	}
+	if !strings.Contains(rawWatch, "1") {
+		t.Fatalf("expected watched board persistence, got %q", rawWatch)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/boards?mode=watched", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleBoards(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("watched boards status = %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "General Alpha") {
+		t.Fatalf("expected watched board in watched mode: %s", body)
+	}
+	if strings.Contains(body, `<td><a href="/boards?board=2">Tooling Beta</a></td>`) {
+		t.Fatalf("expected unwatched board row to be absent in watched mode: %s", body)
+	}
+	if !strings.Contains(body, "Unwatch") {
+		t.Fatalf("expected unwatch action in watched mode: %s", body)
+	}
+
+	startsAt := time.Now().Add(48 * time.Hour).Format("2006-01-02T15:04")
+	endsAt := time.Now().Add(50 * time.Hour).Format("2006-01-02T15:04")
+	form = url.Values{}
+	form.Set("action", "create")
+	form.Set("title", "Friday Tournament Night")
+	form.Set("category", "tournament")
+	form.Set("starts_at", startsAt)
+	form.Set("ends_at", endsAt)
+	form.Set("location", "#lobby")
+	form.Set("host", "sysop")
+	form.Set("audience", "all callers")
+	form.Set("description", "Door bracket and score showdown.")
+	form.Set("link", "/doors")
+	form.Set("csrf_token", app.sessions[sysopSID].csrf)
+	req = httptest.NewRequest(http.MethodPost, "/admin/events", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sysopSID})
+	rr = httptest.NewRecorder()
+	app.mustBeRole(roleAdmin, http.HandlerFunc(app.handleAdminEvents)).ServeHTTP(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("create event status = %d", rr.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/events", nil)
+	rr = httptest.NewRecorder()
+	app.handleEventsCalendar(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("events status = %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "Friday Tournament Night") {
+		t.Fatalf("expected public events page to show created event: %s", rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/today", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleToday(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("today status = %d", rr.Code)
+	}
+	for _, needle := range []string{"Today Brief", "Friday Tournament Night", "General Alpha", "watched boards"} {
+		if !strings.Contains(rr.Body.String(), needle) {
+			t.Fatalf("today brief missing %q: %s", needle, rr.Body.String())
+		}
+	}
+
+	reloaded := &webApp{
+		authSvc:       authSvc,
+		userRepo:      userRepo,
+		boardRepo:     boardRepo,
+		msgRepo:       msgRepo,
+		mailRepo:      mailRepo,
+		adminRepo:     adminRepo,
+		sessions:      map[string]sessionState{},
+		rateLimits:    map[string][]time.Time{},
+		runtimeCfg:    config.DefaultRuntime(),
+		discover:      true,
+		quickJump:     true,
+		savedSearches: map[string][]string{},
+	}
+	reloadedSID, ok := reloaded.createSession("caller")
+	if !ok {
+		t.Fatal("reloaded caller session creation failed")
+	}
+	req = httptest.NewRequest(http.MethodGet, "/today", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: reloadedSID})
+	rr = httptest.NewRecorder()
+	reloaded.handleToday(rr, req)
+	if !strings.Contains(rr.Body.String(), "Friday Tournament Night") || !strings.Contains(rr.Body.String(), "General Alpha") {
+		t.Fatalf("expected today brief data to persist after reload: %s", rr.Body.String())
+	}
+
+	events := app.loadCommunityEvents()
+	if len(events) != 1 {
+		t.Fatalf("expected one event, got %+v", events)
+	}
+	form = url.Values{}
+	form.Set("action", "delete")
+	form.Set("id", events[0].ID)
+	form.Set("csrf_token", app.sessions[sysopSID].csrf)
+	req = httptest.NewRequest(http.MethodPost, "/admin/events", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sysopSID})
+	rr = httptest.NewRecorder()
+	app.mustBeRole(roleAdmin, http.HandlerFunc(app.handleAdminEvents)).ServeHTTP(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("delete event status = %d", rr.Code)
+	}
+
+	form = url.Values{}
+	form.Set("action", "unwatch")
+	form.Set("board_id", "1")
+	form.Set("csrf_token", app.sessions[callerSID].csrf)
+	req = httptest.NewRequest(http.MethodPost, "/boards", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleBoards(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("unwatch board status = %d", rr.Code)
+	}
+	if cleared, err := adminRepo.GetSystemSetting(boardWatchSettingKey("caller")); err != nil {
+		t.Fatalf("load cleared watch setting: %v", err)
+	} else if strings.TrimSpace(cleared) != "" {
+		t.Fatalf("expected watched boards to clear, got %q", cleared)
 	}
 }
 

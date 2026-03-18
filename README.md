@@ -81,7 +81,7 @@ bash install.sh --yes
 | --- | --- | --- |
 | sysop | `/admin/setup` | identity, safety baseline, bootstrap actions, first health checks |
 | moderator | `/chat`, `/boards`, `/admin/chat` | live moderation and day-to-day community visibility |
-| caller | SSH, `/boards`, `/chat`, `/doors` | the actual board experience |
+| caller | `/today`, SSH, `/boards`, `/chat`, `/doors` | the actual board experience plus the fastest daily brief |
 | visitor | `/connect`, `/tour`, `/help` | orientation before committing to an account |
 
 ## First Launch Checklist
@@ -149,7 +149,7 @@ Then in the SSH main menu press `/` and enter `/app upgrade`.
 ## Core Product Areas
 
 - `Callers`: ANSI login, guest tour, boards, private mail, bulletins, who’s online, last callers, files, doors, chat
-- `Community`: IRC bridge, one-liners, clubhouse, directory, discovery queue, scoreboards, file picks
+- `Community`: IRC bridge, one-liners, clubhouse, directory, discovery queue, public events calendar, today brief, scoreboards, file picks
 - `Operators`: admin setup wizard, config center, users, boards, files, doors, gateways, audit, health, diagnostics
 - `Distribution`: release bundles, bootstrap installer, upgrade flows, smoke verification, packaging checksums
 

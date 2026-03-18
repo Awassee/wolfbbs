@@ -190,6 +190,19 @@
       "notes": "Discovered from cmd/wolfbbs-web route registration."
     },
     {
+      "id": "web:/admin/events",
+      "type": "web_route",
+      "entrypoint": "/admin/events",
+      "user_tui": false,
+      "user_web": false,
+      "admin_tui": false,
+      "admin_web": true,
+      "config_ui": "/admin/config",
+      "status_ui": "/admin/system",
+      "state_visibility": "enabled/configured/healthy surfaced via status center",
+      "notes": "Discovered from cmd/wolfbbs-web route registration."
+    },
+    {
       "id": "web:/admin/mail",
       "type": "web_route",
       "entrypoint": "/admin/mail",
@@ -289,6 +302,19 @@
       "admin_tui": false,
       "admin_web": false,
       "config_ui": "/admin/config",
+      "status_ui": "/status",
+      "state_visibility": "enabled/configured/healthy surfaced via status center",
+      "notes": "Discovered from cmd/wolfbbs-web route registration."
+    },
+    {
+      "id": "web:/events",
+      "type": "web_route",
+      "entrypoint": "/events",
+      "user_tui": false,
+      "user_web": true,
+      "admin_tui": false,
+      "admin_web": true,
+      "config_ui": "/admin/events",
       "status_ui": "/status",
       "state_visibility": "enabled/configured/healthy surfaced via status center",
       "notes": "Discovered from cmd/wolfbbs-web route registration."
@@ -757,6 +783,19 @@
       "admin_tui": false,
       "admin_web": false,
       "config_ui": "/admin/config",
+      "status_ui": "/status",
+      "state_visibility": "enabled/configured/healthy surfaced via status center",
+      "notes": "Discovered from cmd/wolfbbs-web route registration."
+    },
+    {
+      "id": "web:/today",
+      "type": "web_route",
+      "entrypoint": "/today",
+      "user_tui": true,
+      "user_web": true,
+      "admin_tui": false,
+      "admin_web": false,
+      "config_ui": "/admin/events",
       "status_ui": "/status",
       "state_visibility": "enabled/configured/healthy surfaced via status center",
       "notes": "Discovered from cmd/wolfbbs-web route registration."

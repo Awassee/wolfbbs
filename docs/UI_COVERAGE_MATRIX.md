@@ -62,6 +62,7 @@ Auto-generated from `docs/function-registry.json`.
 | `web:/admin/login` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/launch` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/ops` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
+| `web:/admin/events` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/mail` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/node-state` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/setup` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
@@ -70,6 +71,7 @@ Auto-generated from `docs/function-registry.json`.
 | `web:/attention` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/ap/users/` | `web_route` | N | N | N | N | `/admin/config` | `/status` |
 | `web:/boards` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
+| `web:/events` | `web_route` | N | Y | N | Y | `/admin/events` | `/status` |
 | `web:/chat` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/chat/channels` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/chat/history` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
@@ -106,4 +108,5 @@ Auto-generated from `docs/function-registry.json`.
 | `web:/status` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/statusz` | `web_route` | N | Y | N | N | `/admin/config` | `/status` |
 | `web:/start` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
+| `web:/today` | `web_route` | Y | Y | N | N | `/admin/events` | `/status` |
 | `web:/tour` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |

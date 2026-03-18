@@ -151,11 +151,25 @@ test("user web journey supports keyboard navigation and status/config visibility
   await expect(page.locator("h1")).toContainText("Attention Center");
   await expect(page.locator("body")).toContainText("Inbox Needs Action");
   await expect(page.locator("body")).toContainText("Direct Follow-Up");
+  await expect(page.locator("body")).toContainText("Community Calendar");
+
+  await page.goto("/today");
+  await expect(page.locator("h1")).toContainText("Today Brief");
+  await expect(page.locator("body")).toContainText("Tracked Boards");
+
+  await page.goto("/events");
+  await expect(page.locator("h1")).toContainText("Community Calendar");
+  await expect(page.locator("body")).toContainText("Upcoming Events");
 
   await page.goto("/boards");
   await expect(page.locator("h1")).toContainText("Message Boards");
   await expect(page.locator("#wolfbbsCommandButton")).toContainText(/Jump \/ Search/i);
   await expect(page.locator("body")).toContainText("Caller Cockpit");
+  await page.getByRole("button", { name: "Watch Board" }).first().click();
+  await expect(page.locator("body")).toContainText(/Board added to watch list|Board removed from watch list/);
+  await page.goto("/boards?mode=watched");
+  await expect(page.locator("body")).toContainText("Active Board Filters");
+  await expect(page.getByRole("button", { name: "Unwatch" }).first()).toBeVisible();
   await page.goto("/boards?mode=mentions");
   await expect(page.locator("body")).toContainText("Personal Board Queue");
   await expect(page.locator("body")).toContainText("Mentions");
@@ -224,10 +238,11 @@ test("user web journey supports keyboard navigation and status/config visibility
   await page.goto("/mail?template=door_invite");
   await expect(page.locator('input[name="subject"]')).toHaveValue(/Meet me in the Door Hub/);
   await expect(page.locator("body")).toContainText("Drafts are local");
-  await page.fill('input[name="to"]', ADMIN_HANDLE);
-  await page.fill('input[name="subject"]', "Playwright Mail");
-  await page.fill('textarea[name="body"]', "Mail body from browser flow.");
-  await page.getByRole("button", { name: "Send" }).click();
+  const composeForm = page.locator('form[data-rich-compose="mail-compose"]').first();
+  await composeForm.locator('input[name="to"]').fill(ADMIN_HANDLE);
+  await composeForm.locator('input[name="subject"]').fill("Playwright Mail");
+  await composeForm.locator('textarea[name="body"]').fill("Mail body from browser flow.");
+  await composeForm.getByRole("button", { name: "Send" }).click();
   await expect(page.locator("body")).toContainText("Playwright Mail");
 
   await page.goto("/boards?board=1");
@@ -291,6 +306,8 @@ test("admin journey enforces RBAC and exposes sysop pages", async ({ browser }) 
   await expect(adminPage.locator("h1")).toContainText("Ops Center");
   await expect(adminPage.locator("body")).toContainText("Current Operator Focus");
   await expect(adminPage.locator("body")).toContainText("Recent Audit Trail");
+  await adminPage.goto("/admin/events");
+  await expect(adminPage.locator("h1")).toContainText("Events Admin");
   await adminPage.goto("/admin");
 
   await adminPage.locator('a[href="/admin/users"]').first().focus();
@@ -302,6 +319,7 @@ test("admin journey enforces RBAC and exposes sysop pages", async ({ browser }) 
   const qaHandle = `qa${runID.slice(-5)}`;
   const qaBoardTitle = `QA Board ${runID}`;
   const qaBoardTitleUpdated = `QA Board Updated ${runID}`;
+  const qaEventTitle = `QA Event ${runID}`;
 
   let csrf = await csrfFrom(adminPage);
   let res = await postForm(adminPage, "/admin/users", {
@@ -443,6 +461,31 @@ test("admin journey enforces RBAC and exposes sysop pages", async ({ browser }) 
 
   await adminPage.goto("/admin/config");
   await expect(adminPage.locator("h1")).toContainText("Runtime Config");
+  await adminPage.goto("/admin/events");
+  csrf = await csrfFrom(adminPage);
+  await postForm(adminPage, "/admin/events", {
+    csrf_token: csrf,
+    action: "create",
+    title: qaEventTitle,
+    category: "tournament",
+    starts_at: "2026-03-20T19:00",
+    ends_at: "2026-03-20T21:00",
+    location: "#lobby",
+    host: ADMIN_HANDLE,
+    audience: "all callers",
+    description: "Playwright calendar event",
+    link: "/doors",
+  });
+  await adminPage.goto("/admin/events");
+  await expect(adminPage.locator("body")).toContainText(qaEventTitle);
+  csrf = await csrfFrom(adminPage);
+  await postForm(adminPage, "/admin/events", {
+    csrf_token: csrf,
+    action: "delete",
+    id: await adminPage.locator(`tr:has-text("${qaEventTitle}") input[name="id"]`).first().inputValue().catch(() => ""),
+  }, [200, 302, 400]);
+  await adminPage.goto("/events");
+  await expect(adminPage.locator("body")).not.toContainText(qaEventTitle);
   await adminPage.goto("/admin/system");
   await expect(adminPage.locator("h1")).toContainText("System / WFC Dashboard");
   await adminPage.goto("/admin/audit");
