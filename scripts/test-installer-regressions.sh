@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_SRC="${ROOT_DIR}/install.sh"
+TMP_WORK=""
 
 fail() {
   echo "FAIL: $*"
@@ -88,20 +89,19 @@ run_installer_case() {
 }
 
 main() {
-  local tmp
-  tmp="$(mktemp -d "${TMPDIR:-/tmp}/wolfbbs-installer-regressions.XXXXXX")"
-  trap 'rm -rf '"'"$tmp"'"'' EXIT
+  TMP_WORK="$(mktemp -d "${TMPDIR:-/tmp}/wolfbbs-installer-regressions.XXXXXX")"
+  trap 'rm -rf "$TMP_WORK"' EXIT
 
-  local installer_dir="${tmp}/installer"
-  local fake_bin="${tmp}/fake-bin"
-  local docker_log="${tmp}/docker.log"
-  local out_file="${tmp}/run.out"
+  local installer_dir="${TMP_WORK}/installer"
+  local fake_bin="${TMP_WORK}/fake-bin"
+  local docker_log="${TMP_WORK}/docker.log"
+  local out_file="${TMP_WORK}/run.out"
   mkdir -p "$installer_dir"
   cp "$INSTALL_SRC" "${installer_dir}/install.sh"
   chmod +x "${installer_dir}/install.sh"
   build_fake_runtime "$fake_bin"
 
-  local prefix_uninstall="${tmp}/WolfBBSCase/InstallA"
+  local prefix_uninstall="${TMP_WORK}/WolfBBSCase/InstallA"
   mkdir -p "${prefix_uninstall}/app"
   cat > "${prefix_uninstall}/app/docker-compose.yml" <<'EOF'
 services:
@@ -124,7 +124,7 @@ EOF
       "installer should preserve path casing in compose working directory"
   fi
 
-  local prefix_rapid="${tmp}/WolfBBSCase/InstallB"
+  local prefix_rapid="${TMP_WORK}/WolfBBSCase/InstallB"
   mkdir -p "${prefix_rapid}/app"
   cat > "${prefix_rapid}/app/docker-compose.yml" <<'EOF'
 services:
