@@ -1045,7 +1045,9 @@ func main() {
 	http.Handle("/today", app.authRequired(http.HandlerFunc(app.handleToday)))
 	http.Handle("/digest", app.authRequired(http.HandlerFunc(app.handleDigest)))
 	http.HandleFunc("/events", app.handleEventsCalendar)
+	http.HandleFunc("/events/recaps", app.handleEventRecaps)
 	http.HandleFunc("/tournaments", app.handleTournaments)
+	http.Handle("/challenges", app.authRequired(http.HandlerFunc(app.handleChallenges)))
 	http.HandleFunc("/connect", app.handleConnect)
 	http.HandleFunc("/tour", app.handleGuestTour)
 	http.HandleFunc("/login", app.handleLogin)
@@ -1087,9 +1089,12 @@ func main() {
 	http.Handle("/admin/chat", app.mustBeRole(roleAdmin, app.handleAdminChat))
 	http.Handle("/admin/doors", app.mustBeRole(roleAdmin, app.handleAdminDoors))
 	http.Handle("/admin/events", app.mustBeRole(roleAdmin, app.handleAdminEvents))
+	http.Handle("/admin/challenges", app.mustBeRole(roleAdmin, app.handleAdminChallenges))
 	http.Handle("/admin/bulletins", app.mustBeRole(roleAdmin, app.handleAdminBulletins))
 	http.Handle("/admin/launch", app.mustBeRole(roleAdmin, app.handleAdminLaunch))
 	http.Handle("/admin/ops", app.mustBeRole(roleAdmin, app.handleAdminOps))
+	http.Handle("/admin/upgrade-safety", app.mustBeRole(roleAdmin, app.handleAdminUpgradeSafety))
+	http.Handle("/admin/backups", app.mustBeRole(roleAdmin, app.handleAdminBackups))
 	http.Handle("/admin/setup", app.mustBeRole(roleAdmin, app.handleAdminSetup))
 	http.Handle("/admin/config", app.mustBeRole(roleAdmin, app.handleAdminConfig))
 	http.Handle("/admin/errors", app.mustBeRole(roleAdmin, app.handleAdminErrors))
@@ -3997,7 +4002,7 @@ func (a *webApp) handleAdminOps(w http.ResponseWriter, r *http.Request) {
 	}
 
 	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Ops Center</title></head><body>
-<p><a href="/admin">admin</a> | <a href="/admin/launch">launch</a> | <a href="/admin/setup">setup</a> | <a href="/admin/system">system</a> | <a href="/admin/errors">errors</a> | <a href="/admin/audit">audit</a> | <a href="/status">status</a> | <a href="/help">help</a></p>
+<p><a href="/admin">admin</a> | <a href="/admin/launch">launch</a> | <a href="/admin/setup">setup</a> | <a href="/admin/challenges">challenges</a> | <a href="/admin/upgrade-safety">upgrade safety</a> | <a href="/admin/backups">backups</a> | <a href="/admin/system">system</a> | <a href="/admin/errors">errors</a> | <a href="/admin/audit">audit</a> | <a href="/status">status</a> | <a href="/help">help</a></p>
 ` + pageMessageBlock(r) + `
 <h1>Ops Center</h1>
 <p>Operator triage for launch readiness, runtime warnings, recent errors, audits, and active caller state.</p>
@@ -4013,7 +4018,7 @@ func (a *webApp) handleAdminOps(w http.ResponseWriter, r *http.Request) {
 </section>
 <section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Readiness before polish</strong><p>Use launch and status signals to decide whether you have a real blocker or just a minor cleanup item.</p></article><article class="wolfbbs-helper-card"><strong>Errors change the meaning of green</strong><p>If runtime errors are piling up, treat every passing screen as provisional until you understand the failures.</p></article><article class="wolfbbs-helper-card"><strong>Audit + sessions explain surprises</strong><p>When callers report something odd, the fastest answers usually come from the recent audit trail and who is online right now.</p></article></section>
 <section class="wolfbbs-grid">
-<article><h2>Current Operator Focus</h2><ul>` + nextActions.String() + `</ul><p><a href="/admin/launch">Launch Center</a> | <a href="/admin/setup">Setup Wizard</a> | <a href="/status">Caller Status</a></p></article>
+<article><h2>Current Operator Focus</h2><ul>` + nextActions.String() + `</ul><p><a href="/admin/launch">Launch Center</a> | <a href="/admin/setup">Setup Wizard</a> | <a href="/admin/upgrade-safety">Upgrade Safety</a> | <a href="/admin/backups">Backup Browser</a> | <a href="/status">Caller Status</a></p></article>
 <article><h2>Operator Controls</h2><div class="wolfbbs-inline-actions"><form method="POST" action="/admin/ops"><input type="hidden" name="action" value="clear_errors">` + csrf + `<button type="submit">Clear Runtime Errors</button></form><form method="POST" action="/admin/ops" class="wolfbbs-inline-form"><input type="hidden" name="action" value="prune_idle_sessions">` + csrf + `<label>Prune idle sessions older than <input name="idle_minutes" value="30" inputmode="numeric"></label><button type="submit">Prune Sessions</button></form><form method="POST" action="/admin/ops"><input type="hidden" name="action" value="purge_web_sessions">` + csrf + `<button type="submit">Purge Expired Web Sessions</button></form><form method="POST" action="/admin/ops"><input type="hidden" name="action" value="clear_rate_limits">` + csrf + `<button type="submit">Clear Rate Limits</button></form></div><p><strong>Live counters:</strong> ` + strconv.Itoa(webSessionCount) + ` web sessions / ` + strconv.Itoa(rateLimitCount) + ` rate-limit buckets</p><h3>Operator Commands</h3><pre>bash install.sh --status
 bash install.sh --doctor
 bash install.sh --logs
@@ -4390,6 +4395,14 @@ func (a *webApp) handleEventsCalendar(w http.ResponseWriter, r *http.Request) {
 			a.setEventRSVP(user.Handle, eventID, "", "")
 			redirectWithNotice(w, r, "/events", "RSVP cleared.")
 			return
+		case "check_in":
+			a.setEventAttendance(eventID, user.Handle, true)
+			redirectWithNotice(w, r, "/events", "Event attendance saved.")
+			return
+		case "clear_check_in":
+			a.setEventAttendance(eventID, user.Handle, false)
+			redirectWithNotice(w, r, "/events", "Event attendance cleared.")
+			return
 		default:
 			redirectWithError(w, r, "/events", "Unsupported event action.")
 			return
@@ -4404,14 +4417,16 @@ func (a *webApp) handleEventsCalendar(w http.ResponseWriter, r *http.Request) {
 	}
 	nav := `<a href="/start">start</a> | <a href="/connect">connect</a> | <a href="/tour">tour</a> | <a href="/help">help</a>`
 	if user != nil {
-		nav = `<a href="/start">start</a> | <a href="/today">today</a> | <a href="/attention">attention</a> | <a href="/boards">boards</a> | <a href="/chat">chat</a> | <a href="/help">help</a> | <a href="/logout">logout</a>`
+		nav = `<a href="/start">start</a> | <a href="/today">today</a> | <a href="/attention">attention</a> | <a href="/boards">boards</a> | <a href="/chat">chat</a> | <a href="/challenges">challenges</a> | <a href="/events/recaps">recaps</a> | <a href="/help">help</a> | <a href="/logout">logout</a>`
 		if a.hasRole(user, roleAdmin) {
-			nav = `<a href="/start">start</a> | <a href="/today">today</a> | <a href="/events">events</a> | <a href="/admin/events">admin events</a> | <a href="/admin/ops">ops</a> | <a href="/help">help</a> | <a href="/logout">logout</a>`
+			nav = `<a href="/start">start</a> | <a href="/today">today</a> | <a href="/events">events</a> | <a href="/events/recaps">recaps</a> | <a href="/challenges">challenges</a> | <a href="/admin/events">admin events</a> | <a href="/admin/challenges">admin challenges</a> | <a href="/admin/ops">ops</a> | <a href="/help">help</a> | <a href="/logout">logout</a>`
 		}
 	}
 	now := time.Now().UTC()
 	upcoming := a.upcomingCommunityEvents(24, now)
 	recent := a.recentCommunityEvents(12, now)
+	attendanceSummary := a.attendanceCounts()
+	recaps := a.loadEventRecaps()
 	myRSVPs := map[string]eventRSVP{}
 	if user != nil {
 		myRSVPs = a.loadEventRSVPs(user.Handle)
@@ -4455,14 +4470,35 @@ func (a *webApp) handleEventsCalendar(w http.ResponseWriter, r *http.Request) {
 			if counts := rsvpSummary[row.ID]; len(counts) > 0 {
 				rsvpBlock = `<p class="wolfbbs-muted">RSVPs: going ` + strconv.Itoa(counts["going"]) + ` | maybe ` + strconv.Itoa(counts["maybe"]) + ` | declined ` + strconv.Itoa(counts["declined"]) + `</p>`
 			}
+			if attendanceSummary[row.ID] > 0 {
+				rsvpBlock += `<p class="wolfbbs-muted">Checked in: ` + strconv.Itoa(attendanceSummary[row.ID]) + ` caller(s)</p>`
+			}
 			if user != nil {
 				current := myRSVPs[row.ID].Status
 				rsvpBlock += `<form method="POST" action="/events" class="wolfbbs-inline-form">` + a.csrfHiddenInput(r) + `<input type="hidden" name="action" value="rsvp"><input type="hidden" name="event_id" value="` + htmlEscape(row.ID) + `"><label>RSVP <select name="status"><option value="going"` + selectedIf(current == "going") + `>going</option><option value="maybe"` + selectedIf(current == "maybe") + `>maybe</option><option value="declined"` + selectedIf(current == "declined") + `>declined</option></select></label><button type="submit">Save</button></form>`
 				if current != "" {
 					rsvpBlock += `<form method="POST" action="/events" class="wolfbbs-inline-form">` + a.csrfHiddenInput(r) + `<input type="hidden" name="action" value="clear_rsvp"><input type="hidden" name="event_id" value="` + htmlEscape(row.ID) + `"><button type="submit">Clear RSVP</button></form>`
 				}
+				if eventCheckInWindow(row, now) {
+					if a.eventCheckedIn(row.ID, user.Handle) {
+						rsvpBlock += `<form method="POST" action="/events" class="wolfbbs-inline-form">` + a.csrfHiddenInput(r) + `<input type="hidden" name="action" value="clear_check_in"><input type="hidden" name="event_id" value="` + htmlEscape(row.ID) + `"><button type="submit">Clear Check-In</button></form>`
+					} else {
+						rsvpBlock += `<form method="POST" action="/events" class="wolfbbs-inline-form">` + a.csrfHiddenInput(r) + `<input type="hidden" name="action" value="check_in"><input type="hidden" name="event_id" value="` + htmlEscape(row.ID) + `"><button type="submit">Check In</button></form>`
+					}
+				}
 			}
-			out.WriteString(`<article class="wolfbbs-card"><h3>` + htmlEscape(row.Title) + `</h3><p class="wolfbbs-muted">` + htmlEscape(strings.Join(meta, " | ")) + `</p>` + hostLine + `<p>` + htmlEscape(cleanOneLiner(row.Description, 220)) + link + `</p>` + rsvpBlock + `</article>`)
+			recapBlock := ``
+			if recap, ok := recaps[row.ID]; ok {
+				highlightRows := strings.Builder{}
+				for _, item := range recap.Highlights {
+					highlightRows.WriteString(`<li>` + htmlEscape(item) + `</li>`)
+				}
+				if highlightRows.Len() == 0 {
+					highlightRows.WriteString(`<li>No recap highlights yet.</li>`)
+				}
+				recapBlock = `<div class="wolfbbs-card"><p><strong>Recap:</strong> ` + htmlEscape(defaultIfBlank(recap.Summary, "No summary yet.")) + `</p><ul>` + highlightRows.String() + `</ul></div>`
+			}
+			out.WriteString(`<article class="wolfbbs-card"><h3>` + htmlEscape(row.Title) + `</h3><p class="wolfbbs-muted">` + htmlEscape(strings.Join(meta, " | ")) + `</p>` + hostLine + `<p>` + htmlEscape(cleanOneLiner(row.Description, 220)) + link + `</p>` + rsvpBlock + recapBlock + `</article>`)
 		}
 		if out.Len() == 0 {
 			out.WriteString(`<article class="wolfbbs-card"><p>` + htmlEscape(empty) + `</p></article>`)
@@ -4475,11 +4511,11 @@ func (a *webApp) handleEventsCalendar(w http.ResponseWriter, r *http.Request) {
 ` + pageMessageBlock(r) + `
 <h1>Community Calendar</h1>
 <p>Public schedule for nets, tournaments, social calls, and content drops. Use this page to give callers a concrete reason to return.</p>
-<section class="wolfbbs-kpi-grid"><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(upcoming)) + `</strong><span>upcoming events</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(recent)) + `</strong><span>recent events</span></article></section>
+<section class="wolfbbs-kpi-grid"><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(upcoming)) + `</strong><span>upcoming events</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(recent)) + `</strong><span>recent events</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(recaps)) + `</strong><span>published recaps</span></article></section>
 <section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Plan against real dates</strong><p>Events work best when they are specific, visible, and easy to join from the board.</p></article><article class="wolfbbs-helper-card"><strong>Use Today for a caller brief</strong><p><a href="/today">/today</a> pulls upcoming events into the daily caller loop after login.</p></article><article class="wolfbbs-helper-card"><strong>Tournaments deserve their own lane</strong><p>Use <a href="/tournaments">/tournaments</a> when you want the competitive schedule separated from general community events.</p></article></section>
 <section><h2>Upcoming Events</h2><div class="wolfbbs-grid">` + renderList(upcoming, "No upcoming events scheduled yet.") + `</div></section>
 <section><h2>Recent Events</h2><div class="wolfbbs-grid">` + renderList(recent, "No recent events yet.") + `</div></section>
-<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Competitive Layer</h2><p>Want bracket nights, score ladders, and door-focused return hooks instead of the full mixed calendar?</p><p><a href="/tournaments">Open Tournament Center</a> | <a href="/scores">Open Door Scores</a></p></article></section>
+<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Competitive Layer</h2><p>Want bracket nights, score ladders, and door-focused return hooks instead of the full mixed calendar?</p><p><a href="/tournaments">Open Tournament Center</a> | <a href="/scores">Open Door Scores</a> | <a href="/events/recaps">Open Event Recaps</a></p></article></section>
 </body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -4708,6 +4744,37 @@ func (a *webApp) handleAdminEvents(w http.ResponseWriter, r *http.Request) {
 			a.recordAdminAction(user.Handle, "community_calendar", "delete_event", fmt.Sprintf("id=%s title=%s", id, deletedTitle))
 			redirectWithNotice(w, r, "/admin/events", "Community event deleted.")
 			return
+		case "save_recap":
+			eventID := strings.TrimSpace(r.FormValue("event_id"))
+			eventRow, found := a.findEventOccurrenceByID(eventID, time.Now().UTC())
+			if eventID == "" || !found {
+				redirectWithError(w, r, "/admin/events", "Event for recap not found.")
+				return
+			}
+			attendanceCount := parseIntWithFallback(r.FormValue("attendance_count"), 0)
+			if attendanceCount <= 0 {
+				attendanceCount = a.attendanceCounts()[eventID]
+			}
+			recap := eventRecap{
+				EventID:         eventID,
+				SeriesID:        eventRow.SeriesID,
+				Title:           eventRow.Title,
+				StartsAt:        eventRow.StartsAt,
+				EndsAt:          eventRow.EndsAt,
+				AttendanceCount: attendanceCount,
+				Summary:         strings.TrimSpace(r.FormValue("summary")),
+				Highlights:      parseHighlightLines(r.FormValue("highlights")),
+				UpdatedBy:       user.Handle,
+				UpdatedAt:       time.Now().UTC(),
+			}
+			if strings.TrimSpace(recap.Summary) == "" && len(recap.Highlights) == 0 {
+				redirectWithError(w, r, "/admin/events", "Recap summary or highlights are required.")
+				return
+			}
+			a.upsertEventRecap(recap)
+			a.recordAdminAction(user.Handle, "community_calendar", "save_recap", fmt.Sprintf("id=%s title=%s attendance=%d", recap.EventID, recap.Title, recap.AttendanceCount))
+			redirectWithNotice(w, r, "/admin/events", "Event recap saved.")
+			return
 		default:
 			redirectWithError(w, r, "/admin/events", "Unsupported events action.")
 			return
@@ -4771,9 +4838,20 @@ func (a *webApp) handleAdminEvents(w http.ResponseWriter, r *http.Request) {
 		recurrenceRows.WriteString(`<option value="` + recurrence + `"` + selectedIf(formEvent.Recurrence == recurrence) + `>` + recurrence + `</option>`)
 	}
 	previewCard := renderCommunityEventPreview(formEvent, 5)
+	recaps := a.loadEventRecaps()
+	attendanceSummary := a.attendanceCounts()
+	recentForRecap := a.recentCommunityEvents(10, time.Now().UTC())
+	recapRows := strings.Builder{}
+	for _, row := range recentForRecap {
+		recap := recaps[row.ID]
+		recapRows.WriteString(`<tr><td><strong>` + htmlEscape(row.Title) + `</strong><br><span class="wolfbbs-muted">` + htmlEscape(formatCommunityEventWindow(row)) + `</span></td><td><form method="POST" action="/admin/events"><input type="hidden" name="action" value="save_recap"><input type="hidden" name="event_id" value="` + htmlEscape(row.ID) + `">` + csrf + `<label>Attendance <input name="attendance_count" value="` + strconv.Itoa(maxInt(attendanceSummary[row.ID], recap.AttendanceCount)) + `" inputmode="numeric" size="5"></label><br><label>Summary <input name="summary" value="` + htmlEscape(recap.Summary) + `" size="72" placeholder="What happened and why callers should care."></label><br><label>Highlights (one per line)<br><textarea name="highlights" rows="3" cols="72" placeholder="Top score was broken&#10;Great board thread follow-up">` + htmlEscape(renderHighlightLines(recap.Highlights)) + `</textarea></label><br><button type="submit">Save Recap</button></form></td></tr>`)
+	}
+	if recapRows.Len() == 0 {
+		recapRows.WriteString(`<tr><td colspan="2">No recent events available for recap yet.</td></tr>`)
+	}
 
 	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Events Admin</title></head><body>
-<p><a href="/admin">admin</a> | <a href="/admin/setup">setup</a> | <a href="/admin/ops">ops</a> | <a href="/events">public calendar</a> | <a href="/today">today brief</a> | <a href="/logout">logout</a></p>
+<p><a href="/admin">admin</a> | <a href="/admin/setup">setup</a> | <a href="/admin/ops">ops</a> | <a href="/admin/challenges">challenges</a> | <a href="/events">public calendar</a> | <a href="/events/recaps">recaps</a> | <a href="/today">today brief</a> | <a href="/logout">logout</a></p>
 ` + pageMessageBlock(r) + `
 ` + templateNotice + `
 <h1>Events Admin</h1>
@@ -4782,6 +4860,7 @@ func (a *webApp) handleAdminEvents(w http.ResponseWriter, r *http.Request) {
 <section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Quick Templates</h2><div class="wolfbbs-action-grid"><a class="wolfbbs-action-card" href="/admin/events?template=tournament#event-editor"><strong>Tournament Night</strong><span>weekly bracket or score ladder</span></a><a class="wolfbbs-action-card" href="/admin/events?template=social#event-editor"><strong>Lobby Net</strong><span>weekday live social check-in</span></a><a class="wolfbbs-action-card" href="/admin/events?template=content#event-editor"><strong>Content Drop</strong><span>scheduled bulletin, file, or featured thread</span></a><a class="wolfbbs-action-card" href="/admin/events?template=ops#event-editor"><strong>Sysop Review</strong><span>operator-only runbook cadence</span></a></div><p class="wolfbbs-muted">Templates load concrete defaults so you start from a believable event instead of a blank form.</p></article><article class="wolfbbs-card"><h2>Tournament Playbook</h2><ul class="wolfbbs-list-clean"><li>Use category <strong>tournament</strong> for ladders, score nights, and door brackets.</li><li>Point the link at <code>/doors</code>, <code>/tournaments</code>, or a door runbook so callers can join without guessing.</li><li>Weekly recurrence is the default starting point for a sustainable tournament rhythm.</li><li>Mirror the event in <a href="/tournaments">Tournament Center</a> and <a href="/scores">Scores</a> so the competitive layer feels alive.</li></ul></article></section>
 <section class="wolfbbs-grid"><article class="wolfbbs-card" id="event-editor"><h2>` + formTitle + `</h2><form method="POST" action="/admin/events" data-draft-key="admin-event-editor"><input type="hidden" name="action" value="` + formAction + `"><input type="hidden" name="id" value="` + htmlEscape(formEvent.ID) + `">` + csrf + `<label>Title <input name="title" size="48" value="` + htmlEscape(formEvent.Title) + `" placeholder="Friday Tournament Night"></label><br><label>Category <select name="category">` + categoryRows.String() + `</select></label><br><label>Starts <input type="datetime-local" name="starts_at" value="` + htmlEscape(formatLocalDateTimeValue(formEvent.StartsAt)) + `"></label><br><label>Ends <input type="datetime-local" name="ends_at" value="` + htmlEscape(formatLocalDateTimeValue(formEvent.EndsAt)) + `"></label><br><label>Recurrence <select name="recurrence">` + recurrenceRows.String() + `</select></label><br><label>Repeat Until <input type="datetime-local" name="repeat_until" value="` + htmlEscape(formatLocalDateTimeValue(formEvent.RepeatUntil)) + `"></label><br><label>Location <input name="location" size="40" value="` + htmlEscape(formEvent.Location) + `" placeholder="#lobby, Door Cockpit, SSH"></label><br><label>Host <input name="host" size="40" value="` + htmlEscape(formEvent.Host) + `" placeholder="sysop"></label><br><label>Audience <input name="audience" size="40" value="` + htmlEscape(formEvent.Audience) + `" placeholder="all callers"></label><br><label>Link <input name="link" size="60" value="` + htmlEscape(formEvent.Link) + `" placeholder="/doors or https://..."></label><br><label>Description<br><textarea name="description" rows="6" cols="72" placeholder="What happens, why it matters, and how to join.">` + htmlEscape(formEvent.Description) + `</textarea></label><br><button type="submit">` + submitLabel + `</button></form>` + cancelLink + `</article><article class="wolfbbs-card"><h2>Calendar Preview</h2>` + previewCard + `<p><a href="/events">Open public calendar</a> | <a href="/today">Open today brief</a></p></article></section>
 <section><h2>Scheduled Events</h2><table border="1"><tr><th>Title</th><th>Category</th><th>When</th><th>Series</th><th>Location</th><th>Audience</th><th>Action</th></tr>` + eventRows.String() + `</table></section>
+<section><h2>Post-Event Recaps</h2><p>Close the loop after each event: capture attendance and what happened so future scheduling decisions are evidence-based.</p><table border="1"><tr><th>Event</th><th>Recap</th></tr>` + recapRows.String() + `</table><p><a href="/events/recaps">View public recap feed</a></p></section>
 </body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -7902,7 +7981,7 @@ func (a *webApp) handleHelp(w http.ResponseWriter, r *http.Request) {
 		`</ol>`
 	if user != nil {
 		roleLabel = rbac.NormalizeRole(user.Role)
-		nav = `<a href="/start">start</a> | <a href="/today">today</a> | <a href="/attention">attention</a> | <a href="/events">events</a> | <a href="/boards">boards</a> | <a href="/bulletins">bulletins</a> | <a href="/directory">directory</a> | <a href="/finder">finder</a> | <a href="/newfiles">newfiles</a> | <a href="/feedback">feedback</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/radar">radar</a> | <a href="/clubhouse">clubhouse</a> | <a href="/doors">doors</a> | <a href="/settings">settings</a> | <a href="/status">status</a> | <a href="/config">config</a>`
+		nav = `<a href="/start">start</a> | <a href="/today">today</a> | <a href="/attention">attention</a> | <a href="/events">events</a> | <a href="/events/recaps">recaps</a> | <a href="/challenges">challenges</a> | <a href="/boards">boards</a> | <a href="/bulletins">bulletins</a> | <a href="/directory">directory</a> | <a href="/finder">finder</a> | <a href="/newfiles">newfiles</a> | <a href="/feedback">feedback</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/radar">radar</a> | <a href="/clubhouse">clubhouse</a> | <a href="/doors">doors</a> | <a href="/settings">settings</a> | <a href="/status">status</a> | <a href="/config">config</a>`
 		if a.discover {
 			nav += ` | <a href="/discover">discover</a>`
 		}
@@ -7913,6 +7992,8 @@ func (a *webApp) handleHelp(w http.ResponseWriter, r *http.Request) {
 				`<li>Start with <a href="/start">/start</a>, then finish <a href="/admin/setup">/admin/setup</a> before treating the board as ready for callers.</li>` +
 				`<li>Use <a href="/admin/ops">/admin/ops</a> as the fast operator triage surface for errors, sessions, and audits.</li>` +
 				`<li>Use <a href="/admin/events">/admin/events</a> to schedule concrete reasons for callers to return.</li>` +
+				`<li>Use <a href="/admin/challenges">/admin/challenges</a> for seasonal scoring and shared clubhouse goals.</li>` +
+				`<li>Use <a href="/admin/upgrade-safety">/admin/upgrade-safety</a> and <a href="/admin/backups">/admin/backups</a> before change windows.</li>` +
 				`<li>Review <a href="/admin/config">/admin/config</a> for runtime flags, identity, and exposed services.</li>` +
 				`<li>Seed boards, create a non-sysop account in <a href="/admin/users">/admin/users</a>, then test <a href="/boards">/boards</a>, <a href="/chat">/chat</a>, <a href="/doors">/doors</a>, and SSH.</li>` +
 				`<li>Use <a href="/status">/status</a> and <a href="/admin/system">/admin/system</a> as the daily health view.</li>` +
@@ -7922,7 +8003,7 @@ func (a *webApp) handleHelp(w http.ResponseWriter, r *http.Request) {
 			roleGuide = `<ol>` +
 				`<li>Start with <a href="/today">/today</a> and <a href="/attention">/attention</a> when you want a fast answer to what matters next.</li>` +
 				`<li>Use <a href="/boards">/boards</a> for long-form discussion, <a href="/chat">/chat</a> for live conversation, and <a href="/doors">/doors</a> for game and score surfaces.</li>` +
-				`<li>Use <a href="/events">/events</a> to see tournaments, social calls, and scheduled board activity.</li>` +
+				`<li>Use <a href="/events">/events</a>, <a href="/events/recaps">/events/recaps</a>, and <a href="/challenges">/challenges</a> to stay in the event loop.</li>` +
 				`<li>Use <a href="/mail">/mail</a> for private conversation and <a href="/directory">/directory</a> to find other callers.</li>` +
 				`<li>Try SSH when you want the full ANSI board experience.</li>` +
 				`</ol>`
@@ -7939,6 +8020,8 @@ func (a *webApp) handleHelp(w http.ResponseWriter, r *http.Request) {
 <ul>
 <li>Operator triage: <a href="/admin/ops">/admin/ops</a></li>
 <li>First-run setup: <a href="/admin/setup">/admin/setup</a> then <a href="/admin/config">/admin/config</a></li>
+<li>Season loop + social goals: <a href="/admin/challenges">/admin/challenges</a></li>
+<li>Change safety: <a href="/admin/upgrade-safety">/admin/upgrade-safety</a> and <a href="/admin/backups">/admin/backups</a></li>
 <li>User and role management: <a href="/admin/users">/admin/users</a></li>
 <li>Service and runtime health: <a href="/status">/status</a>, <a href="/admin/system">/admin/system</a>, <a href="/admin/errors">/admin/errors</a></li>
 <li>Policy surfaces: <a href="/admin/chat">/admin/chat</a>, <a href="/admin/doors">/admin/doors</a>, <a href="/admin/files">/admin/files</a></li>
@@ -7986,7 +8069,7 @@ func (a *webApp) handleHelp(w http.ResponseWriter, r *http.Request) {
 </ul>
 <h2>Web routes</h2>
 <ul>
-<li>/start, /today, /attention, /events, /boards, /bulletins, /directory, /finder, /newfiles, /feedback, /mail, /chat, /radar, /clubhouse, /doors, /settings, /gateway, /status, /config</li>
+<li>/start, /today, /attention, /events, /events/recaps, /challenges, /boards, /bulletins, /directory, /finder, /newfiles, /feedback, /mail, /chat, /radar, /clubhouse, /doors, /settings, /gateway, /status, /config</li>
 <li>/start for the fastest guest/caller/sysop handoff into the right lane</li>
 <li>/today for the daily brief: watched boards, upcoming events, and the shortest responsible next step</li>
 <li>/attention for direct follow-up, unread mail, and board movement that actually needs response</li>
@@ -7997,7 +8080,7 @@ func (a *webApp) handleHelp(w http.ResponseWriter, r *http.Request) {
 <li>/newfiles for recent uploads, queue desk, and top-rated file picks</li>
 <li>/feedback for classic mail-to-sysop feedback flow</li>
 <li>/radar for mission control: board pulse, live callers, discovery queue, and arcade heat</li>
-<li>/clubhouse for one-liner posting, rumors, BBS exchange, and social presence</li>
+<li>/clubhouse for one-liner posting, rumors, BBS exchange, and shared goal progress</li>
 <li>/doors for favorites, recommendations, recents, and policy-aware door directory</li>
 <li>/scores for global door leaderboards</li>
 ` + discoverItem + `
@@ -10932,6 +11015,15 @@ func (a *webApp) handleClubhouse(w http.ResponseWriter, r *http.Request) {
 			a.bbsListMod.Add(name, host, port)
 			redirectWithNotice(w, r, "/clubhouse", "BBS listing added to the exchange.")
 			return
+		case "goal_progress":
+			goalID := strings.TrimSpace(r.FormValue("goal_id"))
+			delta := parseIntWithFallback(r.FormValue("delta"), 1)
+			if !a.addGoalContribution(goalID, user.Handle, delta) {
+				redirectWithError(w, r, "/clubhouse", "Goal contribution failed.")
+				return
+			}
+			redirectWithNotice(w, r, "/clubhouse", "Goal contribution saved.")
+			return
 		default:
 			redirectWithError(w, r, "/clubhouse", "Unsupported clubhouse action.")
 			return
@@ -10994,9 +11086,40 @@ func (a *webApp) handleClubhouse(w http.ResponseWriter, r *http.Request) {
 	if callerRows.Len() == 0 {
 		callerRows.WriteString(`<li>No recent callers yet.</li>`)
 	}
+	goals := a.loadClubhouseGoals()
+	goalsCompleted := 0
+	goalRows := strings.Builder{}
+	for _, row := range goals {
+		if row.Progress >= row.Target {
+			goalsCompleted++
+		}
+		progressPercent := 0
+		if row.Target > 0 {
+			progressPercent = (row.Progress * 100) / row.Target
+		}
+		bindingParts := make([]string, 0, 2)
+		if row.BoardID > 0 {
+			if boardName := a.boardNameByID(row.BoardID); boardName != "" {
+				bindingParts = append(bindingParts, `board <a href="/boards?board=`+strconv.FormatInt(row.BoardID, 10)+`">`+htmlEscape(boardName)+`</a>`)
+			}
+		}
+		if row.DoorID != "" {
+			if doorName := a.doorNameByID(row.DoorID); doorName != "" {
+				bindingParts = append(bindingParts, `door <a href="/scores?door=`+htmlEscape(row.DoorID)+`">`+htmlEscape(doorName)+`</a>`)
+			}
+		}
+		bindingLine := "no board/door binding"
+		if len(bindingParts) > 0 {
+			bindingLine = strings.Join(bindingParts, " | ")
+		}
+		goalRows.WriteString(`<li><strong>` + htmlEscape(row.Title) + `</strong> <span class="wolfbbs-muted">` + strconv.Itoa(row.Progress) + `/` + strconv.Itoa(row.Target) + ` (` + strconv.Itoa(progressPercent) + `%)</span><br><span class="wolfbbs-muted">` + bindingLine + ` | updated by ` + htmlEscape(defaultIfBlank(row.UpdatedBy, "staff")) + `</span><br><form method="POST" action="/clubhouse" class="wolfbbs-inline-form"><input type="hidden" name="action" value="goal_progress"><input type="hidden" name="goal_id" value="` + htmlEscape(row.ID) + `">` + csrf + `<label>Add progress <input name="delta" value="1" inputmode="numeric" size="4"></label><button type="submit">Contribute</button></form></li>`)
+	}
+	if goalRows.Len() == 0 {
+		goalRows.WriteString(`<li>No shared goals yet. Ask staff to define a season in <a href="/admin/challenges">Challenges Admin</a>.</li>`)
+	}
 
 	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Clubhouse</title></head><body>
-<p><a href="/boards">boards</a> | <a href="/radar">radar</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/doors">doors</a> | <a href="/scores">scores</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
+<p><a href="/boards">boards</a> | <a href="/radar">radar</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/doors">doors</a> | <a href="/scores">scores</a> | <a href="/challenges">challenges</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
 ` + pageMessageBlock(r) + `
 <h1>Clubhouse</h1>
 <p>The social layer: post one-liners, browse the BBS exchange, check who's hanging around, and catch the latest rumor.</p>
@@ -11005,6 +11128,8 @@ func (a *webApp) handleClubhouse(w http.ResponseWriter, r *http.Request) {
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(bbsList)) + `</strong><span>bbs exchange links</span></article>
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(onlineUsers) + `</strong><span>chat presences</span></article>
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(recentCallers)) + `</strong><span>recent callers</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(goals)) + `</strong><span>shared goals</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(goalsCompleted) + `</strong><span>goals completed</span></article>
 </section>
 <section class="wolfbbs-grid">
 <article class="wolfbbs-card"><h2>Post a One-Liner</h2><form method="POST" action="/clubhouse"><input type="hidden" name="action" value="add_oneliner">` + csrf + `<label>Message <input name="text" maxlength="120" placeholder="keep it short, funny, or legendary"></label><button type="submit">Post</button></form><p class="wolfbbs-muted">Your handle is attached automatically.</p></article>
@@ -11018,6 +11143,9 @@ func (a *webApp) handleClubhouse(w http.ResponseWriter, r *http.Request) {
 <table border="1"><tr><th>Name</th><th>Host</th><th>Port</th></tr>` + bbsRows.String() + `</table>
 <h2>Recent Callers</h2>
 <ul>` + callerRows.String() + `</ul>
+<h2>Shared Goals</h2>
+<ul>` + goalRows.String() + `</ul>
+<p><a href="/challenges">Open seasonal challenge board</a></p>
 </body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -11478,7 +11606,7 @@ func (a *webApp) handleStatusCenter(w http.ResponseWriter, r *http.Request) {
 	adminLink := ""
 	launchBlock := ""
 	if a.hasRole(user, roleAdmin) {
-		adminLink = ` | <a href="/admin/ops">ops center</a> | <a href="/admin/system">sysop system</a>`
+		adminLink = ` | <a href="/admin/ops">ops center</a> | <a href="/admin/system">sysop system</a> | <a href="/admin/upgrade-safety">upgrade safety</a> | <a href="/admin/backups">backup browser</a>`
 		readiness := a.buildSetupReadinessSnapshot(user)
 		launchBlock = `<h2>Launch Readiness</h2>` +
 			`<p><strong>Verdict:</strong> ` + htmlEscape(launchVerdictText(readiness)) + ` | ` + strconv.Itoa(readiness.Summary.Pass) + `/` + strconv.Itoa(readiness.Summary.Total) + ` launch checks PASS</p>` +
@@ -11535,6 +11663,8 @@ func (a *webApp) handleConfigCenter(w http.ResponseWriter, r *http.Request) {
 		adminLinks = `<h2>Launch Change Order</h2><ol>` +
 			`<li><a href="/admin/launch">/admin/launch</a> for the operator home base and launch verdict.</li>` +
 			`<li><a href="/admin/ops">/admin/ops</a> for errors, sessions, audits, and operator triage.</li>` +
+			`<li><a href="/admin/upgrade-safety">/admin/upgrade-safety</a> for change-risk checks before upgrades.</li>` +
+			`<li><a href="/admin/backups">/admin/backups</a> to validate backup artifacts and offline packets.</li>` +
 			`<li><a href="/admin/setup">/admin/setup</a> for identity, safety, and bootstrap actions.</li>` +
 			`<li><a href="/admin/config">/admin/config</a> for runtime services, flags, and exposure.</li>` +
 			`<li><a href="/admin/users">/admin/users</a> to create the first real caller.</li>` +
@@ -11548,9 +11678,11 @@ func (a *webApp) handleConfigCenter(w http.ResponseWriter, r *http.Request) {
 			`<tr><td>Boards + moderation + ACS</td><td><a href="/admin/boards">/admin/boards</a></td><td><a href="/admin/system">/admin/system</a></td></tr>` +
 			`<tr><td>Mail policies</td><td><a href="/admin/mail">/admin/mail</a></td><td><a href="/admin/system">/admin/system</a></td></tr>` +
 			`<tr><td>File areas + queue + tickets</td><td><a href="/admin/files">/admin/files</a></td><td><a href="/admin/system">/admin/system</a></td></tr>` +
+			`<tr><td>Challenges + clubhouse goals</td><td><a href="/admin/challenges">/admin/challenges</a></td><td><a href="/challenges">/challenges</a></td></tr>` +
 			`<tr><td>Gateway safety limits</td><td><a href="/admin/gateways">/admin/gateways</a></td><td><a href="/admin/system">/admin/system</a></td></tr>` +
 			`<tr><td>Chat channels + moderation</td><td><a href="/admin/chat">/admin/chat</a></td><td><a href="/admin/system">/admin/system</a></td></tr>` +
 			`<tr><td>Doors + turns + scores</td><td><a href="/admin/doors">/admin/doors</a></td><td><a href="/admin/system">/admin/system</a></td></tr>` +
+			`<tr><td>Upgrade + backup safety</td><td><a href="/admin/upgrade-safety">/admin/upgrade-safety</a> / <a href="/admin/backups">/admin/backups</a></td><td><a href="/status">/status</a></td></tr>` +
 			`<tr><td>Errors + audit logs</td><td><a href="/admin/errors">/admin/errors</a> / <a href="/admin/audit">/admin/audit</a></td><td><a href="/admin/system">/admin/system</a></td></tr>` +
 			`</table>`
 	}
@@ -11567,6 +11699,7 @@ func (a *webApp) handleConfigCenter(w http.ResponseWriter, r *http.Request) {
 		`<li>Password + 2FA: <a href="/settings">/settings</a></li>` +
 		`<li>Personal inbox/outbox and posting workflow: <a href="/mail">/mail</a> and <a href="/boards">/boards</a></li>` +
 		`<li>Mission control + social layer: <a href="/radar">/radar</a> and <a href="/clubhouse">/clubhouse</a></li>` +
+		`<li>Seasonal loops: <a href="/challenges">/challenges</a> and <a href="/events/recaps">/events/recaps</a></li>` +
 		`</ul>` +
 		`<h2>Runtime Feature Flags (Current State)</h2><ul>` +
 		`<li>Discover: ` + boolToText(a.discover) + `</li>` +
@@ -11629,11 +11762,11 @@ func (a *webApp) handleAdmin(w http.ResponseWriter, r *http.Request) {
 	if adminActions.Len() == 0 {
 		adminActions.WriteString(`<li>No launch blockers detected. Walk the caller path once more, then announce the board.</li>`)
 	}
-	adminActionGrid := `<section class="wolfbbs-action-grid"><a class="wolfbbs-action-card" href="/admin/launch"><strong>Launch Center</strong><span>go-live verdict, next-best actions, operator commands</span></a><a class="wolfbbs-action-card" href="/admin/ops"><strong>Ops Center</strong><span>errors, sessions, audits, and triage</span></a><a class="wolfbbs-action-card" href="/admin/setup"><strong>Setup Wizard</strong><span>identity, safety, bootstrap, launch checklist</span></a><a class="wolfbbs-action-card" href="/admin/users"><strong>User Ops</strong><span>create callers, role changes, bans, resets</span></a><a class="wolfbbs-action-card" href="/admin/bulletins"><strong>Bulletin Scheduler</strong><span>timed wire announcements and content drops</span></a><a class="wolfbbs-action-card" href="/admin/system"><strong>System</strong><span>runtime health, service state, deeper operator detail</span></a></section>`
+	adminActionGrid := `<section class="wolfbbs-action-grid"><a class="wolfbbs-action-card" href="/admin/launch"><strong>Launch Center</strong><span>go-live verdict, next-best actions, operator commands</span></a><a class="wolfbbs-action-card" href="/admin/ops"><strong>Ops Center</strong><span>errors, sessions, audits, and triage</span></a><a class="wolfbbs-action-card" href="/admin/setup"><strong>Setup Wizard</strong><span>identity, safety, bootstrap, launch checklist</span></a><a class="wolfbbs-action-card" href="/admin/users"><strong>User Ops</strong><span>create callers, role changes, bans, resets</span></a><a class="wolfbbs-action-card" href="/admin/challenges"><strong>Challenges</strong><span>season engine + clubhouse shared goals</span></a><a class="wolfbbs-action-card" href="/admin/upgrade-safety"><strong>Upgrade Safety</strong><span>change-risk checks before rollout</span></a><a class="wolfbbs-action-card" href="/admin/backups"><strong>Backup Browser</strong><span>artifact validation and recovery confidence</span></a><a class="wolfbbs-action-card" href="/admin/system"><strong>System</strong><span>runtime health, service state, deeper operator detail</span></a></section>`
 	page := `<html><body><h1>Sysop Control Panel</h1><p>Logged in as ` + user.Handle + `</p>` +
 		`<p><a href="/admin/users">Users</a> | <a href="/admin/boards">Boards</a> | <a href="/admin/mail">Mail</a> | ` +
 		`<a href="/admin/files">Files</a> | <a href="/admin/gateways">Gateways</a> | <a href="/admin/chat">Chat</a> | ` +
-		`<a href="/admin/doors">Doors</a> | <a href="/admin/bulletins">Bulletins</a> | <a href="/admin/launch">Launch Center</a> | <a href="/admin/ops">Ops Center</a> | <a href="/admin/setup">Setup</a> | <a href="/admin/config">Config</a> | ` +
+		`<a href="/admin/doors">Doors</a> | <a href="/admin/bulletins">Bulletins</a> | <a href="/admin/challenges">Challenges</a> | <a href="/admin/launch">Launch Center</a> | <a href="/admin/ops">Ops Center</a> | <a href="/admin/upgrade-safety">Upgrade Safety</a> | <a href="/admin/backups">Backups</a> | <a href="/admin/setup">Setup</a> | <a href="/admin/config">Config</a> | ` +
 		`<a href="/admin/system">System</a> | <a href="/admin/errors">Errors</a> | <a href="/admin/audit">Audit Log</a> | <a href="/help">Help</a></p>` +
 		`<h2>Launch Digest</h2>` +
 		`<p><strong>Verdict:</strong> ` + htmlEscape(launchVerdictText(readiness)) + ` | ` + strconv.Itoa(readiness.Summary.Pass) + `/` + strconv.Itoa(readiness.Summary.Total) + ` launch checks PASS | ` + strconv.Itoa(statusSnapshot.Summary.Warn) + ` runtime warnings | ` + strconv.Itoa(errorCount) + ` runtime errors logged</p>` +
@@ -11645,9 +11778,11 @@ func (a *webApp) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		`<li>Mail: audit, limit controls</li>` +
 		`<li>Chat: channel state, kicks, mutes</li>` +
 		`<li>Doors: per-door enable/disable, turn rules, logs, and score reset</li>` +
+		`<li>Challenges: seasonal scoring and clubhouse shared goals</li>` +
 		`<li>Message networks: spool import/export via oputil + status in WFC</li>` +
 		`<li>Built-in mods: onelinerz, rumorz, bbs list, who's online lifecycle</li>` +
-		`<li>Gateway controls, setup checks, runtime config, and server health</li></ul>` +
+		`<li>Gateway controls, setup checks, runtime config, and server health</li>` +
+		`<li>Upgrade safety dashboard and backup browser for release confidence</li></ul>` +
 		`<p><a href="/scores">Door Scores & Trophies</a></p>` +
 		`<p>Read-only mode: ` + boolToText(a.readOnly) + ` | Runtime errors logged: ` + strconv.Itoa(errorCount) + `</p></body></html>`
 	w.WriteHeader(http.StatusOK)
@@ -11731,22 +11866,23 @@ func (a *webApp) handleAdminLaunch(w http.ResponseWriter, r *http.Request) {
 	}
 	launchHelperBlock := `<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Use Launch Center as home base</strong><p>This page is the operator control room when the board is almost ready but not obviously done.</p></article><article class="wolfbbs-helper-card"><strong>Walk real caller paths</strong><p>Do not treat green config alone as done; validate boards, chat, doors, and mail like a normal user would.</p></article><article class="wolfbbs-helper-card"><strong>Keep commands close</strong><p>The operator commands below are copyable so recovery and upgrades do not require hunting through docs.</p></article></section>`
 	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Launch Center</title></head><body><h1>Launch Center</h1>` +
-		`<p><a href="/admin">back</a> | <a href="/admin/ops">ops</a> | <a href="/admin/setup">setup</a> | <a href="/admin/config">config</a> | <a href="/admin/system">system</a> | <a href="/status">status</a> | <a href="/help">help</a></p>` +
+		`<p><a href="/admin">back</a> | <a href="/admin/ops">ops</a> | <a href="/admin/setup">setup</a> | <a href="/admin/challenges">challenges</a> | <a href="/admin/upgrade-safety">upgrade safety</a> | <a href="/admin/backups">backups</a> | <a href="/admin/config">config</a> | <a href="/admin/system">system</a> | <a href="/status">status</a> | <a href="/help">help</a></p>` +
 		pageMessageBlock(r) +
 		`<p>Use this page as the sysop home base for first-run, pre-launch review, and support triage.</p>` +
 		launchHelperBlock +
 		`<h2>Launch Summary</h2>` +
 		`<p><strong>Verdict:</strong> ` + htmlEscape(launchVerdictText(readiness)) + ` | ` + strconv.Itoa(readiness.Summary.Pass) + `/` + strconv.Itoa(readiness.Summary.Total) + ` launch checks PASS | runtime ` + strconv.Itoa(runtime.Summary.Warn) + ` WARN</p>` +
-		`<p><a href="/admin/setup">Setup Wizard</a> | <a href="/admin/users">Create Caller</a> | <a href="/boards">Walk Boards</a> | <a href="/chat">Walk Chat</a> | <a href="/doors">Walk Doors</a></p>` +
+		`<p><a href="/admin/setup">Setup Wizard</a> | <a href="/admin/users">Create Caller</a> | <a href="/admin/challenges">Challenges</a> | <a href="/boards">Walk Boards</a> | <a href="/chat">Walk Chat</a> | <a href="/doors">Walk Doors</a></p>` +
 		`<h2>Go-Live Checkpoints</h2><p><strong>` + strconv.Itoa(checkpointDone) + `/` + strconv.Itoa(len(checkpoints)) + `</strong> operator checkpoints complete.</p><table border="1"><tr><th>Checkpoint</th><th>Done</th><th>Action</th></tr>` + checkpointRows.String() + `</table>` +
 		`<h2>Launch Checks</h2><table border="1"><tr><th>Check</th><th>Status</th><th>Details</th></tr>` + readinessRows.String() + `</table>` +
 		`<h2>Runtime Checks</h2><table border="1"><tr><th>Check</th><th>Status</th><th>Details</th></tr>` + runtimeRows.String() + `</table>` +
 		`<h2>Next Best Actions</h2><ul>` + launchActionRows.String() + `</ul>` +
 		`<h2>Run In This Order</h2><ol>` +
 		`<li><a href="/admin/setup">/admin/setup</a> for identity, safety, and bootstrap actions.</li>` +
+		`<li><a href="/admin/upgrade-safety">/admin/upgrade-safety</a> and <a href="/admin/backups">/admin/backups</a> before rollout windows.</li>` +
 		`<li><a href="/admin/config">/admin/config</a> for runtime flags, services, and public-facing behavior.</li>` +
-		`<li><a href="/admin/users">/admin/users</a> to create at least one non-sysop caller.</li>` +
-		`<li><a href="/boards">/boards</a>, <a href="/chat">/chat</a>, <a href="/doors">/doors</a>, and <a href="/scores">/scores</a> as a real user.</li>` +
+		`<li><a href="/admin/users">/admin/users</a> and <a href="/admin/challenges">/admin/challenges</a> to create real caller loops.</li>` +
+		`<li><a href="/boards">/boards</a>, <a href="/chat">/chat</a>, <a href="/doors">/doors</a>, <a href="/scores">/scores</a>, and <a href="/challenges">/challenges</a> as a real user.</li>` +
 		`<li><a href="/status">/status</a> and <a href="/admin/system">/admin/system</a> before you announce the board.</li>` +
 		`</ol>` +
 		`<h2>Operator Commands</h2><pre>bash install.sh --status
@@ -19240,6 +19376,8 @@ func webQuickJumpPath(raw string) string {
 		return "/events"
 	case "tournaments", "tourney", "bracket":
 		return "/tournaments"
+	case "challenges", "challenge", "season", "ladder":
+		return "/challenges"
 	case "boards", "messages", "msg", "m":
 		return "/boards"
 	case "mail", "pm", "p":
@@ -19286,6 +19424,12 @@ func webQuickJumpPath(raw string) string {
 		return "/admin/ops"
 	case "admin-events", "sysop-events":
 		return "/admin/events"
+	case "admin-challenges", "season-admin":
+		return "/admin/challenges"
+	case "upgrade", "upgrade-safety", "rollout":
+		return "/admin/upgrade-safety"
+	case "backup", "backups":
+		return "/admin/backups"
 	case "admin-bulletins", "bulletin-admin", "wire":
 		return "/admin/bulletins"
 	default:

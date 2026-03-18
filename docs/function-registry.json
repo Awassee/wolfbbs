@@ -632,6 +632,19 @@
       "notes": "Discovered from cmd/wolfbbs-web route registration."
     },
     {
+      "id": "web:/admin/backups",
+      "type": "web_route",
+      "entrypoint": "/admin/backups",
+      "user_tui": false,
+      "user_web": false,
+      "admin_tui": false,
+      "admin_web": true,
+      "config_ui": "/admin/config",
+      "status_ui": "/admin/system",
+      "state_visibility": "enabled/configured/healthy surfaced via status center",
+      "notes": "Discovered from cmd/wolfbbs-web route registration."
+    },
+    {
       "id": "web:/admin/boards",
       "type": "web_route",
       "entrypoint": "/admin/boards",
@@ -655,6 +668,19 @@
       "config_ui": "/admin/config",
       "status_ui": "/admin/system",
       "state_visibility": "scheduled announcements and admin actions visible through bulletins, audit, and system views",
+      "notes": "Discovered from cmd/wolfbbs-web route registration."
+    },
+    {
+      "id": "web:/admin/challenges",
+      "type": "web_route",
+      "entrypoint": "/admin/challenges",
+      "user_tui": false,
+      "user_web": false,
+      "admin_tui": false,
+      "admin_web": true,
+      "config_ui": "/admin/config",
+      "status_ui": "/admin/system",
+      "state_visibility": "enabled/configured/healthy surfaced via status center",
       "notes": "Discovered from cmd/wolfbbs-web route registration."
     },
     {
@@ -840,6 +866,19 @@
       "notes": "Discovered from cmd/wolfbbs-web route registration."
     },
     {
+      "id": "web:/admin/upgrade-safety",
+      "type": "web_route",
+      "entrypoint": "/admin/upgrade-safety",
+      "user_tui": false,
+      "user_web": false,
+      "admin_tui": false,
+      "admin_web": true,
+      "config_ui": "/admin/config",
+      "status_ui": "/admin/system",
+      "state_visibility": "enabled/configured/healthy surfaced via status center",
+      "notes": "Discovered from cmd/wolfbbs-web route registration."
+    },
+    {
       "id": "web:/admin/users",
       "type": "web_route",
       "entrypoint": "/admin/users",
@@ -926,6 +965,19 @@
       "admin_tui": false,
       "admin_web": false,
       "config_ui": "/admin/config",
+      "status_ui": "/status",
+      "state_visibility": "enabled/configured/healthy surfaced via status center",
+      "notes": "Discovered from cmd/wolfbbs-web route registration."
+    },
+    {
+      "id": "web:/challenges",
+      "type": "web_route",
+      "entrypoint": "/challenges",
+      "user_tui": false,
+      "user_web": true,
+      "admin_tui": false,
+      "admin_web": true,
+      "config_ui": "/admin/challenges",
       "status_ui": "/status",
       "state_visibility": "enabled/configured/healthy surfaced via status center",
       "notes": "Discovered from cmd/wolfbbs-web route registration."
@@ -1168,6 +1220,19 @@
       "id": "web:/events",
       "type": "web_route",
       "entrypoint": "/events",
+      "user_tui": false,
+      "user_web": true,
+      "admin_tui": false,
+      "admin_web": true,
+      "config_ui": "/admin/events",
+      "status_ui": "/status",
+      "state_visibility": "enabled/configured/healthy surfaced via status center",
+      "notes": "Discovered from cmd/wolfbbs-web route registration."
+    },
+    {
+      "id": "web:/events/recaps",
+      "type": "web_route",
+      "entrypoint": "/events/recaps",
       "user_tui": false,
       "user_web": true,
       "admin_tui": false,

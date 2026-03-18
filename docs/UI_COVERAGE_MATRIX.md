@@ -52,8 +52,10 @@ Auto-generated from `docs/function-registry.json`.
 | `web:/.well-known/webfinger` | `web_route` | N | N | N | N | `/admin/config` | `/status` |
 | `web:/admin` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/audit` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
+| `web:/admin/backups` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/boards` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/bulletins` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
+| `web:/admin/challenges` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/chat` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/config` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/doors` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
@@ -68,6 +70,7 @@ Auto-generated from `docs/function-registry.json`.
 | `web:/admin/ops` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/setup` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/system` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
+| `web:/admin/upgrade-safety` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/admin/users` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/ap/users/` | `web_route` | N | N | N | N | `/admin/config` | `/status` |
 | `web:/attention` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
@@ -75,6 +78,7 @@ Auto-generated from `docs/function-registry.json`.
 | `web:/boards` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/bookmarks` | `web_route` | N | Y | N | N | `/admin/config` | `/status` |
 | `web:/bulletins` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
+| `web:/challenges` | `web_route` | N | Y | N | Y | `/admin/challenges` | `/status` |
 | `web:/chat` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/chat/channels` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/chat/history` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
@@ -94,6 +98,7 @@ Auto-generated from `docs/function-registry.json`.
 | `web:/discover` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/doors` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/events` | `web_route` | N | Y | N | Y | `/admin/events` | `/status` |
+| `web:/events/recaps` | `web_route` | N | Y | N | Y | `/admin/events` | `/status` |
 | `web:/feedback` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/finder` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/first-call` | `web_route` | Y | Y | N | N | `/admin/setup` | `/status` |

@@ -2117,6 +2117,9 @@ status_view() {
   local probe_lines=()
   local pass_count=0
   local warn_count=0
+  local safety_lines=()
+  local safety_pass=0
+  local safety_warn=0
   local verdict="ATTENTION"
   local cmd=""
   local env_mode=""
@@ -2205,6 +2208,69 @@ status_view() {
     probe_lines+=("WARN nc not found; skipping TCP probes")
     warn_count=$((warn_count + 1))
   fi
+  if [[ -f "$ENV_FILE" ]]; then
+    env_mode="$(stat -f '%Lp' "$ENV_FILE" 2>/dev/null || stat -c '%a' "$ENV_FILE" 2>/dev/null || true)"
+  fi
+  echo "Upgrade safety dashboard:"
+  if [[ -f "$ENV_FILE" ]]; then
+    echo "  PASS env file present: ${ENV_FILE}"
+    safety_lines+=("PASS env file present: ${ENV_FILE}")
+    safety_pass=$((safety_pass + 1))
+  else
+    echo "  WARN env file missing: ${ENV_FILE}"
+    safety_lines+=("WARN env file missing: ${ENV_FILE}")
+    safety_warn=$((safety_warn + 1))
+  fi
+  if [[ -n "${env_mode:-}" ]] && [[ "$env_mode" == "600" ]]; then
+    echo "  PASS env permissions: ${env_mode}"
+    safety_lines+=("PASS env permissions: ${env_mode}")
+    safety_pass=$((safety_pass + 1))
+  else
+    echo "  WARN env permissions: ${env_mode:-unknown} (recommended 600)"
+    safety_lines+=("WARN env permissions: ${env_mode:-unknown} (recommended 600)")
+    safety_warn=$((safety_warn + 1))
+  fi
+  if [[ -f "$compose_file" ]]; then
+    echo "  PASS compose file present: ${compose_file}"
+    safety_lines+=("PASS compose file present: ${compose_file}")
+    safety_pass=$((safety_pass + 1))
+  else
+    echo "  WARN compose file missing: ${compose_file}"
+    safety_lines+=("WARN compose file missing: ${compose_file}")
+    safety_warn=$((safety_warn + 1))
+  fi
+  if [[ -f "$(launch_brief_path)" ]]; then
+    echo "  PASS first-steps brief present: $(launch_brief_path)"
+    safety_lines+=("PASS first-steps brief present: $(launch_brief_path)")
+    safety_pass=$((safety_pass + 1))
+  else
+    echo "  WARN first-steps brief missing: $(launch_brief_path)"
+    safety_lines+=("WARN first-steps brief missing: $(launch_brief_path)")
+    safety_warn=$((safety_warn + 1))
+  fi
+  if [[ -f "$(status_snapshot_path)" ]]; then
+    echo "  PASS service snapshot present: $(status_snapshot_path)"
+    safety_lines+=("PASS service snapshot present: $(status_snapshot_path)")
+    safety_pass=$((safety_pass + 1))
+  else
+    echo "  WARN service snapshot missing: $(status_snapshot_path)"
+    safety_lines+=("WARN service snapshot missing: $(status_snapshot_path)")
+    safety_warn=$((safety_warn + 1))
+  fi
+  local menu_backup_count=0
+  if [[ -d "${WORK_DIR}/menus" ]]; then
+    menu_backup_count="$(find "${WORK_DIR}/menus" -type f -name '*.bak' 2>/dev/null | wc -l | awk '{print $1}')"
+  fi
+  if [[ "${menu_backup_count:-0}" -gt 0 ]]; then
+    echo "  PASS menu backup files: ${menu_backup_count}"
+    safety_lines+=("PASS menu backup files: ${menu_backup_count}")
+    safety_pass=$((safety_pass + 1))
+  else
+    echo "  WARN menu backup files: 0 (save /admin/config at least once before risky changes)"
+    safety_lines+=("WARN menu backup files: 0 (save /admin/config at least once before risky changes)")
+    safety_warn=$((safety_warn + 1))
+  fi
+  echo "Upgrade safety verdict: ${safety_pass} pass / ${safety_warn} warn"
   if [[ "$warn_count" -eq 0 ]]; then
     verdict="READY"
   elif [[ "$pass_count" -gt 0 ]]; then
@@ -2223,9 +2289,6 @@ status_view() {
     [[ -f "${docs_root}/LAUNCH_CHECKLIST.md" ]] && echo "  - ${docs_root}/LAUNCH_CHECKLIST.md"
     [[ -f "${docs_root}/TROUBLESHOOTING.md" ]] && echo "  - ${docs_root}/TROUBLESHOOTING.md"
     [[ -f "${docs_root}/OPERATIONS.md" ]] && echo "  - ${docs_root}/OPERATIONS.md"
-  fi
-  if [[ -f "$ENV_FILE" ]]; then
-    env_mode="$(stat -f '%Lp' "$ENV_FILE" 2>/dev/null || stat -c '%a' "$ENV_FILE" 2>/dev/null || true)"
   fi
   snapshot="WolfBBS Service Status
 Generated: $(date -u +'%Y-%m-%dT%H:%M:%SZ')
@@ -2258,6 +2321,12 @@ Runtime probes:
     snapshot+=$(printf -- '- %s\n' "${probe_lines[@]}")
   else
     snapshot+="- No probes executed"$'\n'
+  fi
+  snapshot+=$'\nUpgrade safety:\n'
+  if (( ${#safety_lines[@]} > 0 )); then
+    snapshot+=$(printf -- '- %s\n' "${safety_lines[@]}")
+  else
+    snapshot+="- No safety checks executed"$'\n'
   fi
   snapshot+=$'\nDocs:\n'
   if [[ -n "$docs_root" ]]; then

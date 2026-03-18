@@ -174,23 +174,23 @@ Status: shipped in v1.1.18.
 ## Theme 15: Platform, retention, and extension
 141. Event attendance tracking and post-event recap.
 Value: lets sysops see what actually worked.
-Status: planned.
+Status: shipped in v1.1.19.
 
 142. Seasonal challenge engine across boards, chat, and doors.
 Value: creates broader return loops.
-Status: planned.
+Status: shipped in v1.1.19.
 
 143. Board + door clubhouses with shared goals.
 Value: deepens community identity.
-Status: planned.
+Status: shipped in v1.1.19.
 
 144. Upgrade safety dashboard in installer and web admin.
 Value: improves trust during change.
-Status: planned.
+Status: shipped in v1.1.19.
 
 145. Backup browser with validation status.
 Value: makes recovery operationally real.
-Status: planned.
+Status: shipped in v1.1.19.
 
 146. Plugin manifest, capability model, and sandbox contract.
 Value: prepares the platform for safe extension.
