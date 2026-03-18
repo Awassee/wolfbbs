@@ -90,6 +90,7 @@ Reference: `docs/help-guides.md`, `docs/screens.md`.
 - `GET/POST /first-call`
 - `GET/POST /boards`
 - `GET/POST /mail`
+- `GET/POST /bookmarks`
 - `GET/POST /gateway`
 - `GET/POST /settings`
 - `GET /status`
@@ -110,6 +111,7 @@ Reference: `docs/help-guides.md`, `docs/screens.md`.
 - `POST /chat/leave`
 - `GET /chat/history`
 - `GET /chat/online`
+- `GET /handles/suggest`
 - `GET /scores`
 - `GET /discover` (when enabled)
 - `GET /events`
@@ -176,18 +178,22 @@ Documented in `docs/irc-compat.md`:
   - `digest` for lower-noise daily brief inclusion
   - `mute` to suppress board resurfacing in focused views
 - Attention Center at `/attention` with per-user read/unread and dismiss/restore state
+- Read-Later Queue at `/bookmarks` for persistent saved board posts and mail
 - Daily brief at `/today` for watch-tier boards, digest-tier boards, upcoming events, and direct follow-up
+- Daily Digest at `/digest` with per-user opt-in preferences from `/settings`
 - Guided onboarding at `/first-call` to create a first post, lobby line, private mail, and saved home route
 - Guest `/start` and caller `/today` surfaces now carry persistent quick-start checklists
-- `/settings` includes saved home-route preference for `/today`, `/boards`, `/chat`, or `/doors`
+- `/settings` includes saved home-route preference for `/today`, `/digest`, `/boards`, `/chat`, or `/doors`
 - SSH boards include conference filter toggle (`C`) for area-focused browsing
 - Mail inbox/outbox, read by ID, compose local/external (policy-gated)
 - Newscan/digest integration for message/mail activity
 - Web composer supports preview, focus mode, fullscreen mode, quote context, signature insert, draft restore, and keyboard shortcuts
+- Web composer and chat input now include handle assist for mentions and local-recipient lookup
 
 ## Community Calendar
 
 - Public calendar at `/events`
+- Tournament Center at `/tournaments` for competitive door nights, standings, and bracket preview
 - Sysop event scheduling at `/admin/events`
 - Event metadata: category, start/end, location, host, audience, link, description
 - Event recurrence: daily, weekly, and monthly series with repeat-until support
@@ -211,6 +217,9 @@ Documented in `docs/irc-compat.md`:
 ## File Base and Download Queue
 
 - File tags, ratings, saved filters, SHA-256 dedupe index
+- Browser-native upload intake in `/admin/files` with metadata extraction and moderation hold queue
+- Caller-facing FileBase preview pages show descriptions, tags, related uploads, and direct queue/ticket actions
+- Held uploads stay out of caller-facing file surfaces until approved
 - SSH files menu includes indexed search (`I`) and legacy queue manager (`D`)
 - Queue manager supports remove, one-time ticket issue, and batch zip handoff via gateway
 

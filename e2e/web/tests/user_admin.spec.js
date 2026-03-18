@@ -126,6 +126,9 @@ test("connect page exposes the web terminal entrypoint", async ({ page }) => {
   await expect(page.locator("body")).toContainText("Choose your client");
   await expect(page.locator("body")).toContainText("First call checklist");
   await expect(page.locator("body")).toContainText("Clipboard-Friendly Commands");
+  await expect(page.locator("body")).toContainText("Mobile-first connection picks");
+  await expect(page.locator("body")).toContainText("iPhone/iPad");
+  await expect(page.locator("body")).toContainText("Android");
   await expect(page.getByRole("button", { name: "Copy" }).first()).toBeVisible();
   await expect(page.locator("#xterm")).toBeVisible();
   await expect(page.locator("#termStatus")).toContainText(/connecting|connected|disconnected|socket error/i);
@@ -178,6 +181,11 @@ test("user web journey supports keyboard navigation and status/config visibility
   await page.goto("/events");
   await expect(page.locator("h1")).toContainText("Community Calendar");
   await expect(page.locator("body")).toContainText("Upcoming Events");
+  await page.goto("/tournaments");
+  await expect(page.locator("h1")).toContainText("Tournament Center");
+  await expect(page.locator("body")).toContainText("Upcoming Tournaments");
+  await expect(page.locator("body")).toContainText("Standings Table");
+  await expect(page.locator("body")).toContainText("Bracket Preview");
 
   await page.goto("/boards");
   await expect(page.locator("h1")).toContainText("Message Boards");
@@ -274,15 +282,28 @@ test("user web journey supports keyboard navigation and status/config visibility
   await expect(page.locator('input[name="subject"]')).toHaveValue(/Meet me in the Door Hub/);
   await expect(page.locator("body")).toContainText("Drafts are local");
   const composeForm = page.locator('form[data-rich-compose="mail-compose"]').first();
-  await composeForm.locator('input[name="to"]').fill(ADMIN_HANDLE);
+  await composeForm.locator('input[name="to"]').fill("sy");
+  await expect(page.locator(".wolfbbs-handle-assist button").filter({ hasText: ADMIN_HANDLE }).first()).toBeVisible();
+  await page.locator(".wolfbbs-handle-assist button").filter({ hasText: ADMIN_HANDLE }).first().click();
+  await expect(composeForm.locator('input[name="to"]')).toHaveValue(ADMIN_HANDLE);
   await composeForm.locator('input[name="subject"]').fill("Playwright Mail");
   await composeForm.locator('textarea[name="body"]').fill("Mail body from browser flow.");
   await composeForm.getByRole("button", { name: "Send" }).click();
+  await expect(page.locator("body")).toContainText("Playwright Mail");
+  await page.locator("tr", { hasText: "Playwright Mail" }).locator("a").first().click();
+  await expect(page.locator("h1")).toContainText(/Mail #/);
+  await page.getByRole("button", { name: /Read-Later/ }).click();
+  await page.goto("/bookmarks");
+  await expect(page.locator("h1")).toContainText("Read-Later Queue");
   await expect(page.locator("body")).toContainText("Playwright Mail");
 
   await page.goto("/boards?board=1");
   await expect(page.getByRole("button", { name: "Preview" }).first()).toBeVisible();
   await page.fill('input[name="subject"]', "Playwright Post");
+  await page.fill('textarea[name="body"]', "@sy");
+  await expect(page.locator(".wolfbbs-handle-assist button").filter({ hasText: "@sysop" }).first()).toBeVisible();
+  await page.locator(".wolfbbs-handle-assist button").filter({ hasText: "@sysop" }).first().click();
+  await expect(page.locator('textarea[name="body"]')).toHaveValue(/@sysop\s/);
   await page.fill('textarea[name="body"]', "Testing from browser flow.");
   await page.getByRole("button", { name: "Post" }).click();
   await expect(page.locator("body")).toContainText("Playwright Post");
@@ -297,6 +318,14 @@ test("user web journey supports keyboard navigation and status/config visibility
   await page.getByRole("button", { name: "Post Reply" }).click();
   await expect(page.locator("body")).toContainText("Playwright Post");
 
+  await page.goto("/chat");
+  await expect(page.locator("h1")).toContainText(/Chat/);
+  await page.fill("#message", "@sy");
+  await expect(page.locator(".wolfbbs-handle-assist button").filter({ hasText: "@sysop" }).first()).toBeVisible();
+  await page.locator(".wolfbbs-handle-assist button").filter({ hasText: "@sysop" }).first().click();
+  await expect(page.locator("#message")).toHaveValue(/@sysop\s/);
+  await expect(page.locator("body")).toContainText("Who Is Here");
+
   await page.goto("/gateway");
   await page.fill('input[name="url"]', "http://example.com");
   await page.check('input[name="save"]');
@@ -305,6 +334,16 @@ test("user web journey supports keyboard navigation and status/config visibility
   await expect(page.locator("body")).toContainText("Example Domain");
   await expect(page.locator("body")).toContainText("Saved to:");
 
+  await page.goto("/settings");
+  await page.check('input[name="digest_enabled"]');
+  await page.selectOption('select[name="digest_max_items"]', "10");
+  await page.check('input[name="digest_include_events"]');
+  await page.check('input[name="digest_include_boards"]');
+  await page.getByRole("button", { name: "Save Digest Preferences" }).click();
+  await expect(page.locator("body")).toContainText("Web digest: true");
+  await page.goto("/digest");
+  await expect(page.locator("h1")).toContainText("Daily Digest");
+  await expect(page.locator("body")).toContainText("Digest Tier Boards");
   await page.goto("/settings");
   await page.selectOption('select[name="home_route"]', "/today");
   await page.uncheck('input[name="ansi_enabled"]');
@@ -471,23 +510,23 @@ test("admin journey enforces RBAC and exposes sysop pages", async ({ browser }) 
   await postForm(adminPage, "/admin/chat", { csrf_token: csrf, action: "unlock_channel", channel: "#qa-chat" });
 
   await adminPage.goto("/chat");
-  csrf = await csrfFrom(adminPage);
-  await postForm(adminPage, "/chat/moderation", {
-    csrf_token: csrf,
-    channel: "#lobby",
-    action: "mute",
-    target: "caller",
-    reason: "qa-mute",
-    duration: "5m",
-  });
-  await postForm(adminPage, "/chat/moderation", {
-    csrf_token: csrf,
-    channel: "#lobby",
-    action: "unmute",
-    target: "caller",
-    reason: "qa-unmute",
-    duration: "0",
-  });
+  await adminPage.fill("#customChannel", "#qa-chat");
+  await adminPage.getByRole("button", { name: "Open Channel" }).click();
+  await expect(adminPage.locator("#chatCurrentChannel")).toContainText("#qa-chat");
+  await adminPage.selectOption("#channelSelect", "#lobby");
+  await expect(adminPage.locator("#chatCurrentChannel")).toContainText("#lobby");
+  await adminPage.fill('#modForm input[name="channel"]', "#lobby");
+  await adminPage.fill('#modForm input[name="target"]', "caller");
+  await adminPage.fill('#modForm input[name="reason"]', "qa-mute");
+  await adminPage.fill('#modForm input[name="duration"]', "5m");
+  await adminPage.locator('#modForm select[name="action"]').selectOption("mute");
+  await adminPage.getByRole("button", { name: "Apply" }).click();
+  await expect(adminPage.locator("#chatStatus")).toContainText("Moderation applied");
+  await adminPage.fill('#modForm input[name="reason"]', "qa-unmute");
+  await adminPage.fill('#modForm input[name="duration"]', "0");
+  await adminPage.locator('#modForm select[name="action"]').selectOption("unmute");
+  await adminPage.getByRole("button", { name: "Apply" }).click();
+  await expect(adminPage.locator("#chatStatus")).toContainText("Moderation applied");
   await adminPage.goto("/admin/chat");
   await expect(adminPage.locator("body")).toContainText("qa-mute");
 
@@ -523,14 +562,38 @@ test("admin journey enforces RBAC and exposes sysop pages", async ({ browser }) 
   await adminPage.goto("/admin/events");
   await expect(adminPage.locator("body")).toContainText(qaEventTitle);
   await expect(adminPage.locator("body")).toContainText("Weekly until");
+  await adminPage.getByRole("link", { name: "Edit" }).first().click();
+  await expect(adminPage.locator("body")).toContainText("Edit Event");
+  csrf = await csrfFrom(adminPage);
+  const updatedEventTitle = `qa-playoff-${runID.slice(-6)}`;
+  await postForm(adminPage, "/admin/events", {
+    csrf_token: csrf,
+    action: "update",
+    id: await adminPage.locator('input[name="id"]').first().inputValue(),
+    title: updatedEventTitle,
+    category: "tournament",
+    starts_at: "2026-03-20T19:00",
+    ends_at: "2026-03-20T21:00",
+    recurrence: "weekly",
+    repeat_until: "2026-04-17T19:00",
+    location: "/doors",
+    host: ADMIN_HANDLE,
+    audience: "ranked callers",
+    description: "Updated playoff bracket",
+    link: "/scores",
+  });
+  await adminPage.goto("/events");
+  await expect(adminPage.locator("body")).toContainText(updatedEventTitle);
+  await expect(adminPage.locator("body")).not.toContainText(qaEventTitle);
+  await adminPage.goto("/admin/events");
   csrf = await csrfFrom(adminPage);
   await postForm(adminPage, "/admin/events", {
     csrf_token: csrf,
     action: "delete",
-    id: await adminPage.locator(`tr:has-text("${qaEventTitle}") input[name="id"]`).first().inputValue().catch(() => ""),
+    id: await adminPage.locator(`tr:has-text("${updatedEventTitle}") input[name="id"]`).first().inputValue().catch(() => ""),
   }, [200, 302, 400]);
   await adminPage.goto("/events");
-  await expect(adminPage.locator("body")).not.toContainText(qaEventTitle);
+  await expect(adminPage.locator("body")).not.toContainText(updatedEventTitle);
   await adminPage.goto("/admin/system");
   await expect(adminPage.locator("h1")).toContainText("System / WFC Dashboard");
   await adminPage.goto("/admin/audit");
@@ -569,6 +632,8 @@ test("sysop setup/files/doors/system surfaces and actions stay healthy", async (
 
   await adminPage.goto("/admin/files");
   await expect(adminPage.locator("h1")).toContainText("Files");
+  await expect(adminPage.locator("body")).toContainText("Upload Intake");
+  await expect(adminPage.locator("body")).toContainText("Review Queue");
   csrf = await csrfFrom(adminPage);
   await postForm(adminPage, "/admin/files", {
     csrf_token: csrf,
@@ -581,6 +646,53 @@ test("sysop setup/files/doors/system surfaces and actions stay healthy", async (
   const createdAreaRow = adminPage.locator("tr", { hasText: areaName }).first();
   await expect(createdAreaRow).toBeVisible();
   const createdAreaID = await createdAreaRow.locator('input[name="id"]').first().inputValue();
+  await adminPage.selectOption('select[name="area_id"]', createdAreaID);
+  await adminPage.locator('input[name="upload_file"]').setInputFiles({
+    name: `playwright-${runID}.ans`,
+    mimeType: "text/plain",
+    buffer: Buffer.from("PLAYWRIGHT ANSI CONTENT"),
+  });
+  await adminPage.fill('form[enctype="multipart/form-data"] input[name="description"]', "playwright upload");
+  await adminPage.fill('form[enctype="multipart/form-data"] input[name="tags"]', "retro,ansi");
+  await adminPage.fill('form[enctype="multipart/form-data"] input[name="review_notes"]', "scan pending");
+  await adminPage.getByRole("button", { name: "Upload file" }).click();
+  await expect(adminPage.locator("body")).toContainText(`playwright-${runID}.ans`);
+  await expect(adminPage.locator("body")).toContainText("hold");
+  const reviewRow = adminPage.locator("tr", { hasText: `playwright-${runID}.ans` }).filter({
+    has: adminPage.locator('select[name="status"]'),
+  }).first();
+  await reviewRow.locator('select[name="status"]').selectOption("approved");
+  await reviewRow.locator('input[name="review_notes"]').fill("approved by playwright");
+  await reviewRow.getByRole("button", { name: "save" }).click();
+  await expect(adminPage.locator("body")).toContainText("approved");
+  csrf = await csrfFrom(adminPage);
+  await postForm(adminPage, "/admin/files", {
+    csrf_token: csrf,
+    action: "save_filter",
+    name: "playwright filter",
+    query: `playwright-${runID}`,
+    tags: "retro,ansi",
+  });
+  await adminPage.goto("/admin/files");
+  await adminPage.locator("tr", { hasText: "playwright filter" }).getByRole("link", { name: "apply" }).click();
+  await expect(adminPage.locator("body")).toContainText("Active File Filters");
+  await expect(adminPage.locator('input[name="q"]')).toHaveValue(`playwright-${runID}`);
+  await adminPage.goto("/newfiles");
+  await expect(adminPage.locator("body")).toContainText(`playwright-${runID}.ans`);
+  await adminPage.goto("/admin/files");
+  const indexedRow = adminPage.locator("tr", { hasText: `playwright-${runID}.ans` }).filter({
+    has: adminPage.getByRole("button", { name: "delete file" }),
+  }).first();
+  const deleteFileID = await indexedRow.locator('input[name="file_id"]').first().inputValue();
+  csrf = await csrfFrom(adminPage);
+  await postForm(adminPage, "/admin/files", {
+    csrf_token: csrf,
+    action: "delete_file",
+    file_id: deleteFileID,
+  });
+  await adminPage.goto("/newfiles");
+  await expect(adminPage.locator("body")).not.toContainText(`playwright-${runID}.ans`);
+  await adminPage.goto("/admin/files");
   csrf = await csrfFrom(adminPage);
   await postForm(adminPage, "/admin/files", {
     csrf_token: csrf,

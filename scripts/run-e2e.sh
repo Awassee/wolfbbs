@@ -17,10 +17,30 @@ web_e2e_dir="${WOLFBBS_WEB_E2E_DIR:-$ROOT_DIR/e2e/web}"
 node_bin="${WOLFBBS_NODE_BIN:-}"
 npm_bin="${WOLFBBS_NPM_BIN:-}"
 use_existing_web="${WOLFBBS_E2E_USE_EXISTING_WEB:-false}"
+e2e_sqlite_temp_file=""
 
 has_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
+
+pick_free_local_port() {
+  python3 - <<'PY'
+import socket
+
+sock = socket.socket()
+sock.bind(("127.0.0.1", 0))
+print(sock.getsockname()[1])
+sock.close()
+PY
+}
+
+cleanup() {
+  if [[ -n "$e2e_sqlite_temp_file" && -f "$e2e_sqlite_temp_file" ]]; then
+    rm -f "$e2e_sqlite_temp_file"
+  fi
+}
+
+trap cleanup EXIT
 
 run_with_timeout() {
   local seconds="$1"
@@ -349,7 +369,7 @@ ensure_base_url_for_mirror() {
 
 seed_web_e2e_credentials() {
   local default_admin_handle="${WOLFBBS_BOOTSTRAP_ADMIN_HANDLE:-sysop}"
-  local default_admin_password="${WOLFBBS_BOOTSTRAP_ADMIN_PASSWORD:-wolfbbs-sysop}"
+  local default_admin_password="${WOLFBBS_BOOTSTRAP_ADMIN_PASSWORD:-password123}"
   local default_user_handle="${WOLFBBS_BOOTSTRAP_USER_HANDLE:-caller}"
   local default_user_password="${WOLFBBS_BOOTSTRAP_USER_PASSWORD:-password123}"
   export WOLFBBS_E2E_ADMIN_HANDLE="${WOLFBBS_E2E_ADMIN_HANDLE:-$default_admin_handle}"
@@ -360,6 +380,25 @@ seed_web_e2e_credentials() {
   export WOLFBBS_E2E_IRC_PASS="${WOLFBBS_E2E_IRC_PASS:-$WOLFBBS_E2E_USER_PASSWORD}"
   export WOLFBBS_E2E_IRC_PORT="${WOLFBBS_E2E_IRC_PORT:-${WOLFBBS_IRC_PORT:-6667}}"
   echo "Web e2e auth defaults: admin=${WOLFBBS_E2E_ADMIN_HANDLE} user=${WOLFBBS_E2E_USER_HANDLE}"
+}
+
+seed_web_e2e_runtime_paths() {
+  if [[ -n "${WOLFBBS_E2E_BASE_URL:-}" ]]; then
+    return 0
+  fi
+  if [[ -z "${WOLFBBS_E2E_LOCAL_WEB_PORT:-}" ]]; then
+    export WOLFBBS_E2E_LOCAL_WEB_PORT="$(pick_free_local_port)"
+    echo "Using isolated Playwright web port: ${WOLFBBS_E2E_LOCAL_WEB_PORT}"
+  fi
+  if [[ -n "${WOLFBBS_E2E_SQLITE_PATH:-}" ]]; then
+    return 0
+  fi
+  e2e_sqlite_temp_file="$(mktemp "${TMPDIR:-/tmp}/wolfbbs-playwright-e2e.XXXXXX")"
+  export WOLFBBS_E2E_SQLITE_PATH="$e2e_sqlite_temp_file"
+  if [[ -z "${WOLFBBS_E2E_DATABASE_URL:-}" ]]; then
+    export WOLFBBS_E2E_DATABASE_URL="sqlite://${WOLFBBS_E2E_SQLITE_PATH}"
+  fi
+  echo "Using isolated Playwright sqlite path: ${WOLFBBS_E2E_SQLITE_PATH}"
 }
 
 usage() {
@@ -474,6 +513,7 @@ if [[ "$run_web" == "true" ]]; then
     fi
   fi
   seed_web_e2e_credentials
+  seed_web_e2e_runtime_paths
   local_node_major="$(detect_node_major "$node_bin")"
   echo "Web e2e node toolchain: node=${node_bin} npm=${npm_bin} (major=${local_node_major})"
   echo "Web e2e working directory: ${web_e2e_dir}"

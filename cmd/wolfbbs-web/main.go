@@ -232,8 +232,11 @@ type directoryRow struct {
 	Theme     string
 	LastLogin string
 	Online    bool
+	Node      string
+	Idle      string
 	Area      string
 	Origin    string
+	From      string
 }
 
 type directoryProfile struct {
@@ -243,8 +246,11 @@ type directoryProfile struct {
 	Verified         bool
 	LastLogin        string
 	Online           bool
+	OnlineNode       string
+	OnlineIdle       string
 	OnlineArea       string
 	OnlineOrigin     string
+	OnlineFrom       string
 	Posts            int
 	Mentions         int
 	Replies          int
@@ -265,6 +271,25 @@ type messageSearchHit struct {
 	AuthorID   int64
 	CreatedAt  string
 	Snippet    string
+}
+
+type bookmarkEntry struct {
+	Key       string    `json:"key"`
+	Kind      string    `json:"kind"`
+	Label     string    `json:"label"`
+	Href      string    `json:"href"`
+	Meta      string    `json:"meta,omitempty"`
+	BoardID   int64     `json:"board_id,omitempty"`
+	MessageID int64     `json:"message_id,omitempty"`
+	MailID    int64     `json:"mail_id,omitempty"`
+	AddedAt   time.Time `json:"added_at"`
+}
+
+type tournamentStandingRow struct {
+	Rank     int
+	DoorName string
+	Handle   string
+	Score    int64
 }
 
 type newFilesSnapshot struct {
@@ -337,6 +362,25 @@ type firstCallSnapshot struct {
 	MailDone        bool
 	HomeDone        bool
 	Tasks           []onboardingTask
+}
+
+type digestPreferences struct {
+	Enabled       bool `json:"enabled"`
+	MaxItems      int  `json:"max_items"`
+	IncludeEvents bool `json:"include_events"`
+	IncludeBoards bool `json:"include_boards"`
+}
+
+type fileReviewItem struct {
+	FileID     int64     `json:"file_id"`
+	AreaID     int64     `json:"area_id"`
+	Name       string    `json:"name"`
+	Status     string    `json:"status"`
+	Notes      string    `json:"notes,omitempty"`
+	Uploader   string    `json:"uploader,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	ReviewedAt time.Time `json:"reviewed_at,omitempty"`
+	ReviewedBy string    `json:"reviewed_by,omitempty"`
 }
 
 type launchCheckpoint struct {
@@ -431,6 +475,9 @@ const (
 	sysSettingAttentionReadRoot      = "web.attention.read."
 	sysSettingLaunchChecklistRoot    = "web.launch_checklist."
 	sysSettingHomeRouteRoot          = "web.home_route."
+	sysSettingDigestPrefsRoot        = "web.digest_prefs."
+	sysSettingBookmarksRoot          = "web.bookmarks."
+	sysSettingFileReviewQueue        = "web.file_review.queue"
 	maxAdminErrorEntries             = 300
 	maxActivityPubInboxBytes         = 1 << 20
 	maxJSONRequestBytes              = 1 << 20
@@ -441,6 +488,14 @@ const (
 	defaultResetRateWindow           = 30 * time.Minute
 	maxAttentionDismissedItems       = 200
 	maxAttentionReadItems            = 300
+	maxBookmarkItems                 = 200
+	maxHandleSuggestions             = 8
+)
+
+const (
+	fileReviewHold     = "hold"
+	fileReviewApproved = "approved"
+	fileReviewRejected = "rejected"
 )
 
 type webApp struct {
@@ -748,7 +803,9 @@ func main() {
 	http.HandleFunc("/start", app.handleStartCenter)
 	http.Handle("/first-call", app.authRequired(http.HandlerFunc(app.handleFirstCallSession)))
 	http.Handle("/today", app.authRequired(http.HandlerFunc(app.handleToday)))
+	http.Handle("/digest", app.authRequired(http.HandlerFunc(app.handleDigest)))
 	http.HandleFunc("/events", app.handleEventsCalendar)
+	http.HandleFunc("/tournaments", app.handleTournaments)
 	http.HandleFunc("/connect", app.handleConnect)
 	http.HandleFunc("/tour", app.handleGuestTour)
 	http.HandleFunc("/login", app.handleLogin)
@@ -761,6 +818,7 @@ func main() {
 	http.HandleFunc("/ap/users/", app.handleActivityPubUsers)
 	http.Handle("/boards", app.authRequired(http.HandlerFunc(app.handleBoards)))
 	http.Handle("/mail", app.authRequired(http.HandlerFunc(app.handleMail)))
+	http.Handle("/bookmarks", app.authRequired(http.HandlerFunc(app.handleBookmarks)))
 	http.Handle("/settings", app.authRequired(http.HandlerFunc(app.handleSettings)))
 	http.Handle("/status", app.authRequired(http.HandlerFunc(app.handleStatusCenter)))
 	http.Handle("/statusz", app.authRequired(http.HandlerFunc(app.handleStatusJSON)))
@@ -802,6 +860,7 @@ func main() {
 	http.Handle("/chat/history", app.authRequired(http.HandlerFunc(app.handleChatHistory)))
 	http.Handle("/chat/online", app.authRequired(http.HandlerFunc(app.handleChatOnline)))
 	http.Handle("/chat/moderation", app.mustBeRole(roleModerator, http.HandlerFunc(app.handleChatModeration)))
+	http.Handle("/handles/suggest", app.authRequired(http.HandlerFunc(app.handleHandleSuggestions)))
 	http.Handle("/gateway", app.authRequired(http.HandlerFunc(app.handleGateway)))
 	http.HandleFunc("/mail/inbound", app.handleMailInbound)
 	http.HandleFunc("/healthz", app.handleHealthz)
@@ -878,6 +937,8 @@ func normalizeHomeRoute(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "/today":
 		return "/today"
+	case "/digest":
+		return "/digest"
 	case "/boards":
 		return "/boards"
 	case "/chat":
@@ -895,6 +956,7 @@ func homeRouteOptionRows(current string) string {
 		Label string
 	}{
 		{Value: "/today", Label: "/today"},
+		{Value: "/digest", Label: "/digest"},
 		{Value: "/boards", Label: "/boards"},
 		{Value: "/chat", Label: "/chat"},
 		{Value: "/doors", Label: "/doors"},
@@ -931,6 +993,449 @@ func (a *webApp) persistHomeRoute(handle, route string) {
 		return
 	}
 	a.persistSystemSetting(key, normalizeHomeRoute(route))
+}
+
+func digestPreferencesSettingKey(handle string) string {
+	handle = normalizeHandleKey(handle)
+	if handle == "" {
+		return ""
+	}
+	return sysSettingDigestPrefsRoot + handle
+}
+
+func defaultDigestPreferences() digestPreferences {
+	return digestPreferences{
+		Enabled:       false,
+		MaxItems:      12,
+		IncludeEvents: true,
+		IncludeBoards: true,
+	}
+}
+
+func normalizeDigestPreferences(pref digestPreferences) digestPreferences {
+	if pref.MaxItems < 6 {
+		pref.MaxItems = 6
+	}
+	if pref.MaxItems > 24 {
+		pref.MaxItems = 24
+	}
+	return pref
+}
+
+func (a *webApp) loadDigestPreferences(handle string) digestPreferences {
+	pref := defaultDigestPreferences()
+	if a.adminRepo == nil {
+		return pref
+	}
+	key := digestPreferencesSettingKey(handle)
+	if key == "" {
+		return pref
+	}
+	raw, err := a.adminRepo.GetSystemSetting(key)
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return pref
+	}
+	if err := json.Unmarshal([]byte(raw), &pref); err != nil {
+		a.addAppError("digest.preferences", fmt.Errorf("decode digest preferences for %s: %w", handle, err))
+		return defaultDigestPreferences()
+	}
+	return normalizeDigestPreferences(pref)
+}
+
+func (a *webApp) persistDigestPreferences(handle string, pref digestPreferences) {
+	key := digestPreferencesSettingKey(handle)
+	if key == "" {
+		return
+	}
+	pref = normalizeDigestPreferences(pref)
+	raw, err := json.Marshal(pref)
+	if err != nil {
+		a.addAppError("digest.preferences", fmt.Errorf("encode digest preferences for %s: %w", handle, err))
+		return
+	}
+	a.persistSystemSetting(key, string(raw))
+}
+
+func bookmarkSettingKey(handle string) string {
+	handle = normalizeHandleKey(handle)
+	if handle == "" {
+		return ""
+	}
+	return sysSettingBookmarksRoot + handle
+}
+
+func normalizeBookmarkEntry(entry bookmarkEntry) (bookmarkEntry, bool) {
+	entry.Kind = strings.ToLower(strings.TrimSpace(entry.Kind))
+	entry.Label = strings.TrimSpace(entry.Label)
+	entry.Href = strings.TrimSpace(entry.Href)
+	entry.Meta = strings.TrimSpace(entry.Meta)
+	switch entry.Kind {
+	case "board_message":
+		if entry.MessageID <= 0 {
+			return bookmarkEntry{}, false
+		}
+		entry.Key = "board:" + strconv.FormatInt(entry.MessageID, 10)
+		if entry.Href == "" {
+			if entry.BoardID > 0 {
+				entry.Href = fmt.Sprintf("/boards?board=%d&id=%d", entry.BoardID, entry.MessageID)
+			} else {
+				entry.Href = "/boards?id=" + strconv.FormatInt(entry.MessageID, 10)
+			}
+		}
+	case "mail":
+		if entry.MailID <= 0 {
+			return bookmarkEntry{}, false
+		}
+		entry.Key = "mail:" + strconv.FormatInt(entry.MailID, 10)
+		if entry.Href == "" {
+			entry.Href = "/mail?id=" + strconv.FormatInt(entry.MailID, 10)
+		}
+	default:
+		return bookmarkEntry{}, false
+	}
+	if entry.Label == "" {
+		entry.Label = entry.Key
+	}
+	if entry.AddedAt.IsZero() {
+		entry.AddedAt = time.Now().UTC()
+	}
+	return entry, true
+}
+
+func (a *webApp) loadBookmarks(handle string) []bookmarkEntry {
+	if a.adminRepo == nil {
+		return nil
+	}
+	key := bookmarkSettingKey(handle)
+	if key == "" {
+		return nil
+	}
+	raw, err := a.adminRepo.GetSystemSetting(key)
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var decoded []bookmarkEntry
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		a.addAppError("bookmarks", fmt.Errorf("decode bookmarks for %s: %w", handle, err))
+		return nil
+	}
+	out := make([]bookmarkEntry, 0, len(decoded))
+	for _, row := range decoded {
+		if normalized, ok := normalizeBookmarkEntry(row); ok {
+			out = append(out, normalized)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].AddedAt.Equal(out[j].AddedAt) {
+			return out[i].Key < out[j].Key
+		}
+		return out[i].AddedAt.After(out[j].AddedAt)
+	})
+	if len(out) > maxBookmarkItems {
+		out = out[:maxBookmarkItems]
+	}
+	return out
+}
+
+func (a *webApp) persistBookmarks(handle string, rows []bookmarkEntry) {
+	key := bookmarkSettingKey(handle)
+	if key == "" {
+		return
+	}
+	clean := make([]bookmarkEntry, 0, len(rows))
+	seen := map[string]struct{}{}
+	for _, row := range rows {
+		normalized, ok := normalizeBookmarkEntry(row)
+		if !ok {
+			continue
+		}
+		if _, exists := seen[normalized.Key]; exists {
+			continue
+		}
+		seen[normalized.Key] = struct{}{}
+		clean = append(clean, normalized)
+	}
+	sort.Slice(clean, func(i, j int) bool {
+		if clean[i].AddedAt.Equal(clean[j].AddedAt) {
+			return clean[i].Key < clean[j].Key
+		}
+		return clean[i].AddedAt.After(clean[j].AddedAt)
+	})
+	if len(clean) > maxBookmarkItems {
+		clean = clean[:maxBookmarkItems]
+	}
+	body := ""
+	if len(clean) > 0 {
+		raw, err := json.Marshal(clean)
+		if err != nil {
+			a.addAppError("bookmarks", fmt.Errorf("encode bookmarks for %s: %w", handle, err))
+			return
+		}
+		body = string(raw)
+	}
+	a.persistSystemSetting(key, body)
+}
+
+func (a *webApp) hasBookmark(handle, key string) bool {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return false
+	}
+	for _, row := range a.loadBookmarks(handle) {
+		if row.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *webApp) addBookmark(handle string, entry bookmarkEntry) {
+	normalized, ok := normalizeBookmarkEntry(entry)
+	if !ok {
+		return
+	}
+	rows := a.loadBookmarks(handle)
+	next := make([]bookmarkEntry, 0, len(rows)+1)
+	next = append(next, normalized)
+	for _, row := range rows {
+		if row.Key == normalized.Key {
+			continue
+		}
+		next = append(next, row)
+	}
+	a.persistBookmarks(handle, next)
+}
+
+func (a *webApp) removeBookmark(handle, key string) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return
+	}
+	rows := a.loadBookmarks(handle)
+	if len(rows) == 0 {
+		return
+	}
+	next := make([]bookmarkEntry, 0, len(rows))
+	for _, row := range rows {
+		if row.Key != key {
+			next = append(next, row)
+		}
+	}
+	a.persistBookmarks(handle, next)
+}
+
+func (a *webApp) suggestHandles(query, exclude string, limit int) []string {
+	if limit <= 0 {
+		limit = maxHandleSuggestions
+	}
+	users, err := a.authSvc.ListUsers()
+	if err != nil {
+		return nil
+	}
+	query = strings.ToLower(strings.TrimSpace(query))
+	exclude = strings.ToLower(strings.TrimSpace(exclude))
+	prefix := make([]string, 0, limit)
+	contains := make([]string, 0, limit)
+	for _, row := range users {
+		if !row.Enabled || row.Banned {
+			continue
+		}
+		handle := strings.TrimSpace(row.Handle)
+		if handle == "" {
+			continue
+		}
+		lower := strings.ToLower(handle)
+		if lower == exclude {
+			continue
+		}
+		if query == "" {
+			prefix = append(prefix, handle)
+		} else if strings.HasPrefix(lower, query) {
+			prefix = append(prefix, handle)
+		} else if strings.Contains(lower, query) {
+			contains = append(contains, handle)
+		}
+	}
+	sort.Slice(prefix, func(i, j int) bool { return strings.ToLower(prefix[i]) < strings.ToLower(prefix[j]) })
+	sort.Slice(contains, func(i, j int) bool { return strings.ToLower(contains[i]) < strings.ToLower(contains[j]) })
+	out := append(prefix, contains...)
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+func (a *webApp) boardBookmarkEntry(msg *domain.Message, board *domain.Board) bookmarkEntry {
+	if msg == nil {
+		return bookmarkEntry{}
+	}
+	boardID := msg.BoardID
+	boardName := "Board " + strconv.FormatInt(boardID, 10)
+	if board != nil {
+		boardID = board.ID
+		if strings.TrimSpace(board.Name) != "" {
+			boardName = board.Name
+		}
+	}
+	handle := a.userHandleLookup()[msg.AuthorID]
+	if handle == "" {
+		handle = "#" + strconv.FormatInt(msg.AuthorID, 10)
+	}
+	return bookmarkEntry{
+		Kind:      "board_message",
+		BoardID:   boardID,
+		MessageID: msg.ID,
+		Label:     defaultIfBlank(strings.TrimSpace(msg.Subject), "Message #"+strconv.FormatInt(msg.ID, 10)),
+		Meta:      boardName + " • " + handle + " • " + msg.CreatedAt.Local().Format("2006-01-02 15:04"),
+		Href:      fmt.Sprintf("/boards?board=%d&id=%d", boardID, msg.ID),
+		AddedAt:   time.Now().UTC(),
+	}
+}
+
+func (a *webApp) mailBookmarkEntry(item *domain.PrivateMail, current *domain.User) bookmarkEntry {
+	if item == nil {
+		return bookmarkEntry{}
+	}
+	handleByID := a.userHandleLookup()
+	other := handleByID[item.FromUserID]
+	if current != nil && item.FromUserID == current.ID {
+		if item.ExternalTo != nil && strings.TrimSpace(*item.ExternalTo) != "" {
+			other = strings.TrimSpace(*item.ExternalTo)
+		} else if handleByID[item.ToUserID] != "" {
+			other = handleByID[item.ToUserID]
+		}
+	}
+	if other == "" {
+		other = "mail"
+	}
+	return bookmarkEntry{
+		Kind:    "mail",
+		MailID:  item.ID,
+		Label:   defaultIfBlank(strings.TrimSpace(item.Subject), "Mail #"+strconv.FormatInt(item.ID, 10)),
+		Meta:    other + " • " + item.CreatedAt.Local().Format("2006-01-02 15:04"),
+		Href:    "/mail?id=" + strconv.FormatInt(item.ID, 10),
+		AddedAt: time.Now().UTC(),
+	}
+}
+
+func normalizeFileReviewStatus(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case fileReviewApproved:
+		return fileReviewApproved
+	case fileReviewRejected:
+		return fileReviewRejected
+	default:
+		return fileReviewHold
+	}
+}
+
+func (a *webApp) loadFileReviewQueue() map[int64]fileReviewItem {
+	out := map[int64]fileReviewItem{}
+	if a.adminRepo == nil {
+		return out
+	}
+	raw, err := a.adminRepo.GetSystemSetting(sysSettingFileReviewQueue)
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return out
+	}
+	decoded := map[string]fileReviewItem{}
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		a.addAppError("file.review", fmt.Errorf("decode file review queue: %w", err))
+		return out
+	}
+	for rawID, row := range decoded {
+		fileID, err := strconv.ParseInt(strings.TrimSpace(rawID), 10, 64)
+		if err != nil || fileID <= 0 {
+			continue
+		}
+		row.FileID = fileID
+		row.Status = normalizeFileReviewStatus(row.Status)
+		out[fileID] = row
+	}
+	return out
+}
+
+func (a *webApp) persistFileReviewQueue(rows map[int64]fileReviewItem) {
+	encoded := map[string]fileReviewItem{}
+	for fileID, row := range rows {
+		if fileID <= 0 {
+			continue
+		}
+		row.FileID = fileID
+		row.Status = normalizeFileReviewStatus(row.Status)
+		encoded[strconv.FormatInt(fileID, 10)] = row
+	}
+	body := ""
+	if len(encoded) > 0 {
+		raw, err := json.Marshal(encoded)
+		if err != nil {
+			a.addAppError("file.review", fmt.Errorf("encode file review queue: %w", err))
+			return
+		}
+		body = string(raw)
+	}
+	a.persistSystemSetting(sysSettingFileReviewQueue, body)
+}
+
+func (a *webApp) setFileReviewItem(item fileReviewItem) {
+	if item.FileID <= 0 {
+		return
+	}
+	rows := a.loadFileReviewQueue()
+	item.Status = normalizeFileReviewStatus(item.Status)
+	rows[item.FileID] = item
+	a.persistFileReviewQueue(rows)
+}
+
+func (a *webApp) removeFileReviewItem(fileID int64) {
+	if fileID <= 0 {
+		return
+	}
+	rows := a.loadFileReviewQueue()
+	delete(rows, fileID)
+	a.persistFileReviewQueue(rows)
+}
+
+func (a *webApp) fileReviewItem(fileID int64) (fileReviewItem, bool) {
+	if fileID <= 0 {
+		return fileReviewItem{}, false
+	}
+	row, ok := a.loadFileReviewQueue()[fileID]
+	return row, ok
+}
+
+func (a *webApp) reviewStatusLabel(fileID int64) string {
+	row, ok := a.fileReviewItem(fileID)
+	if !ok {
+		return "live"
+	}
+	return row.Status
+}
+
+func (a *webApp) fileVisibleToCallers(fileID int64) bool {
+	row, ok := a.fileReviewItem(fileID)
+	if !ok {
+		return true
+	}
+	switch row.Status {
+	case fileReviewHold, fileReviewRejected:
+		return false
+	default:
+		return true
+	}
+}
+
+func (a *webApp) filterVisibleFiles(rows []domain.FileEntry) []domain.FileEntry {
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]domain.FileEntry, 0, len(rows))
+	for _, row := range rows {
+		if a.fileVisibleToCallers(row.ID) {
+			out = append(out, row)
+		}
+	}
+	return out
 }
 
 func (a *webApp) preferredHomeRoute(user *domain.User) string {
@@ -1746,16 +2251,16 @@ func (a *webApp) handleAttentionCenter(w http.ResponseWriter, r *http.Request) {
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(upcomingEvents)) + `</strong><span>upcoming events</span></article>
 </section>
 <section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Work top-down</strong><p>Direct replies and mentions should be handled first because they are the clearest pending obligation.</p></article><article class="wolfbbs-helper-card"><strong>Unread mail is private follow-up</strong><p>Use inbox for direct conversation, then return to boards when the topic belongs in public.</p></article><article class="wolfbbs-helper-card"><strong>Use tiers deliberately</strong><p>The board pulse is showing ` + htmlEscape(trackedLabel) + `. Watch boards surface here, digest boards stay in <a href="/today">/today</a>, and mute hides noise.</p></article></section>
-<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Queue Actions</h2><div class="wolfbbs-inline-actions"><form method="POST" action="/attention"><input type="hidden" name="action" value="mark_all_read">` + csrf + `<button type="submit">Mark Current Attention Read</button></form><form method="POST" action="/attention"><input type="hidden" name="action" value="mark_all_mail_read">` + csrf + `<button type="submit">Mark All Mail Read</button></form><form method="POST" action="/attention"><input type="hidden" name="action" value="clear_dismissed">` + csrf + `<button type="submit">Restore Dismissed Items</button></form><a href="/discover">Open Full Discover Feed</a></div></article></section>
+<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Queue Actions</h2><div class="wolfbbs-inline-actions"><form method="POST" action="/attention"><input type="hidden" name="action" value="mark_all_read">` + csrf + `<button type="submit">Mark Current Attention Read</button></form><form method="POST" action="/attention"><input type="hidden" name="action" value="mark_all_mail_read">` + csrf + `<button type="submit">Mark All Mail Read</button></form><form method="POST" action="/attention"><input type="hidden" name="action" value="clear_dismissed">` + csrf + `<button type="submit">Restore Dismissed Items</button></form><a class="wolfbbs-filter-reset" href="/discover">Open Full Discover Feed</a></div></article></section>
 <section class="wolfbbs-grid">
-<article><h2>Direct Follow-Up</h2><ul>` + directList + `</ul><p><a href="/boards?mode=mentions">Mentions queue</a> | <a href="/boards?mode=mine">Your threads</a></p></article>
-<article><h2>Inbox Needs Action</h2><ul>` + inboxList.String() + `</ul><p><a href="/mail?box=unread">Open unread mail</a> | <a href="/mail">Compose</a></p></article>
+<article class="wolfbbs-card"><h2>Direct Follow-Up</h2><ul class="wolfbbs-list-clean">` + directList + `</ul><p><a href="/boards?mode=mentions">Mentions queue</a> | <a href="/boards?mode=mine">Your threads</a></p></article>
+<article class="wolfbbs-card"><h2>Inbox Needs Action</h2><ul class="wolfbbs-list-clean">` + inboxList.String() + `</ul><p><a href="/mail?box=unread">Open unread mail</a> | <a href="/mail">Compose</a></p></article>
 </section>
 <section class="wolfbbs-grid">
-<article><h2>Watch Tier Board Pulse</h2><ul>` + boardList + `</ul><p><a href="/boards?mode=watched">Watch tier</a> | <a href="/boards?mode=digest">Digest tier</a> | <a href="/boards?mode=unread">Unread board scan</a></p></article>
-<article><h2>Community Calendar</h2><ul>` + eventList.String() + `</ul><p><a href="/events">Open calendar</a> | <a href="/today">Open today brief</a></p></article>
+<article class="wolfbbs-card"><h2>Watch Tier Board Pulse</h2><ul class="wolfbbs-list-clean">` + boardList + `</ul><p><a href="/boards?mode=watched">Watch tier</a> | <a href="/boards?mode=digest">Digest tier</a> | <a href="/boards?mode=unread">Unread board scan</a></p></article>
+<article class="wolfbbs-card"><h2>Community Calendar</h2><ul class="wolfbbs-list-clean">` + eventList.String() + `</ul><p><a href="/events">Open calendar</a> | <a href="/today">Open today brief</a></p></article>
 </section>
-<section class="wolfbbs-grid"><article><h2>Unread Notification Feed</h2><ul>` + discoveryList + `</ul><p><a href="/discover">Open full discover feed</a></p></article><article><h2>Seen This Cycle</h2><ul>` + seenList + `</ul><p>Read items stay out of your way until the board moves again.</p></article></section>
+<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Unread Notification Feed</h2><ul class="wolfbbs-list-clean">` + discoveryList + `</ul><p><a href="/discover">Open full discover feed</a></p></article><article class="wolfbbs-card"><h2>Seen This Cycle</h2><ul class="wolfbbs-list-clean">` + seenList + `</ul><p>Read items stay out of your way until the board moves again.</p></article></section>
 </body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -2042,7 +2547,7 @@ func (a *webApp) handleToday(w http.ResponseWriter, r *http.Request) {
 	}
 
 	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Today Brief</title></head><body>
-<p><a href="/start">start</a> | <a href="/attention">attention</a> | <a href="/boards">boards</a> | <a href="/events">events</a> | <a href="/mail">mail</a> | <a href="/radar">radar</a> | <a href="/doors">doors</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
+<p><a href="/start">start</a> | <a href="/attention">attention</a> | <a href="/digest">digest</a> | <a href="/boards">boards</a> | <a href="/events">events</a> | <a href="/tournaments">tournaments</a> | <a href="/mail">mail</a> | <a href="/radar">radar</a> | <a href="/doors">doors</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
 ` + pageMessageBlock(r) + `
 <h1>Today Brief</h1>
 <p>One screen for the daily caller loop: immediate follow-up, subscription-tier board movement, upcoming events, and the best next route.</p>
@@ -2055,16 +2560,106 @@ func (a *webApp) handleToday(w http.ResponseWriter, r *http.Request) {
 <article class="wolfbbs-kpi-card"><strong>` + htmlEscape(recommendedDoor) + `</strong><span>recommended door</span></article>
 </section>
 ` + onboardingBlock + `
-<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Use Today first</strong><p>Start here when you want the shortest path through what changed.</p></article><article class="wolfbbs-helper-card"><strong>Subscription tiers matter</strong><p>Watch boards escalate into Attention Center, digest boards land here, and mute hides a board from routine loops without unsubscribing from it permanently.</p></article><article class="wolfbbs-helper-card"><strong>Events give callers a reason to return</strong><p>Use <a href="/events">/events</a> for the public calendar and <a href="/admin/events">/admin/events</a> to schedule recurring rhythms.</p></article></section>
+<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Use Today first</strong><p>Start here when you want the shortest path through what changed.</p></article><article class="wolfbbs-helper-card"><strong>Subscription tiers matter</strong><p>Watch boards escalate into Attention Center, digest boards land here, and mute hides a board from routine loops without unsubscribing from it permanently.</p></article><article class="wolfbbs-helper-card"><strong>Events give callers a reason to return</strong><p>Use <a href="/events">/events</a> for the public calendar, <a href="/tournaments">/tournaments</a> for competitive nights, and <a href="/admin/events">/admin/events</a> to schedule recurring rhythms.</p></article></section>
 <section class="wolfbbs-grid">
-<article class="wolfbbs-card"><h2>Needs Response</h2><ul>` + nextRows.String() + `</ul><p><a href="/attention">Open Attention Center</a> | <a href="/discover">Open Discover</a></p></article>
-<article class="wolfbbs-card"><h2>Community Calendar</h2><ul>` + eventRows.String() + `</ul><p><a href="/events">Open full calendar</a></p></article>
+<article class="wolfbbs-card"><h2>Needs Response</h2><ul class="wolfbbs-list-clean">` + nextRows.String() + `</ul><p><a href="/attention">Open Attention Center</a> | <a href="/discover">Open Discover</a></p></article>
+<article class="wolfbbs-card"><h2>Community Calendar</h2><ul class="wolfbbs-list-clean">` + eventRows.String() + `</ul><p><a href="/events">Open full calendar</a></p></article>
 </section>
 <section class="wolfbbs-grid">
 <article class="wolfbbs-card"><h2>Watch Tier Boards</h2><p class="wolfbbs-muted">Currently showing ` + htmlEscape(trackedLabel) + `.</p><table border="1"><tr><th>Board</th><th>Conf</th><th>New</th><th>Total</th><th>Last</th><th>Last subject</th></tr>` + boardRows.String() + `</table></article>
 <article class="wolfbbs-card"><h2>Digest Tier Boards</h2><p class="wolfbbs-muted">Lower urgency subscriptions stay here instead of interrupting Attention Center.</p><table border="1"><tr><th>Board</th><th>New</th><th>Last</th><th>Last subject</th></tr>` + digestRows.String() + `</table></article>
 </section>
-<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Next Move</h2><ul><li><a href="/mail">Mail</a> if you need private follow-up.</li><li><a href="/boards?mode=watched">Watch tier</a> when you want threaded catch-up.</li><li><a href="/boards?mode=digest">Digest tier</a> when you want low-noise board scanning.</li><li><a href="/doors?mode=recommended">Doors</a> when you want a quick return loop.</li><li><a href="/chat">Chat</a> when the conversation should be live.</li></ul></article></section>
+<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Next Move</h2><ul><li><a href="/mail">Mail</a> if you need private follow-up.</li><li><a href="/boards?mode=watched">Watch tier</a> when you want threaded catch-up.</li><li><a href="/boards?mode=digest">Digest tier</a> when you want low-noise board scanning.</li><li><a href="/digest">Daily Digest</a> when you want the lower-noise web summary.</li><li><a href="/doors?mode=recommended">Doors</a> when you want a quick return loop.</li><li><a href="/chat">Chat</a> when the conversation should be live.</li></ul></article></section>
+</body></html>`
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(page))
+}
+
+func (a *webApp) handleDigest(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	pref := a.loadDigestPreferences(user.Handle)
+	digest, err := discovery.BuildSinceLastCall(a.boardRepo, a.msgRepo, a.mailRepo, user, pref.MaxItems)
+	if err != nil {
+		http.Error(w, "digest unavailable", http.StatusInternalServerError)
+		return
+	}
+	visibleBoards := a.visibleBoardsFor(user)
+	digestBoards := []boardPulseRow{}
+	if pref.IncludeBoards {
+		digestBoards = a.buildBoardPulse(user, filterBoardsByWatch(visibleBoards, a.boardSubscriptionIDs(user.Handle, boardSubscriptionDigest)), 8)
+	}
+	upcoming := []communityEvent{}
+	if pref.IncludeEvents {
+		upcoming = a.upcomingCommunityEvents(8, time.Now().UTC())
+	}
+	itemRows := strings.Builder{}
+	for _, row := range digest.Items {
+		href := "/mail"
+		if row.BoardID > 0 {
+			href = "/boards?board=" + strconv.FormatInt(row.BoardID, 10)
+			if row.MessageID > 0 {
+				href += "&id=" + strconv.FormatInt(row.MessageID, 10)
+			}
+		}
+		itemRows.WriteString(`<li><a href="` + htmlEscape(href) + `">` + htmlEscape(row.Line) + `</a></li>`)
+	}
+	if itemRows.Len() == 0 {
+		itemRows.WriteString(`<li>No direct follow-up accumulated since your last call.</li>`)
+	}
+	boardRows := strings.Builder{}
+	for _, row := range digestBoards {
+		boardRows.WriteString(`<tr><td><a href="/boards?board=` + strconv.FormatInt(row.BoardID, 10) + `">` + htmlEscape(row.BoardName) + `</a></td><td>` + strconv.Itoa(row.NewCount) + `</td><td>` + htmlEscape(row.LastAt) + `</td><td>` + htmlEscape(row.LastSubject) + `</td></tr>`)
+	}
+	if boardRows.Len() == 0 {
+		if pref.IncludeBoards {
+			boardRows.WriteString(`<tr><td colspan="4">No digest-tier board movement right now.</td></tr>`)
+		} else {
+			boardRows.WriteString(`<tr><td colspan="4">Digest-tier boards are disabled in your preferences.</td></tr>`)
+		}
+	}
+	eventRows := strings.Builder{}
+	for _, row := range upcoming {
+		eventRows.WriteString(`<li><strong>` + htmlEscape(row.Title) + `</strong> <span class="wolfbbs-muted">` + htmlEscape(formatCommunityEventWindow(row)) + `</span></li>`)
+	}
+	if eventRows.Len() == 0 {
+		if pref.IncludeEvents {
+			eventRows.WriteString(`<li>No scheduled events in the current digest window.</li>`)
+		} else {
+			eventRows.WriteString(`<li>Event reminders are disabled in your digest preferences.</li>`)
+		}
+	}
+	stateLabel := "preview only"
+	if pref.Enabled {
+		stateLabel = "active"
+	}
+	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Daily Digest</title></head><body>
+<p><a href="/start">start</a> | <a href="/today">today</a> | <a href="/attention">attention</a> | <a href="/boards">boards</a> | <a href="/events">events</a> | <a href="/settings">settings</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
+` + pageMessageBlock(r) + `
+<h1>Daily Digest</h1>
+<p>Low-noise web summary for callers who want a deliberate once-per-day scan instead of route-hopping.</p>
+<section class="wolfbbs-kpi-grid">
+<article class="wolfbbs-kpi-card"><strong>` + htmlEscape(stateLabel) + `</strong><span>digest mode</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(digest.Items)) + `</strong><span>follow-up items</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(digestBoards)) + `</strong><span>digest boards</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(upcoming)) + `</strong><span>event reminders</span></article>
+</section>
+<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Web digest is ` + htmlEscape(stateLabel) + `</strong><p>Use <a href="/settings">/settings</a> to choose whether this stays as an explicit opt-in surface.</p></article><article class="wolfbbs-helper-card"><strong>Use this for low-noise loops</strong><p>Attention Center is still the place for urgent replies and mentions. Digest is the calmer summary.</p></article><article class="wolfbbs-helper-card"><strong>Subscription tiers shape this page</strong><p>Digest-tier boards land here while watch-tier boards stay in <a href="/today">/today</a> and <a href="/attention">/attention</a>.</p></article></section>
+<section class="wolfbbs-grid">
+<article class="wolfbbs-card"><h2>Direct Follow-Up</h2><ul class="wolfbbs-list-clean">` + itemRows.String() + `</ul></article>
+<article class="wolfbbs-card"><h2>Event Reminders</h2><ul class="wolfbbs-list-clean">` + eventRows.String() + `</ul><p><a href="/events">Full calendar</a> | <a href="/tournaments">Tournament Center</a></p></article>
+</section>
+<section class="wolfbbs-grid">
+<article class="wolfbbs-card"><h2>Digest Tier Boards</h2><table border="1"><tr><th>Board</th><th>New</th><th>Last</th><th>Last subject</th></tr>` + boardRows.String() + `</table></article>
+<article class="wolfbbs-card"><h2>Next Move</h2><ul><li><a href="/attention">Attention Center</a> if something here needs direct response.</li><li><a href="/boards?mode=digest">Digest-tier boards</a> for longer reads.</li><li><a href="/today">Today Brief</a> if you want the full daily loop.</li><li><a href="/settings">Settings</a> to change digest behavior.</li></ul></article>
+</section>
 </body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -2121,9 +2716,104 @@ func (a *webApp) handleEventsCalendar(w http.ResponseWriter, r *http.Request) {
 <h1>Community Calendar</h1>
 <p>Public schedule for nets, tournaments, social calls, and content drops. Use this page to give callers a concrete reason to return.</p>
 <section class="wolfbbs-kpi-grid"><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(upcoming)) + `</strong><span>upcoming events</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(recent)) + `</strong><span>recent events</span></article></section>
-<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Plan against real dates</strong><p>Events work best when they are specific, visible, and easy to join from the board.</p></article><article class="wolfbbs-helper-card"><strong>Use Today for a caller brief</strong><p><a href="/today">/today</a> pulls upcoming events into the daily caller loop after login.</p></article><article class="wolfbbs-helper-card"><strong>Run this like a product</strong><p>Sysops should schedule recurring reasons to return instead of expecting callers to invent their own rhythm.</p></article></section>
+<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Plan against real dates</strong><p>Events work best when they are specific, visible, and easy to join from the board.</p></article><article class="wolfbbs-helper-card"><strong>Use Today for a caller brief</strong><p><a href="/today">/today</a> pulls upcoming events into the daily caller loop after login.</p></article><article class="wolfbbs-helper-card"><strong>Tournaments deserve their own lane</strong><p>Use <a href="/tournaments">/tournaments</a> when you want the competitive schedule separated from general community events.</p></article></section>
 <section><h2>Upcoming Events</h2><div class="wolfbbs-grid">` + renderList(upcoming, "No upcoming events scheduled yet.") + `</div></section>
 <section><h2>Recent Events</h2><div class="wolfbbs-grid">` + renderList(recent, "No recent events yet.") + `</div></section>
+<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Competitive Layer</h2><p>Want bracket nights, score ladders, and door-focused return hooks instead of the full mixed calendar?</p><p><a href="/tournaments">Open Tournament Center</a> | <a href="/scores">Open Door Scores</a></p></article></section>
+</body></html>`
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(page))
+}
+
+func (a *webApp) handleTournaments(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	user, _ := a.currentUser(r)
+	nav := `<a href="/connect">connect</a> | <a href="/tour">tour</a> | <a href="/events">events</a> | <a href="/login">login</a> | <a href="/help">help</a>`
+	if user != nil {
+		nav = `<a href="/start">start</a> | <a href="/today">today</a> | <a href="/events">events</a> | <a href="/doors">doors</a> | <a href="/scores">scores</a> | <a href="/help">help</a> | <a href="/logout">logout</a>`
+		if a.hasRole(user, roleAdmin) {
+			nav = `<a href="/start">start</a> | <a href="/events">events</a> | <a href="/tournaments">tournaments</a> | <a href="/admin/events">admin events</a> | <a href="/scores">scores</a> | <a href="/logout">logout</a>`
+		}
+	}
+	now := time.Now().UTC()
+	filterCategory := func(rows []communityEvent, category string) []communityEvent {
+		out := make([]communityEvent, 0, len(rows))
+		for _, row := range rows {
+			if strings.EqualFold(strings.TrimSpace(row.Category), category) {
+				out = append(out, row)
+			}
+		}
+		return out
+	}
+	upcoming := filterCategory(a.upcomingCommunityEvents(24, now), "tournament")
+	recent := filterCategory(a.recentCommunityEvents(12, now), "tournament")
+	champions := a.buildScoreboardSnapshot(user, "").ChampionRows
+	if len(champions) > 6 {
+		champions = champions[:6]
+	}
+	standings := make([]tournamentStandingRow, 0, len(champions))
+	for idx, row := range champions {
+		standings = append(standings, tournamentStandingRow{
+			Rank:     idx + 1,
+			DoorName: row.DoorName,
+			Handle:   row.Handle,
+			Score:    row.Score,
+		})
+	}
+	renderCards := func(rows []communityEvent, empty string) string {
+		var out strings.Builder
+		for _, row := range rows {
+			link := `<a href="/doors">open doors</a>`
+			if strings.TrimSpace(row.Link) != "" {
+				link = `<a href="` + htmlEscape(strings.TrimSpace(row.Link)) + `">join now</a>`
+			}
+			out.WriteString(`<article class="wolfbbs-card"><h3>` + htmlEscape(row.Title) + `</h3><p class="wolfbbs-muted">` + htmlEscape(formatCommunityEventWindow(row)) + ` | ` + htmlEscape(recurrenceSummary(row)) + `</p><p>` + htmlEscape(cleanOneLiner(row.Description, 220)) + `</p><p><strong>Location:</strong> ` + htmlEscape(defaultIfBlank(row.Location, "Door Cockpit")) + ` | <strong>Host:</strong> ` + htmlEscape(defaultIfBlank(row.Host, "sysop")) + `</p><p>` + link + `</p></article>`)
+		}
+		if out.Len() == 0 {
+			out.WriteString(`<article class="wolfbbs-card"><p>` + htmlEscape(empty) + `</p></article>`)
+		}
+		return out.String()
+	}
+	championRows := strings.Builder{}
+	for _, row := range champions {
+		championRows.WriteString(`<tr><td>` + htmlEscape(row.DoorName) + `</td><td>` + htmlEscape(row.Handle) + `</td><td>` + strconv.FormatInt(row.Score, 10) + `</td><td>` + htmlEscape(row.ScoreType) + `</td></tr>`)
+	}
+	if championRows.Len() == 0 {
+		championRows.WriteString(`<tr><td colspan="4">No tournament-adjacent scores yet.</td></tr>`)
+	}
+	standingRows := strings.Builder{}
+	for _, row := range standings {
+		standingRows.WriteString(`<tr><td>` + strconv.Itoa(row.Rank) + `</td><td>` + htmlEscape(row.DoorName) + `</td><td>` + htmlEscape(row.Handle) + `</td><td>` + strconv.FormatInt(row.Score, 10) + `</td></tr>`)
+	}
+	if standingRows.Len() == 0 {
+		standingRows.WriteString(`<tr><td colspan="4">No standings yet.</td></tr>`)
+	}
+	bracketRows := strings.Builder{}
+	if len(standings) >= 4 {
+		matchups := [][2]tournamentStandingRow{
+			{standings[0], standings[3]},
+			{standings[1], standings[2]},
+		}
+		for idx, row := range matchups {
+			bracketRows.WriteString(`<li>Semifinal ` + strconv.Itoa(idx+1) + `: <strong>#` + strconv.Itoa(row[0].Rank) + ` ` + htmlEscape(row[0].Handle) + `</strong> (` + htmlEscape(row[0].DoorName) + `) vs <strong>#` + strconv.Itoa(row[1].Rank) + ` ` + htmlEscape(row[1].Handle) + `</strong> (` + htmlEscape(row[1].DoorName) + `)</li>`)
+		}
+	} else {
+		bracketRows.WriteString(`<li>Need at least four champion rows before a bracket preview makes sense.</li>`)
+	}
+	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Tournament Center</title></head><body>
+<p>` + nav + `</p>
+` + pageMessageBlock(r) + `
+<h1>Tournament Center</h1>
+<p>Bracket-ready schedule for recurring door nights, ladder events, and score challenges that make callers return on purpose.</p>
+<section class="wolfbbs-kpi-grid"><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(upcoming)) + `</strong><span>upcoming tournaments</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(recent)) + `</strong><span>recent tournament slots</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(champions)) + `</strong><span>current champions</span></article></section>
+<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Run brackets, not vague hype</strong><p>Tournaments should have a real time, a clear host, and a direct join path to the door or chat room.</p></article><article class="wolfbbs-helper-card"><strong>Pair schedule with scoreboards</strong><p>Use <a href="/scores">/scores</a> to make the competitive layer visible before and after the event.</p></article><article class="wolfbbs-helper-card"><strong>Keep the ladder alive</strong><p>Recurring series drive retention better than one-off “come hang out later” announcements.</p></article></section>
+<section><h2>Upcoming Tournaments</h2><div class="wolfbbs-grid">` + renderCards(upcoming, "No tournaments scheduled yet.") + `</div></section>
+<section><h2>Recent Tournament Nights</h2><div class="wolfbbs-grid">` + renderCards(recent, "No recent tournament history yet.") + `</div></section>
+<section><h2>Current Door Champions</h2><table border="1"><tr><th>Door</th><th>Caller</th><th>Score</th><th>Type</th></tr>` + championRows.String() + `</table></section>
+<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Standings Table</h2><table border="1"><tr><th>Rank</th><th>Door</th><th>Caller</th><th>Score</th></tr>` + standingRows.String() + `</table></article><article class="wolfbbs-card"><h2>Bracket Preview</h2><ul>` + bracketRows.String() + `</ul><p class="wolfbbs-muted">This is a lightweight seeding view built from current champions so callers can see how a bracket night would shape up before the event starts.</p></article></section>
 </body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -2140,8 +2830,20 @@ func (a *webApp) handleAdminEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		action := strings.ToLower(strings.TrimSpace(r.FormValue("action")))
+		rows := a.loadCommunityEvents()
 		switch action {
-		case "create":
+		case "create", "update":
+			editID := strings.TrimSpace(r.FormValue("id"))
+			existing := communityEvent{}
+			existingIdx := -1
+			if action == "update" {
+				var found bool
+				existing, existingIdx, found = findCommunityEvent(rows, editID)
+				if !found {
+					redirectWithError(w, r, "/admin/events", "Event not found.")
+					return
+				}
+			}
 			title := strings.TrimSpace(r.FormValue("title"))
 			startsAt, err := parseLocalDateTime(r.FormValue("starts_at"))
 			if title == "" || err != nil {
@@ -2176,11 +2878,9 @@ func (a *webApp) handleAdminEvents(w http.ResponseWriter, r *http.Request) {
 			if recurrence != "" && repeatUntil.IsZero() {
 				repeatUntil = startsAt.Add(90 * 24 * time.Hour)
 			}
-			rows := a.loadCommunityEvents()
-			eventID := randomEventID()
 			row := communityEvent{
-				ID:          eventID,
-				SeriesID:    eventID,
+				ID:          existing.ID,
+				SeriesID:    existing.SeriesID,
 				Title:       title,
 				Category:    normalizeEventCategory(r.FormValue("category")),
 				StartsAt:    startsAt.UTC(),
@@ -2192,19 +2892,38 @@ func (a *webApp) handleAdminEvents(w http.ResponseWriter, r *http.Request) {
 				Audience:    strings.TrimSpace(r.FormValue("audience")),
 				Description: strings.TrimSpace(r.FormValue("description")),
 				Link:        strings.TrimSpace(r.FormValue("link")),
-				CreatedAt:   time.Now().UTC(),
+				CreatedAt:   existing.CreatedAt,
+			}
+			if strings.TrimSpace(row.ID) == "" {
+				row.ID = randomEventID()
+			}
+			if strings.TrimSpace(row.SeriesID) == "" {
+				row.SeriesID = row.ID
+			}
+			if row.CreatedAt.IsZero() {
+				row.CreatedAt = time.Now().UTC()
 			}
 			if row.Audience == "" {
 				row.Audience = "all callers"
 			}
-			rows = append(rows, row)
+			if existingIdx >= 0 {
+				rows[existingIdx] = row
+			} else {
+				rows = append(rows, row)
+			}
 			a.persistCommunityEvents(rows)
 			recurrenceLabel := row.Recurrence
 			if strings.TrimSpace(recurrenceLabel) == "" {
 				recurrenceLabel = "none"
 			}
-			a.recordAdminAction(user.Handle, "community_calendar", "create_event", fmt.Sprintf("id=%s title=%s recurrence=%s", row.ID, row.Title, recurrenceLabel))
-			redirectWithNotice(w, r, "/admin/events", "Community event created.")
+			actionLabel := "create_event"
+			notice := "Community event created."
+			if action == "update" {
+				actionLabel = "update_event"
+				notice = "Community event updated."
+			}
+			a.recordAdminAction(user.Handle, "community_calendar", actionLabel, fmt.Sprintf("id=%s title=%s recurrence=%s", row.ID, row.Title, recurrenceLabel))
+			redirectWithNotice(w, r, "/admin/events", notice)
 			return
 		case "delete":
 			id := strings.TrimSpace(r.FormValue("id"))
@@ -2212,7 +2931,6 @@ func (a *webApp) handleAdminEvents(w http.ResponseWriter, r *http.Request) {
 				redirectWithError(w, r, "/admin/events", "Event ID is required.")
 				return
 			}
-			rows := a.loadCommunityEvents()
 			next := make([]communityEvent, 0, len(rows))
 			deletedTitle := ""
 			for _, row := range rows {
@@ -2241,6 +2959,34 @@ func (a *webApp) handleAdminEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows := a.loadCommunityEvents()
+	editID := strings.TrimSpace(r.URL.Query().Get("edit"))
+	templateKey := strings.TrimSpace(r.URL.Query().Get("template"))
+	formEvent := communityEvent{
+		Category: "social",
+		Host:     "sysop",
+		Audience: "all callers",
+	}
+	formAction := "create"
+	formTitle := "Create Event"
+	submitLabel := "Create Event"
+	cancelLink := ""
+	templateNotice := ""
+	if editRow, _, found := findCommunityEvent(rows, editID); found {
+		formEvent = editRow
+		if strings.TrimSpace(formEvent.Host) == "" {
+			formEvent.Host = "sysop"
+		}
+		if strings.TrimSpace(formEvent.Audience) == "" {
+			formEvent.Audience = "all callers"
+		}
+		formAction = "update"
+		formTitle = "Edit Event"
+		submitLabel = "Save Changes"
+		cancelLink = `<p><a href="/admin/events">Cancel editing</a></p>`
+	} else if templateRow, notice, ok := communityEventTemplate(templateKey, time.Now()); ok {
+		formEvent = templateRow
+		templateNotice = renderPageBanner("notice", notice)
+	}
 	csrf := a.csrfHiddenInput(r)
 	eventRows := strings.Builder{}
 	for _, row := range rows {
@@ -2248,19 +2994,33 @@ func (a *webApp) handleAdminEvents(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(recurrenceLabel) == "" {
 			recurrenceLabel = "one-time"
 		}
-		eventRows.WriteString(`<tr><td>` + htmlEscape(row.Title) + `</td><td>` + htmlEscape(strings.ToUpper(row.Category)) + `</td><td>` + htmlEscape(formatCommunityEventWindow(row)) + `</td><td>` + htmlEscape(recurrenceLabel) + `</td><td>` + htmlEscape(row.Location) + `</td><td>` + htmlEscape(row.Audience) + `</td><td><form method="POST" action="/admin/events"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="` + htmlEscape(row.ID) + `">` + csrf + `<button type="submit">Delete</button></form></td></tr>`)
+		eventRows.WriteString(`<tr><td>` + htmlEscape(row.Title) + `</td><td>` + htmlEscape(strings.ToUpper(row.Category)) + `</td><td>` + htmlEscape(formatCommunityEventWindow(row)) + `</td><td>` + htmlEscape(recurrenceLabel) + `</td><td>` + htmlEscape(row.Location) + `</td><td>` + htmlEscape(row.Audience) + `</td><td><a href="/admin/events?edit=` + url.QueryEscape(row.ID) + `#event-editor">Edit</a> <form method="POST" action="/admin/events" style="display:inline"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="` + htmlEscape(row.ID) + `">` + csrf + `<button type="submit">Delete</button></form></td></tr>`)
 	}
 	if eventRows.Len() == 0 {
 		eventRows.WriteString(`<tr><td colspan="7">No events scheduled yet.</td></tr>`)
 	}
 
+	categoryOptions := []string{"social", "door", "tournament", "content", "system", "ops"}
+	categoryRows := strings.Builder{}
+	for _, category := range categoryOptions {
+		categoryRows.WriteString(`<option value="` + category + `"` + selectedIf(formEvent.Category == category) + `>` + category + `</option>`)
+	}
+	recurrenceRows := strings.Builder{}
+	recurrenceRows.WriteString(`<option value=""` + selectedIf(formEvent.Recurrence == "") + `>one-time</option>`)
+	for _, recurrence := range []string{"daily", "weekdays", "weekly", "monthly"} {
+		recurrenceRows.WriteString(`<option value="` + recurrence + `"` + selectedIf(formEvent.Recurrence == recurrence) + `>` + recurrence + `</option>`)
+	}
+	previewCard := renderCommunityEventPreview(formEvent, 5)
+
 	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Events Admin</title></head><body>
 <p><a href="/admin">admin</a> | <a href="/admin/setup">setup</a> | <a href="/admin/ops">ops</a> | <a href="/events">public calendar</a> | <a href="/today">today brief</a> | <a href="/logout">logout</a></p>
 ` + pageMessageBlock(r) + `
+` + templateNotice + `
 <h1>Events Admin</h1>
 <p>Schedule public reasons for callers to return: nets, tournaments, featured content drops, and operator-run sessions.</p>
 <section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Be concrete</strong><p>Give callers a specific time, place, and audience. Vague events do not drive return behavior.</p></article><article class="wolfbbs-helper-card"><strong>Use categories deliberately</strong><p>System, social, door, tournament, content, and ops let the calendar read like a real board schedule.</p></article><article class="wolfbbs-helper-card"><strong>Build series, not chores</strong><p>Recurring events turn the board into a habit. Weekly or weekday series are better than retyping the same entry every day.</p></article></section>
-<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Create Event</h2><form method="POST" action="/admin/events"><input type="hidden" name="action" value="create">` + csrf + `<label>Title <input name="title" size="48" placeholder="Friday Tournament Night"></label><br><label>Category <select name="category"><option value="social">social</option><option value="door">door</option><option value="tournament">tournament</option><option value="content">content</option><option value="system">system</option><option value="ops">ops</option></select></label><br><label>Starts <input type="datetime-local" name="starts_at"></label><br><label>Ends <input type="datetime-local" name="ends_at"></label><br><label>Recurrence <select name="recurrence"><option value="">one-time</option><option value="daily">daily</option><option value="weekdays">weekdays</option><option value="weekly">weekly</option><option value="monthly">monthly</option></select></label><br><label>Repeat Until <input type="datetime-local" name="repeat_until"></label><br><label>Location <input name="location" size="40" placeholder="#lobby, Door Cockpit, SSH"></label><br><label>Host <input name="host" size="40" placeholder="sysop"></label><br><label>Audience <input name="audience" size="40" placeholder="all callers"></label><br><label>Link <input name="link" size="60" placeholder="/doors or https://..."></label><br><label>Description<br><textarea name="description" rows="6" cols="72" placeholder="What happens, why it matters, and how to join."></textarea></label><br><button type="submit">Create Event</button></form></article><article class="wolfbbs-card"><h2>Event Design Notes</h2><ul><li>Use a real start time, not "later tonight".</li><li>Put join instructions in the description or link.</li><li>Use recurrence for weekly nets, weekday check-ins, or tournament ladders.</li><li>Delete or replace stale series instead of letting the calendar drift.</li></ul></article></section>
+<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Quick Templates</h2><div class="wolfbbs-action-grid"><a class="wolfbbs-action-card" href="/admin/events?template=tournament#event-editor"><strong>Tournament Night</strong><span>weekly bracket or score ladder</span></a><a class="wolfbbs-action-card" href="/admin/events?template=social#event-editor"><strong>Lobby Net</strong><span>weekday live social check-in</span></a><a class="wolfbbs-action-card" href="/admin/events?template=content#event-editor"><strong>Content Drop</strong><span>scheduled bulletin, file, or featured thread</span></a><a class="wolfbbs-action-card" href="/admin/events?template=ops#event-editor"><strong>Sysop Review</strong><span>operator-only runbook cadence</span></a></div><p class="wolfbbs-muted">Templates load concrete defaults so you start from a believable event instead of a blank form.</p></article><article class="wolfbbs-card"><h2>Tournament Playbook</h2><ul class="wolfbbs-list-clean"><li>Use category <strong>tournament</strong> for ladders, score nights, and door brackets.</li><li>Point the link at <code>/doors</code>, <code>/tournaments</code>, or a door runbook so callers can join without guessing.</li><li>Weekly recurrence is the default starting point for a sustainable tournament rhythm.</li><li>Mirror the event in <a href="/tournaments">Tournament Center</a> and <a href="/scores">Scores</a> so the competitive layer feels alive.</li></ul></article></section>
+<section class="wolfbbs-grid"><article class="wolfbbs-card" id="event-editor"><h2>` + formTitle + `</h2><form method="POST" action="/admin/events" data-draft-key="admin-event-editor"><input type="hidden" name="action" value="` + formAction + `"><input type="hidden" name="id" value="` + htmlEscape(formEvent.ID) + `">` + csrf + `<label>Title <input name="title" size="48" value="` + htmlEscape(formEvent.Title) + `" placeholder="Friday Tournament Night"></label><br><label>Category <select name="category">` + categoryRows.String() + `</select></label><br><label>Starts <input type="datetime-local" name="starts_at" value="` + htmlEscape(formatLocalDateTimeValue(formEvent.StartsAt)) + `"></label><br><label>Ends <input type="datetime-local" name="ends_at" value="` + htmlEscape(formatLocalDateTimeValue(formEvent.EndsAt)) + `"></label><br><label>Recurrence <select name="recurrence">` + recurrenceRows.String() + `</select></label><br><label>Repeat Until <input type="datetime-local" name="repeat_until" value="` + htmlEscape(formatLocalDateTimeValue(formEvent.RepeatUntil)) + `"></label><br><label>Location <input name="location" size="40" value="` + htmlEscape(formEvent.Location) + `" placeholder="#lobby, Door Cockpit, SSH"></label><br><label>Host <input name="host" size="40" value="` + htmlEscape(formEvent.Host) + `" placeholder="sysop"></label><br><label>Audience <input name="audience" size="40" value="` + htmlEscape(formEvent.Audience) + `" placeholder="all callers"></label><br><label>Link <input name="link" size="60" value="` + htmlEscape(formEvent.Link) + `" placeholder="/doors or https://..."></label><br><label>Description<br><textarea name="description" rows="6" cols="72" placeholder="What happens, why it matters, and how to join.">` + htmlEscape(formEvent.Description) + `</textarea></label><br><button type="submit">` + submitLabel + `</button></form>` + cancelLink + `</article><article class="wolfbbs-card"><h2>Calendar Preview</h2>` + previewCard + `<p><a href="/events">Open public calendar</a> | <a href="/today">Open today brief</a></p></article></section>
 <section><h2>Scheduled Events</h2><table border="1"><tr><th>Title</th><th>Category</th><th>When</th><th>Series</th><th>Location</th><th>Audience</th><th>Action</th></tr>` + eventRows.String() + `</table></section>
 </body></html>`
 	w.WriteHeader(http.StatusOK)
@@ -3169,6 +3929,53 @@ body.wolfbbs-compose-fullscreen-open{
   border-radius:14px;
   background:#ffffff;
 }
+.wolfbbs-handle-assist{
+  display:none;
+  flex-wrap:wrap;
+  gap:8px;
+  padding:10px 12px;
+  border:1px solid #d6e1f0;
+  border-radius:12px;
+  background:#fffdfa;
+}
+.wolfbbs-handle-assist.active{
+  display:flex;
+}
+.wolfbbs-handle-assist button{
+  min-height:30px;
+  padding:6px 10px;
+  border-radius:999px;
+  border:1px solid #c8d7ea;
+  background:#fff;
+  color:#21467c;
+  box-shadow:none;
+  font-size:.82rem;
+}
+.wolfbbs-handle-assist button:hover,
+.wolfbbs-handle-assist button.active{
+  background:#17385e;
+  color:#fffdfa;
+}
+.wolfbbs-presence-list{
+  display:grid;
+  gap:12px;
+}
+.wolfbbs-presence-card{
+  padding:12px 14px;
+  border:1px solid #d6e1f0;
+  border-radius:14px;
+  background:#fffdfa;
+}
+.wolfbbs-presence-card strong{
+  display:block;
+  color:#17385e;
+}
+.wolfbbs-presence-card span{
+  display:block;
+  margin-top:4px;
+  color:#56677a;
+  font-size:.92rem;
+}
 .wolfbbs-command-block{
   position:relative;
 }
@@ -3193,6 +4000,134 @@ body.wolfbbs-compose-fullscreen-open{
   flex-wrap:wrap;
   gap:8px;
   align-items:center;
+}
+.wolfbbs-stack{
+  display:flex;
+  flex-direction:column;
+  gap:14px;
+  margin:14px 0 18px;
+}
+.wolfbbs-control-strip{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  align-items:flex-end;
+  margin:12px 0 16px;
+}
+.wolfbbs-control-strip > *{
+  margin:0;
+}
+.wolfbbs-table-wrap{
+  width:100%;
+  overflow:auto;
+  border-radius:14px;
+}
+.wolfbbs-table-wrap table{
+  min-width:680px;
+  margin:0;
+}
+.wolfbbs-status-pill{
+  display:inline-flex;
+  align-items:center;
+  min-height:26px;
+  padding:3px 10px;
+  border-radius:999px;
+  border:1px solid #c8daf1;
+  background:#edf4ff;
+  color:#244c83;
+  font-size:.78rem;
+  font-weight:700;
+}
+.wolfbbs-status-pill.ok{
+  border-color:#b9d5be;
+  background:#edf9f0;
+  color:#21623e;
+}
+.wolfbbs-status-pill.warn{
+  border-color:#f0d7a0;
+  background:#fff5df;
+  color:#7b5400;
+}
+.wolfbbs-status-pill.danger{
+  border-color:#efc1c6;
+  background:#fff0f2;
+  color:#8b2331;
+}
+.wolfbbs-meta-list{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+  gap:10px;
+  margin:0;
+}
+.wolfbbs-meta-list div{
+  padding:12px 14px;
+  border:1px solid #d8e4f1;
+  border-radius:12px;
+  background:#fbfdff;
+}
+.wolfbbs-meta-list dt{
+  margin:0 0 4px;
+  color:#4b6178;
+  font-size:.8rem;
+  font-weight:700;
+  text-transform:uppercase;
+  letter-spacing:.04em;
+}
+.wolfbbs-meta-list dd{
+  margin:0;
+  color:#16385f;
+  font-weight:700;
+}
+.wolfbbs-chat-layout{
+  display:grid;
+  grid-template-columns:minmax(0,2.2fr) minmax(290px,1fr);
+  gap:14px;
+  margin:14px 0 18px;
+}
+.wolfbbs-chat-pane{
+  height:420px;
+  overflow:auto;
+  padding:14px 16px;
+  font-family:"SFMono-Regular","Menlo","Consolas",monospace;
+  white-space:pre-wrap;
+  word-break:break-word;
+}
+.wolfbbs-chat-line{
+  padding:6px 0;
+  border-bottom:1px solid rgba(217,230,251,.12);
+}
+.wolfbbs-chat-line:last-child{
+  border-bottom:0;
+}
+.wolfbbs-chat-line strong{
+  color:#ffffff;
+}
+.wolfbbs-chat-line-meta{
+  color:#9eb6d6;
+  font-size:.8rem;
+  font-weight:700;
+}
+.wolfbbs-chat-line-body{
+  color:#d9e6fb;
+}
+.wolfbbs-channel-badges{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  margin:10px 0 0;
+}
+.wolfbbs-channel-badges button{
+  min-height:30px;
+  padding:6px 10px;
+  border-radius:999px;
+  border:1px solid #c8d7ea;
+  background:#fff;
+  color:#21467c;
+  box-shadow:none;
+  font-size:.82rem;
+}
+.wolfbbs-channel-badges button:hover{
+  background:#eef5ff;
 }
 .wolfbbs-split{
   display:grid;
@@ -3244,10 +4179,6 @@ body.wolfbbs-compose-fullscreen-open{
   background:#0d1726;
   color:#d9e6fb;
   box-shadow:0 8px 20px rgba(5,10,18,.32);
-}
-#chat > div{
-  line-height:1.35;
-  padding:2px 4px;
 }
 #chatStatus{
   color:#254f87 !important;
@@ -3320,6 +4251,12 @@ body.wolfbbs-compose-fullscreen-open{
   body > p:has(> a){padding:9px 10px}
   input[type=text],input[type=password],input[type=email],input[type=number],input[type=url],input[type=search],select,textarea{
     width:100%;
+  }
+  .wolfbbs-table-wrap table{
+    min-width:560px;
+  }
+  .wolfbbs-chat-layout{
+    grid-template-columns:1fr;
   }
   #wolfbbsCommandButton{
     left:14px;
@@ -3417,8 +4354,19 @@ body.wolfbbs-compose-fullscreen-open{
       body: "Use this page when you want watched boards, direct follow-up, and upcoming events in one place before you drift into route hunting.",
       actions: [
         { label: "Attention", href: "/attention" },
+        { label: "Digest", href: "/digest" },
         { label: "Events", href: "/events" },
         { label: "Boards", href: "/boards?mode=watched" }
+      ]
+    },
+    "/digest": {
+      eyebrow: "Low-noise summary",
+      title: "Daily Digest is the calmer web loop",
+      body: "Use this when you want a once-per-day summary of follow-up, digest-tier boards, and scheduled events without opening every route.",
+      actions: [
+        { label: "Today", href: "/today" },
+        { label: "Settings", href: "/settings" },
+        { label: "Boards", href: "/boards?mode=digest" }
       ]
     },
     "/attention": {
@@ -3448,8 +4396,19 @@ body.wolfbbs-compose-fullscreen-open{
       body: "Use the calendar to make activity concrete: tournaments, nets, content drops, and social sessions should all have a time and a path to join.",
       actions: [
         { label: "Today", href: "/today" },
+        { label: "Tournaments", href: "/tournaments" },
         { label: "Clubhouse", href: "/clubhouse" },
         { label: "Boards", href: "/boards" }
+      ]
+    },
+    "/tournaments": {
+      eyebrow: "Competitive layer",
+      title: "Tournament Center keeps the bracket nights visible",
+      body: "Use this route when you want ladders, score nights, and door competitions separated from the broader social calendar.",
+      actions: [
+        { label: "Events", href: "/events" },
+        { label: "Scores", href: "/scores" },
+        { label: "Doors", href: "/doors" }
       ]
     },
     "/chat": {
@@ -3579,6 +4538,14 @@ body.wolfbbs-compose-fullscreen-open{
       }
     }
   } catch (_) {}
+
+  document.querySelectorAll('table').forEach((table) => {
+    if (table.parentElement && table.parentElement.classList.contains('wolfbbs-table-wrap')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'wolfbbs-table-wrap';
+    table.parentNode.insertBefore(wrap, table);
+    wrap.appendChild(table);
+  });
 
   document.querySelectorAll('[data-wolfbbs-flash]').forEach((banner) => {
     if (banner.querySelector('.wolfbbs-banner-close')) return;
@@ -3821,10 +4788,156 @@ body.wolfbbs-compose-fullscreen-open{
     }).join('');
   }
 
+  const handleSuggestCache = new Map();
+
+  async function fetchHandleSuggestions(query, mode) {
+    const q = String(query || '').trim().toLowerCase();
+    const cacheKey = (mode || 'mention') + ':' + q;
+    if (!q) return [];
+    if (handleSuggestCache.has(cacheKey)) {
+      return handleSuggestCache.get(cacheKey);
+    }
+    try {
+      const res = await fetch('/handles/suggest?q=' + encodeURIComponent(q) + '&mode=' + encodeURIComponent(mode || 'mention'), {
+        credentials: 'same-origin'
+      });
+      if (!res.ok) return [];
+      const payload = await res.json();
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      handleSuggestCache.set(cacheKey, items);
+      return items;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function attachHandleAssist(control, options) {
+    if (!control || control.dataset.handleAssistBound === '1') return;
+    control.dataset.handleAssistBound = '1';
+    const mode = options && options.mode ? options.mode : 'mention';
+    const host = document.createElement('div');
+    host.className = 'wolfbbs-handle-assist';
+    control.insertAdjacentElement('afterend', host);
+    let items = [];
+    let activeIndex = 0;
+
+    function closeAssist() {
+      host.classList.remove('active');
+      host.innerHTML = '';
+      items = [];
+      activeIndex = 0;
+    }
+
+    function mentionMatch() {
+      const text = control.value || '';
+      const caret = typeof control.selectionStart === 'number' ? control.selectionStart : text.length;
+      const before = text.slice(0, caret);
+      const match = before.match(/(^|\s)@([a-z0-9._-]{1,32})$/i);
+      if (!match) return null;
+      return {
+        query: match[2],
+        start: caret - match[2].length - 1,
+        end: caret
+      };
+    }
+
+    function currentQuery() {
+      if (mode === 'recipient') {
+        const query = String(control.value || '').trim();
+        if (!query || query.includes('@')) return null;
+        return { query: query, start: 0, end: control.value.length };
+      }
+      return mentionMatch();
+    }
+
+    function applySelection(handle) {
+      const match = currentQuery();
+      if (!match) return;
+      const value = control.value || '';
+      if (mode === 'recipient') {
+        control.value = handle;
+      } else {
+        control.value = value.slice(0, match.start) + '@' + handle + ' ' + value.slice(match.end);
+        const caret = match.start + handle.length + 2;
+        if (typeof control.setSelectionRange === 'function') {
+          control.setSelectionRange(caret, caret);
+        }
+      }
+      control.dispatchEvent(new Event('input', { bubbles: true }));
+      closeAssist();
+      control.focus();
+    }
+
+    function renderAssist() {
+      host.innerHTML = '';
+      if (!items.length) {
+        closeAssist();
+        return;
+      }
+      host.classList.add('active');
+      items.forEach((item, index) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = mode === 'recipient' ? item : '@' + item;
+        if (index === activeIndex) button.classList.add('active');
+        button.addEventListener('mousedown', (event) => {
+          event.preventDefault();
+          applySelection(item);
+        });
+        host.appendChild(button);
+      });
+    }
+
+    async function refreshAssist() {
+      const match = currentQuery();
+      if (!match || !match.query) {
+        closeAssist();
+        return;
+      }
+      items = await fetchHandleSuggestions(match.query, mode);
+      activeIndex = 0;
+      renderAssist();
+    }
+
+    control.addEventListener('input', refreshAssist);
+    control.addEventListener('click', refreshAssist);
+    control.addEventListener('blur', () => {
+      window.setTimeout(closeAssist, 120);
+    });
+    control.addEventListener('keydown', (event) => {
+      if (!items.length) return;
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        activeIndex = (activeIndex + 1) % items.length;
+        renderAssist();
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        activeIndex = (activeIndex - 1 + items.length) % items.length;
+        renderAssist();
+        return;
+      }
+      if ((event.key === 'Tab' || event.key === 'Enter') && host.classList.contains('active')) {
+        event.preventDefault();
+        applySelection(items[activeIndex]);
+        return;
+      }
+      if (event.key === 'Escape') {
+        closeAssist();
+      }
+    });
+  }
+
   document.querySelectorAll('form[data-rich-compose]').forEach((form) => {
     if (form.querySelector('.wolfbbs-compose-toolbar')) return;
     const textarea = form.querySelector('textarea[name="body"]');
     if (!textarea) return;
+    attachHandleAssist(textarea, { mode: 'mention' });
+    const recipient = form.querySelector('input[name="to"]');
+    if (recipient) {
+      attachHandleAssist(recipient, { mode: 'recipient' });
+    }
     const layoutKey = 'wolfbbs:compose:layout:' + location.pathname + ':' + (form.getAttribute('data-draft-key') || form.getAttribute('data-rich-compose') || textarea.name || 'body');
 
     const shell = document.createElement('div');
@@ -4054,6 +5167,11 @@ body.wolfbbs-compose-fullscreen-open{
     event.returnValue = '';
   });
 
+  const chatMessageInput = document.getElementById('message');
+  if (chatMessageInput) {
+    attachHandleAssist(chatMessageInput, { mode: 'mention' });
+  }
+
   function inferredConfirmMessage(form, submitter) {
     const actionValue = submitter && submitter.getAttribute('value') ? submitter.getAttribute('value') : '';
     const hiddenAction = form.querySelector('input[name="action"]');
@@ -4086,6 +5204,7 @@ body.wolfbbs-compose-fullscreen-open{
       event.preventDefault();
       return;
     }
+    if (form.hasAttribute('data-no-auto-busy')) return;
     const method = (form.getAttribute('method') || 'get').toLowerCase();
     if (method !== 'post') return;
     const buttons = Array.from(form.querySelectorAll('button[type="submit"], input[type="submit"]'));
@@ -4771,6 +5890,10 @@ setTimeout(function(){ term.focus(); }, 0);
 <li><strong>Web terminal:</strong> reconnects automatically if the browser tab comes back into focus.</li>
 </ul></article>
 </section>
+<section class="wolfbbs-grid">
+<article class="wolfbbs-card"><h2>Mobile-first connection picks</h2><div class="wolfbbs-action-grid"><a class="wolfbbs-action-card" href="#xterm"><strong>Browser Terminal</strong><span>best zero-install path on phones and tablets</span></a><a class="wolfbbs-action-card" href="ssh://` + htmlEscape(connectHost) + `:` + strconv.Itoa(sshPort) + `"><strong>SSH Client</strong><span>works best when your mobile terminal app supports ANSI</span></a><a class="wolfbbs-action-card" href="` + htmlEscape(ircCommand) + `"><strong>IRC Client</strong><span>use this when you only need the live lobby</span></a></div></article>
+<article class="wolfbbs-card"><h2>Touch-device guidance</h2><ul class="wolfbbs-list-clean"><li><strong>iPhone/iPad:</strong> browser terminal first, SSH second if you already have a terminal client.</li><li><strong>Android:</strong> browser terminal or an ANSI-capable SSH client both work well.</li><li><strong>Keyboard quirks:</strong> tap inside the terminal before typing so focus and backspace land correctly.</li><li><strong>Low-friction path:</strong> keep /connect bookmarked if this is how you onboard new callers.</li></ul></article>
+</section>
 <h2>Choose your client</h2>
 <table border="1">
 <tr><th>Surface</th><th>Best for</th><th>Why pick it</th></tr>
@@ -4788,6 +5911,7 @@ setTimeout(function(){ term.focus(); }, 0);
 <li>Connect with SSH or the web terminal.</li>
 <li>Read the MOTD and announcement.</li>
 <li>Open boards, chat, and doors once so the main surfaces are familiar.</li>
+<li>On phones or tablets, start with the browser terminal before reaching for a standalone client.</li>
 <li>If you are just exploring, use the guided tour first.</li>
 </ol>
 <h2>If the web terminal looks stuck</h2>
@@ -5289,7 +6413,7 @@ func (a *webApp) handleDirectory(w http.ResponseWriter, r *http.Request) {
 		profileBlock = `<section class="wolfbbs-grid">
 <article class="wolfbbs-card"><h2>Caller Card: ` + htmlEscape(profile.Handle) + `</h2><p><strong>Role:</strong> ` + htmlEscape(profile.Role) + ` | <strong>Theme:</strong> ` + htmlEscape(profile.Theme) + ` | <strong>Verified:</strong> ` + boolToText(profile.Verified) + `</p><p><strong>Last login:</strong> ` + htmlEscape(profile.LastLogin) + `</p><p><strong>Online now:</strong> ` + boolToText(profile.Online) + ``
 		if profile.Online {
-			profileBlock += ` in ` + htmlEscape(profile.OnlineArea) + ` from ` + htmlEscape(profile.OnlineOrigin)
+			profileBlock += ` in ` + htmlEscape(profile.OnlineArea) + ` on ` + htmlEscape(profile.OnlineNode) + ` idle ` + htmlEscape(profile.OnlineIdle) + ` from ` + htmlEscape(profile.OnlineFrom)
 		}
 		profileBlock += `</p><p><a href="/mail?to=` + url.QueryEscape(profile.Handle) + `">Send mail</a> | <a href="/finder?q=` + url.QueryEscape(profile.Handle) + `">Search posts</a></p></article>
 <article class="wolfbbs-card"><h2>Caller Stats</h2><ul><li>Posts: ` + strconv.Itoa(profile.Posts) + `</li><li>Mentions: ` + strconv.Itoa(profile.Mentions) + `</li><li>Replies: ` + strconv.Itoa(profile.Replies) + `</li><li>Mail sent: ` + strconv.Itoa(profile.MailSent) + `</li><li>Mail received: ` + strconv.Itoa(profile.MailReceived) + `</li><li>Favorite door: ` + htmlEscape(profile.FavoriteDoor) + `</li><li>Achievements: ` + strconv.Itoa(profile.Achievements) + `</li></ul></article>
@@ -5298,10 +6422,10 @@ func (a *webApp) handleDirectory(w http.ResponseWriter, r *http.Request) {
 	}
 	tableRows := strings.Builder{}
 	for _, row := range rows {
-		tableRows.WriteString(`<tr><td><a href="/directory?handle=` + url.QueryEscape(row.Handle) + `">` + htmlEscape(row.Handle) + `</a></td><td>` + htmlEscape(row.Role) + `</td><td>` + boolToText(row.Verified) + `</td><td>` + htmlEscape(row.Theme) + `</td><td>` + htmlEscape(row.LastLogin) + `</td><td>` + boolToText(row.Online) + `</td><td>` + htmlEscape(row.Area) + `</td><td>` + htmlEscape(row.Origin) + `</td><td><a href="/mail?to=` + url.QueryEscape(row.Handle) + `">mail</a></td></tr>`)
+		tableRows.WriteString(`<tr><td><a href="/directory?handle=` + url.QueryEscape(row.Handle) + `">` + htmlEscape(row.Handle) + `</a></td><td>` + htmlEscape(row.Role) + `</td><td>` + boolToText(row.Verified) + `</td><td>` + htmlEscape(row.Theme) + `</td><td>` + htmlEscape(row.LastLogin) + `</td><td>` + boolToText(row.Online) + `</td><td>` + htmlEscape(row.Node) + `</td><td>` + htmlEscape(row.Idle) + `</td><td>` + htmlEscape(row.Area) + `</td><td>` + htmlEscape(row.Origin) + `</td><td>` + htmlEscape(row.From) + `</td><td><a href="/mail?to=` + url.QueryEscape(row.Handle) + `">mail</a></td></tr>`)
 	}
 	if tableRows.Len() == 0 {
-		tableRows.WriteString(`<tr><td colspan="9">No callers matched the filter.</td></tr>`)
+		tableRows.WriteString(`<tr><td colspan="12">No callers matched the filter.</td></tr>`)
 	}
 	roleOptions := []string{"any", roleUser, roleModerator, roleAdmin}
 	roleOptionRows := strings.Builder{}
@@ -5330,10 +6454,10 @@ func (a *webApp) handleDirectory(w http.ResponseWriter, r *http.Request) {
 		verifiedOptionRows.WriteString(`<option value="` + htmlEscape(row) + `"` + selected + `>` + htmlEscape(label) + `</option>`)
 	}
 	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Caller Directory</title></head><body>
-<p><a href="/boards">boards</a> | <a href="/bulletins">bulletins</a> | <a href="/finder">finder</a> | <a href="/feedback">feedback</a> | <a href="/mail">mail</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
+<p><a href="/boards">boards</a> | <a href="/bookmarks">bookmarks</a> | <a href="/bulletins">bulletins</a> | <a href="/finder">finder</a> | <a href="/feedback">feedback</a> | <a href="/mail">mail</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
 ` + pageMessageBlock(r) + `
 <h1>Caller Directory</h1>
-<p>Classic userlist, rebuilt with live presence, caller cards, and direct compose links.</p>
+<p>Classic userlist, rebuilt with live presence, caller cards, idle time, and direct compose links.</p>
 <section class="wolfbbs-kpi-grid">
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(rows)) + `</strong><span>visible callers</span></article>
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(onlineCount) + `</strong><span>online now</span></article>
@@ -5346,7 +6470,7 @@ func (a *webApp) handleDirectory(w http.ResponseWriter, r *http.Request) {
 	}
 	page += `> online only</label><button type="submit">Filter</button></form>
 ` + profileBlock + `
-<table border="1"><tr><th>Handle</th><th>Role</th><th>Verified</th><th>Theme</th><th>Last Login</th><th>Online</th><th>Area</th><th>Origin</th><th>Action</th></tr>` + tableRows.String() + `</table>
+<table border="1"><tr><th>Handle</th><th>Role</th><th>Verified</th><th>Theme</th><th>Last Login</th><th>Online</th><th>Node</th><th>Idle</th><th>Area</th><th>Origin</th><th>From</th><th>Action</th></tr>` + tableRows.String() + `</table>
 </body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -5983,7 +7107,7 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 </section>`
 		page := fmt.Sprintf(`<html><body>
 <p>Signed in as %s</p>
-<p><a href="/start">start</a> | <a href="/today">today</a> | <a href="/attention">attention</a> | <a href="/events">events</a> | <a href="/bulletins">bulletins</a> | <a href="/directory">directory</a> | <a href="/finder">finder</a> | <a href="/newfiles">newfiles</a> | <a href="/feedback">feedback</a> | <a href="/mail">mail</a> | <a href="/settings">settings</a> | <a href="/chat">chat</a> | <a href="/radar">radar</a> | <a href="/clubhouse">clubhouse</a> | <a href="/doors">doors</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/gateway">gateway</a>%s | <a href="/help">help</a> | <a href="/logout">logout</a></p>
+<p><a href="/start">start</a> | <a href="/today">today</a> | <a href="/attention">attention</a> | <a href="/bookmarks">bookmarks</a> | <a href="/events">events</a> | <a href="/bulletins">bulletins</a> | <a href="/directory">directory</a> | <a href="/finder">finder</a> | <a href="/newfiles">newfiles</a> | <a href="/feedback">feedback</a> | <a href="/mail">mail</a> | <a href="/settings">settings</a> | <a href="/chat">chat</a> | <a href="/radar">radar</a> | <a href="/clubhouse">clubhouse</a> | <a href="/doors">doors</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/gateway">gateway</a>%s | <a href="/help">help</a> | <a href="/logout">logout</a></p>
 %s
 %s
 %s
@@ -6039,6 +7163,20 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 			}
 			view.WriteString(`<strong>When:</strong> ` + msg.CreatedAt.Format("2006-01-02 15:04:05") + `</p>`)
 			view.WriteString(`<pre>` + htmlEscape(msg.Body) + `</pre>`)
+			bookmarkKey := "board:" + strconv.FormatInt(msg.ID, 10)
+			bookmarkAction := "add_board_message"
+			bookmarkLabel := "Save to Read-Later"
+			if a.hasBookmark(user.Handle, bookmarkKey) {
+				bookmarkAction = "remove"
+				bookmarkLabel = "Remove from Read-Later"
+			}
+			view.WriteString(`<h3>Read-Later Queue</h3><form method="POST" action="/bookmarks" class="wolfbbs-inline-actions">` + csrf + `<input type="hidden" name="action" value="` + bookmarkAction + `">`)
+			if bookmarkAction == "add_board_message" {
+				view.WriteString(`<input type="hidden" name="message_id" value="` + strconv.FormatInt(msg.ID, 10) + `">`)
+			} else {
+				view.WriteString(`<input type="hidden" name="key" value="` + bookmarkKey + `">`)
+			}
+			view.WriteString(`<input type="hidden" name="return_to" value="/boards?board=` + strconv.FormatInt(boardID, 10) + `&id=` + strconv.FormatInt(msg.ID, 10) + `"><button type="submit">` + bookmarkLabel + `</button></form>`)
 			view.WriteString(`<h3>Report</h3>`)
 			view.WriteString(`<form method="POST" action="/boards"><input type="hidden" name="action" value="report"><input type="hidden" name="board_id" value="` + strconv.FormatInt(boardID, 10) + `"><input type="hidden" name="message_id" value="` + strconv.FormatInt(msg.ID, 10) + `">` + csrf)
 			view.WriteString(`<label>Reason: <input name="reason" size="48" placeholder="spam, abuse, off-topic"></label> <button type="submit">Report Post</button></form>`)
@@ -6086,7 +7224,7 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 		emptyBoardDetail = a.renderRoleAwareEmptyState(user, "board_detail")
 	}
 	page := `<html><body><h1>Board: ` + htmlEscape(board.Name) + `</h1>` +
-		`<p><a href="/start">start</a> | <a href="/today">today</a> | <a href="/attention">attention</a> | <a href="/events">events</a> | <a href="/boards">all boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/doors">doors</a> | <a href="/status">status</a> | <a href="/config">config</a>` + discoverLink + ` | <a href="/help">help</a> | <a href="/logout">logout</a></p>` +
+		`<p><a href="/start">start</a> | <a href="/today">today</a> | <a href="/attention">attention</a> | <a href="/bookmarks">bookmarks</a> | <a href="/events">events</a> | <a href="/boards">all boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/doors">doors</a> | <a href="/status">status</a> | <a href="/config">config</a>` + discoverLink + ` | <a href="/help">help</a> | <a href="/logout">logout</a></p>` +
 		messageBlock +
 		`<p><strong>Reader keys:</strong> open subject to read, use Reply form, and Report for abuse/moderation queue.</p>` +
 		`<p><strong>Conference:</strong> ` + htmlEscape(defaultConferenceValue(board.Conference)) + `</p>` +
@@ -6221,12 +7359,26 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 				`<label>Subject <input name="subject" size="60" value="` + htmlEscape(replySubject) + `"></label><br>` +
 				`<label>Body<br><textarea name="body" rows="10" cols="80">` + htmlEscape(replyBody) + `</textarea></label><br><button type="submit">Send Reply</button></form>`
 		}
-		page := `<html><body><h1>Mail #` + strconv.FormatInt(item.ID, 10) + `</h1><p><a href="/mail">back</a> | <a href="/boards">boards</a> | <a href="/help">help</a></p>` +
+		bookmarkKey := "mail:" + strconv.FormatInt(item.ID, 10)
+		bookmarkAction := "add_mail"
+		bookmarkLabel := "Save to Read-Later"
+		if a.hasBookmark(user.Handle, bookmarkKey) {
+			bookmarkAction = "remove"
+			bookmarkLabel = "Remove from Read-Later"
+		}
+		bookmarkBlock := `<form method="POST" action="/bookmarks" class="wolfbbs-inline-actions">` + a.csrfHiddenInput(r) + `<input type="hidden" name="action" value="` + bookmarkAction + `">`
+		if bookmarkAction == "add_mail" {
+			bookmarkBlock += `<input type="hidden" name="mail_id" value="` + strconv.FormatInt(item.ID, 10) + `">`
+		} else {
+			bookmarkBlock += `<input type="hidden" name="key" value="` + bookmarkKey + `">`
+		}
+		bookmarkBlock += `<input type="hidden" name="return_to" value="/mail?id=` + strconv.FormatInt(item.ID, 10) + `"><button type="submit">` + bookmarkLabel + `</button></form>`
+		page := `<html><body><h1>Mail #` + strconv.FormatInt(item.ID, 10) + `</h1><p><a href="/mail">back</a> | <a href="/bookmarks">bookmarks</a> | <a href="/boards">boards</a> | <a href="/help">help</a></p>` +
 			`<p><strong>From:</strong> ` + htmlEscape(handleByID[item.FromUserID]) + `<br>` +
 			`<strong>To:</strong> ` + htmlEscape(to) + `<br>` +
 			`<strong>Subject:</strong> ` + htmlEscape(item.Subject) + `<br>` +
 			`<strong>Sent:</strong> ` + item.CreatedAt.Format("2006-01-02 15:04:05") + `</p>` +
-			`<pre>` + htmlEscape(item.Body) + `</pre>` + replyBlock + `</body></html>`
+			bookmarkBlock + `<pre>` + htmlEscape(item.Body) + `</pre>` + replyBlock + `</body></html>`
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(page))
 		return
@@ -6340,7 +7492,7 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 	}
 	filterSummary := renderActiveFilterPanel("Active Mail Filters", "/mail", filterItems)
 	mailHelperBlock := `<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Triage inbox first</strong><p>Use unread to work through new mail before browsing your outbox history.</p></article><article class="wolfbbs-helper-card"><strong>Templates speed the first pass</strong><p>Use a template to load a starter subject/body, then edit it into a real message.</p></article><article class="wolfbbs-helper-card"><strong>Drafts are local</strong><p>Compose and reply boxes save locally in this browser while you type.</p></article></section>`
-	page := `<html><body><h1>Private Mail</h1><p><a href="/start">start</a> | <a href="/attention">attention</a> | <a href="/boards">boards</a> | <a href="/bulletins">bulletins</a> | <a href="/directory">directory</a> | <a href="/finder">finder</a> | <a href="/feedback">feedback</a> | <a href="/chat">chat</a> | <a href="/status">status</a> | <a href="/config">config</a>` + discoverLink + ` | <a href="/help">help</a> | <a href="/logout">logout</a></p>` +
+	page := `<html><body><h1>Private Mail</h1><p><a href="/start">start</a> | <a href="/attention">attention</a> | <a href="/bookmarks">bookmarks</a> | <a href="/boards">boards</a> | <a href="/bulletins">bulletins</a> | <a href="/directory">directory</a> | <a href="/finder">finder</a> | <a href="/feedback">feedback</a> | <a href="/chat">chat</a> | <a href="/status">status</a> | <a href="/config">config</a>` + discoverLink + ` | <a href="/help">help</a> | <a href="/logout">logout</a></p>` +
 		messageBlock +
 		`<section class="wolfbbs-kpi-grid"><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(inbox)) + `</strong><span>inbox</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(unreadCount) + `</strong><span>unread</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(outbox)) + `</strong><span>outbox</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(a.recentCorrespondents(user, inbox, outbox, 10))) + `</strong><span>recent correspondents</span></article></section>` +
 		mailHelperBlock + filterSummary +
@@ -6357,6 +7509,147 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 		`</body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
+}
+
+func (a *webApp) handleBookmarks(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if r.Method == http.MethodPost {
+		if !a.requireCSRF(w, r) {
+			return
+		}
+		action := strings.ToLower(strings.TrimSpace(r.FormValue("action")))
+		returnTo := strings.TrimSpace(r.FormValue("return_to"))
+		if !strings.HasPrefix(returnTo, "/") {
+			returnTo = "/bookmarks"
+		}
+		switch action {
+		case "add_board_message":
+			messageID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("message_id")), 10, 64)
+			msg, err := a.msgRepo.GetMessage(messageID)
+			if err != nil || msg == nil {
+				redirectWithError(w, r, returnTo, "Message not found.")
+				return
+			}
+			board, err := a.boardRepo.Get(msg.BoardID)
+			if err != nil || board == nil || !a.canReadBoard(user, board) {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			a.addBookmark(user.Handle, a.boardBookmarkEntry(msg, board))
+			redirectWithNotice(w, r, returnTo, "Saved to read-later queue.")
+			return
+		case "add_mail":
+			mailID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("mail_id")), 10, 64)
+			item, err := a.mailRepo.GetMail(mailID)
+			if err != nil || item == nil {
+				redirectWithError(w, r, returnTo, "Mail not found.")
+				return
+			}
+			if item.ToUserID != user.ID && item.FromUserID != user.ID {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			a.addBookmark(user.Handle, a.mailBookmarkEntry(item, user))
+			redirectWithNotice(w, r, returnTo, "Saved to read-later queue.")
+			return
+		case "remove", "clear":
+			if action == "clear" {
+				a.persistBookmarks(user.Handle, nil)
+				redirectWithNotice(w, r, returnTo, "Read-later queue cleared.")
+				return
+			}
+			key := strings.TrimSpace(r.FormValue("key"))
+			if key == "" {
+				redirectWithError(w, r, returnTo, "Bookmark key is required.")
+				return
+			}
+			a.removeBookmark(user.Handle, key)
+			redirectWithNotice(w, r, returnTo, "Removed from read-later queue.")
+			return
+		default:
+			redirectWithError(w, r, returnTo, "Unsupported bookmark action.")
+			return
+		}
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	rows := a.loadBookmarks(user.Handle)
+	csrf := a.csrfHiddenInput(r)
+	listRows := strings.Builder{}
+	boardCount := 0
+	mailCount := 0
+	for _, row := range rows {
+		status := ``
+		switch row.Kind {
+		case "board_message":
+			boardCount++
+			msg, err := a.msgRepo.GetMessage(row.MessageID)
+			if err != nil || msg == nil {
+				status = `<span class="wolfbbs-muted">missing</span>`
+			} else if board, boardErr := a.boardRepo.Get(msg.BoardID); boardErr != nil || board == nil || !a.canReadBoard(user, board) {
+				status = `<span class="wolfbbs-muted">no longer visible</span>`
+			}
+		case "mail":
+			mailCount++
+			item, err := a.mailRepo.GetMail(row.MailID)
+			if err != nil || item == nil {
+				status = `<span class="wolfbbs-muted">missing</span>`
+			} else if item.ToUserID != user.ID && item.FromUserID != user.ID {
+				status = `<span class="wolfbbs-muted">forbidden</span>`
+			}
+		}
+		listRows.WriteString(`<tr><td>` + htmlEscape(strings.ReplaceAll(row.Kind, "_", " ")) + `</td><td><a href="` + htmlEscape(row.Href) + `">` + htmlEscape(row.Label) + `</a><br><span class="wolfbbs-muted">` + htmlEscape(defaultIfBlank(row.Meta, "saved item")) + `</span></td><td>` + htmlEscape(row.AddedAt.Local().Format("2006-01-02 15:04")) + `</td><td>` + status + `</td><td><form method="POST" action="/bookmarks">` + csrf + `<input type="hidden" name="action" value="remove"><input type="hidden" name="key" value="` + htmlEscape(row.Key) + `"><input type="hidden" name="return_to" value="/bookmarks"><button type="submit">remove</button></form></td></tr>`)
+	}
+	if listRows.Len() == 0 {
+		listRows.WriteString(`<tr><td colspan="5">No saved board posts or mail yet.</td></tr>`)
+	}
+
+	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Read-Later Queue</title></head><body>
+<p><a href="/start">start</a> | <a href="/attention">attention</a> | <a href="/today">today</a> | <a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
+` + pageMessageBlock(r) + `
+<h1>Read-Later Queue</h1>
+<p>Use this as the modern version of “come back to this thread later.” Save board posts or private mail from the reader, then work through them from one place.</p>
+<section class="wolfbbs-kpi-grid"><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(rows)) + `</strong><span>saved items</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(boardCount) + `</strong><span>board posts</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(mailCount) + `</strong><span>private mail</span></article></section>
+<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Save from the reader</strong><p>Use the save button on a board post or private mail item when you want to come back later without losing it.</p></article><article class="wolfbbs-helper-card"><strong>Use this as a triage lane</strong><p>Attention Center is for urgent obligations. This queue is for deliberate reading and follow-up you want to keep for the next session.</p></article><article class="wolfbbs-helper-card"><strong>Remove items when done</strong><p>Keep the list short so it stays useful instead of becoming another hidden backlog.</p></article></section>
+<form method="POST" action="/bookmarks">` + csrf + `<input type="hidden" name="action" value="clear"><input type="hidden" name="return_to" value="/bookmarks"><button type="submit">Clear Queue</button></form>
+<table border="1"><tr><th>Kind</th><th>Item</th><th>Saved</th><th>Status</th><th>Action</th></tr>` + listRows.String() + `</table>
+</body></html>`
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(page))
+}
+
+func (a *webApp) handleHandleSuggestions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	user, _ := a.currentUser(r)
+	exclude := ""
+	if user != nil {
+		exclude = user.Handle
+	}
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	mode := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("mode")))
+	items := a.suggestHandles(query, exclude, maxHandleSuggestions)
+	if mode == "recipient" && query != "" {
+		exact := strings.TrimSpace(query)
+		if exact != "" {
+			for _, item := range items {
+				if strings.EqualFold(item, exact) {
+					_ = writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
+					return
+				}
+			}
+		}
+	}
+	_ = writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
 }
 
 func (a *webApp) handleGateway(w http.ResponseWriter, r *http.Request) {
@@ -6494,6 +7787,15 @@ func (a *webApp) handleSettings(w http.ResponseWriter, r *http.Request) {
 				a.persistHomeRoute(user.Handle, homeRoute)
 			}
 			notice = "Display preferences saved."
+		case "update_digest":
+			pref := digestPreferences{
+				Enabled:       parseCheckbox(r.FormValue("digest_enabled")),
+				MaxItems:      parseInt(r.FormValue("digest_max_items"), defaultDigestPreferences().MaxItems),
+				IncludeEvents: parseCheckbox(r.FormValue("digest_include_events")),
+				IncludeBoards: parseCheckbox(r.FormValue("digest_include_boards")),
+			}
+			a.persistDigestPreferences(user.Handle, pref)
+			notice = "Digest preferences saved."
 		case "enable_2fa":
 			secret, err := auth.GenerateTOTPSecret()
 			if err != nil {
@@ -6532,6 +7834,16 @@ func (a *webApp) handleSettings(w http.ResponseWriter, r *http.Request) {
 	messageBlock := pageMessageBlock(r)
 	themeOptions := buildThemeOptionsHTML(user.Theme)
 	homeRoute := a.preferredHomeRoute(user)
+	digestPref := a.loadDigestPreferences(user.Handle)
+	digestMaxItems := normalizeDigestPreferences(digestPref).MaxItems
+	var digestOptions strings.Builder
+	for _, value := range []int{6, 10, 12, 16, 20, 24} {
+		selected := ""
+		if value == digestMaxItems {
+			selected = ` selected`
+		}
+		digestOptions.WriteString(`<option value="` + strconv.Itoa(value) + `"` + selected + `>` + strconv.Itoa(value) + ` items</option>`)
+	}
 	var secondFactorBlock strings.Builder
 	adminSettingsBlock := ""
 	if a.hasRole(user, roleAdmin) {
@@ -6551,6 +7863,7 @@ func (a *webApp) handleSettings(w http.ResponseWriter, r *http.Request) {
 		`<li>Paging: ` + boolToText(user.PagingEnabled) + `</li>` +
 		`<li>Time format 24h: ` + boolToText(user.TimeFormat24h) + `</li>` +
 		`<li>Home route: ` + htmlEscape(homeRoute) + `</li>` +
+		`<li>Web digest: ` + boolToText(digestPref.Enabled) + `</li>` +
 		`</ul>` +
 		`<h2>Display Preferences</h2><form method="POST" action="/settings"><input type="hidden" name="action" value="update_prefs">` + csrf +
 		`<label>Theme: <select name="theme">` + themeOptions + `</select></label><br>` +
@@ -6559,6 +7872,12 @@ func (a *webApp) handleSettings(w http.ResponseWriter, r *http.Request) {
 		`<label><input type="checkbox" name="time_format_24h" value="1" ` + checkedAttr(user.TimeFormat24h) + `> 24-hour time format</label><br>` +
 		`<label>Home route <select name="home_route">` + homeRouteOptionRows(homeRoute) + `</select></label><br>` +
 		`<button type="submit">Save Preferences</button></form>` +
+		`<h2>Daily Digest</h2><form method="POST" action="/settings"><input type="hidden" name="action" value="update_digest">` + csrf +
+		`<label><input type="checkbox" name="digest_enabled" value="1" ` + checkedAttr(digestPref.Enabled) + `> Enable low-noise web digest</label><br>` +
+		`<label>Digest size <select name="digest_max_items">` + digestOptions.String() + `</select></label><br>` +
+		`<label><input type="checkbox" name="digest_include_events" value="1" ` + checkedAttr(digestPref.IncludeEvents) + `> Include scheduled events</label><br>` +
+		`<label><input type="checkbox" name="digest_include_boards" value="1" ` + checkedAttr(digestPref.IncludeBoards) + `> Include digest-tier board pulse</label><br>` +
+		`<button type="submit">Save Digest Preferences</button></form><p><a href="/digest">Open Daily Digest</a></p>` +
 		`<h2>Password</h2><form method="POST" action="/settings"><input type="hidden" name="action" value="change_password">` + csrf +
 		`<label>New password: <input name="password" type="password"></label><br>` +
 		`<label>Confirm: <input name="confirm" type="password"></label><br><button type="submit">Change password</button></form>` +
@@ -8561,14 +9880,17 @@ func (a *webApp) handleAdminBoards(w http.ResponseWriter, r *http.Request) {
 	if reportErr != nil {
 		a.addAppError("admin.boards", fmt.Errorf("list reports: %w", reportErr))
 	}
+	allReports, _ := a.msgRepo.ListReports(500, "")
 	handleByID := a.userHandleLookup()
 	reportRows := strings.Builder{}
 	for _, row := range reports {
 		reportBoard := int64(0)
 		reportSubject := "(message unavailable)"
+		hintText := ""
 		if msg, msgErr := a.msgRepo.GetMessage(row.MessageID); msgErr == nil && msg != nil {
 			reportBoard = msg.BoardID
 			reportSubject = msg.Subject
+			hintText = buildModerationHints([]domain.Message{*msg}, allReports)[msg.ID]
 		}
 		reporter := handleByID[row.ReporterID]
 		if reporter == "" {
@@ -8580,7 +9902,15 @@ func (a *webApp) handleAdminBoards(w http.ResponseWriter, r *http.Request) {
 				boardName = name
 			}
 		}
-		reportRows.WriteString(`<tr><td>` + strconv.FormatInt(row.ID, 10) + `</td><td>` + strconv.FormatInt(row.MessageID, 10) + `</td><td>` + htmlEscape(boardName) + `</td><td>` + htmlEscape(reportSubject) + `</td><td>` + htmlEscape(reporter) + `</td><td>` + htmlEscape(row.Reason) + `</td><td>` + htmlEscape(row.Status) + `</td><td>` + row.CreatedAt.Local().Format("2006-01-02 15:04") + `</td><td>`)
+		messageCell := strconv.FormatInt(row.MessageID, 10)
+		if reportBoard > 0 {
+			messageCell = `<a href="/boards?board=` + strconv.FormatInt(reportBoard, 10) + `&id=` + strconv.FormatInt(row.MessageID, 10) + `">` + messageCell + `</a>`
+		}
+		reportRows.WriteString(`<tr><td>` + strconv.FormatInt(row.ID, 10) + `</td><td>` + messageCell + `</td><td>` + htmlEscape(boardName) + `</td><td>` + htmlEscape(reportSubject) + `</td><td>` + htmlEscape(reporter) + `</td><td>` + htmlEscape(row.Reason))
+		if hintText != "" {
+			reportRows.WriteString(`<br><span class="wolfbbs-muted">` + htmlEscape(hintText) + `</span>`)
+		}
+		reportRows.WriteString(`</td><td>` + htmlEscape(row.Status) + `</td><td>` + row.CreatedAt.Local().Format("2006-01-02 15:04") + `</td><td>`)
 		if strings.EqualFold(row.Status, "resolved") {
 			reportRows.WriteString(`resolved`)
 		} else {
@@ -8602,6 +9932,7 @@ func (a *webApp) handleAdminBoards(w http.ResponseWriter, r *http.Request) {
 		if msgErr != nil {
 			a.addAppError("admin.boards", fmt.Errorf("list board %d messages: %w", manageBoardID, msgErr))
 		} else {
+			moderationHints := buildModerationHints(msgs, allReports)
 			moveOptions := strings.Builder{}
 			for _, board := range boards {
 				selected := ""
@@ -8625,7 +9956,13 @@ func (a *webApp) handleAdminBoards(w http.ResponseWriter, r *http.Request) {
 					lockAction = "unlock_thread"
 					lockLabel = "unlock"
 				}
-				manageRows.WriteString(`<tr><td>` + strconv.FormatInt(msg.ID, 10) + `</td><td>` + strconv.FormatInt(msg.ThreadID, 10) + `</td><td>` + htmlEscape(author) + `</td><td>` + htmlEscape(msg.Subject) + `</td><td>` + msg.CreatedAt.Local().Format("2006-01-02 15:04") + `</td><td>`)
+				subjectCell := `<a href="/boards?board=` + strconv.FormatInt(manageBoardID, 10) + `&id=` + strconv.FormatInt(msg.ID, 10) + `">` + htmlEscape(msg.Subject) + `</a>`
+				hintText := moderationHints[msg.ID]
+				manageRows.WriteString(`<tr><td>` + strconv.FormatInt(msg.ID, 10) + `</td><td>` + strconv.FormatInt(msg.ThreadID, 10) + `</td><td>` + htmlEscape(author) + `</td><td>` + subjectCell)
+				if hintText != "" {
+					manageRows.WriteString(`<br><span class="wolfbbs-muted">` + htmlEscape(hintText) + `</span>`)
+				}
+				manageRows.WriteString(`</td><td>` + msg.CreatedAt.Local().Format("2006-01-02 15:04") + `</td><td>`)
 				manageRows.WriteString(`<form method="POST" action="/admin/boards">` + csrf +
 					`<input type="hidden" name="action" value="delete_message">` +
 					`<input type="hidden" name="message_id" value="` + strconv.FormatInt(msg.ID, 10) + `">` +
@@ -8658,9 +9995,9 @@ func (a *webApp) handleAdminBoards(w http.ResponseWriter, r *http.Request) {
 		`<table border="1"><tr><th>ID</th><th>Title</th><th>Conf</th><th>Topics</th><th>Last</th><th>Edit</th><th>Actions</th><th>Moderation</th></tr>` + rows.String() + `</table>` +
 		`<h2>Moderation Queue</h2>` +
 		`<form method="GET" action="/admin/boards"><label>Status <select name="report_status"><option value=""` + reportStatusSelect[""] + `>all</option><option value="open"` + reportStatusSelect["open"] + `>open</option><option value="resolved"` + reportStatusSelect["resolved"] + `>resolved</option></select></label><label> Board <input name="manage_board" size="6" value="` + strconv.FormatInt(manageBoardID, 10) + `"></label><button type="submit">apply</button></form>` +
-		`<table border="1"><tr><th>ID</th><th>Message</th><th>Board</th><th>Subject</th><th>Reporter</th><th>Reason</th><th>Status</th><th>Created</th><th>Action</th></tr>` + reportRows.String() + `</table>` +
+		`<table border="1"><tr><th>ID</th><th>Message</th><th>Board</th><th>Subject</th><th>Reporter</th><th>Reason + Hints</th><th>Status</th><th>Created</th><th>Action</th></tr>` + reportRows.String() + `</table>` +
 		`<h2>Board Message Moderation</h2><p>Delete with reason, lock/unlock thread, and move thread to another board.</p>` +
-		`<table border="1"><tr><th>ID</th><th>Thread</th><th>Author</th><th>Subject</th><th>When</th><th>Actions</th></tr>` + manageRows.String() + `</table>` +
+		`<table border="1"><tr><th>ID</th><th>Thread</th><th>Author</th><th>Subject + Hints</th><th>When</th><th>Actions</th></tr>` + manageRows.String() + `</table>` +
 		`</body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -8743,11 +10080,62 @@ func (a *webApp) handleAdminFiles(w http.ResponseWriter, r *http.Request) {
 					a.recordAdminAction(user.Handle, area.Name, "create_file_area", area.Path)
 				}
 			}
+		case "upload":
+			areaID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("area_id")), 10, 64)
+			reviewHold := formHasValue(r, "review_hold")
+			reviewNotes := strings.TrimSpace(r.FormValue("review_notes"))
+			if a.adminRepo != nil && areaID > 0 {
+				areas, _ := a.adminRepo.ListFileAreas()
+				for _, area := range areas {
+					if area.ID != areaID {
+						continue
+					}
+					entry, err := a.importUploadedFile(r, area, user, strings.TrimSpace(r.FormValue("description")), strings.TrimSpace(r.FormValue("tags")))
+					if err != nil {
+						a.addAppError("admin.files", fmt.Errorf("upload file: %w", err))
+						redirectWithError(w, r, redirectURL, "Upload failed.")
+						return
+					}
+					if reviewHold {
+						a.setFileReviewItem(fileReviewItem{
+							FileID:    entry.ID,
+							AreaID:    entry.AreaID,
+							Name:      entry.Name,
+							Status:    fileReviewHold,
+							Notes:     reviewNotes,
+							Uploader:  user.Handle,
+							CreatedAt: time.Now().UTC(),
+						})
+					}
+					a.recordAdminAction(user.Handle, entry.Name, "upload_file", fmt.Sprintf("area=%d hold=%t", areaID, reviewHold))
+					redirectURL = "/admin/files?area=" + strconv.FormatInt(areaID, 10)
+					break
+				}
+			}
 		case "delete":
 			id, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("id")), 10, 64)
 			if a.adminRepo != nil && id > 0 {
 				_ = a.adminRepo.DeleteFileArea(id)
 				a.recordAdminAction(user.Handle, strconv.FormatInt(id, 10), "delete_file_area", "")
+			}
+		case "delete_file":
+			fileID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("file_id")), 10, 64)
+			if a.adminRepo != nil && fileID > 0 {
+				entry, err := a.adminRepo.GetFileEntry(fileID)
+				if err != nil || entry == nil {
+					if err != nil {
+						a.addAppError("admin.files", fmt.Errorf("load file %d for delete: %w", fileID, err))
+					}
+					redirectWithError(w, r, redirectURL, "File delete failed.")
+					return
+				}
+				if err := a.deleteIndexedFile(entry); err != nil {
+					a.addAppError("admin.files", fmt.Errorf("delete file %d: %w", fileID, err))
+					redirectWithError(w, r, redirectURL, "File delete failed.")
+					return
+				}
+				a.removeFileReviewItem(fileID)
+				a.recordAdminAction(user.Handle, entry.Name, "delete_file_entry", fmt.Sprintf("file_id=%d", fileID))
 			}
 		case "index_area":
 			id, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("id")), 10, 64)
@@ -8853,6 +10241,31 @@ func (a *webApp) handleAdminFiles(w http.ResponseWriter, r *http.Request) {
 					redirectURL = "/admin/files?queue_user=" + strconv.FormatInt(targetUserID, 10) + "&issued_token=" + url.QueryEscape(ticket.Token)
 				}
 			}
+		case "review_file":
+			fileID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("file_id")), 10, 64)
+			if fileID > 0 {
+				row, ok := a.fileReviewItem(fileID)
+				if !ok && a.adminRepo != nil {
+					if entry, err := a.adminRepo.GetFileEntry(fileID); err == nil && entry != nil {
+						row = fileReviewItem{
+							FileID:    entry.ID,
+							AreaID:    entry.AreaID,
+							Name:      entry.Name,
+							Uploader:  user.Handle,
+							CreatedAt: time.Now().UTC(),
+						}
+						ok = true
+					}
+				}
+				if ok {
+					row.Status = normalizeFileReviewStatus(r.FormValue("status"))
+					row.Notes = strings.TrimSpace(r.FormValue("review_notes"))
+					row.ReviewedAt = time.Now().UTC()
+					row.ReviewedBy = user.Handle
+					a.setFileReviewItem(row)
+					a.recordAdminAction(user.Handle, strconv.FormatInt(fileID, 10), "review_file", row.Status)
+				}
+			}
 		}
 		http.Redirect(w, r, redirectURL, http.StatusFound)
 		return
@@ -8864,9 +10277,11 @@ func (a *webApp) handleAdminFiles(w http.ResponseWriter, r *http.Request) {
 	queue := []domain.DownloadQueueItem{}
 	queueFiles := map[int64]string{}
 	areaNames := map[int64]string{}
+	reviewQueue := a.loadFileReviewQueue()
 	fileAreaID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("area")), 10, 64)
 	queueUserID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("queue_user")), 10, 64)
 	filterUserID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("filter_user")), 10, 64)
+	savedFilterID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("saved_filter")), 10, 64)
 	searchQuery := strings.TrimSpace(r.URL.Query().Get("q"))
 	searchTagsRaw := strings.TrimSpace(r.URL.Query().Get("tags"))
 	searchTags := make([]string, 0)
@@ -8877,16 +10292,29 @@ func (a *webApp) handleAdminFiles(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	issuedToken := strings.TrimSpace(r.URL.Query().Get("issued_token"))
+	appliedFilterName := ""
 	if a.adminRepo != nil {
 		areas, _ = a.adminRepo.ListFileAreas()
 		for _, area := range areas {
 			areaNames[area.ID] = area.Name
 		}
-		files, _ = a.adminRepo.ListFileEntries(fileAreaID, searchQuery, searchTags, 300)
 		if filterUserID > 0 {
 			filters, _ = a.adminRepo.ListFileFilters(filterUserID)
 		} else {
 			filters, _ = a.adminRepo.ListFileFilters(0)
+		}
+		if savedFilter, ok := findFileFilterByID(filters, savedFilterID); ok {
+			appliedFilterName = savedFilter.Name
+			searchQuery = strings.TrimSpace(savedFilter.Query)
+			searchTags = append([]string(nil), savedFilter.Tags...)
+			searchTagsRaw = strings.Join(savedFilter.Tags, ",")
+			if filterUserID <= 0 && savedFilter.UserID > 0 {
+				filterUserID = savedFilter.UserID
+			}
+		}
+		files, _ = a.adminRepo.ListFileEntries(fileAreaID, searchQuery, searchTags, 300)
+		if filterUserID > 0 {
+			filters, _ = a.adminRepo.ListFileFilters(filterUserID)
 		}
 		if queueUserID > 0 {
 			queue, _ = a.adminRepo.ListDownloadQueue(queueUserID, 200)
@@ -8898,8 +10326,14 @@ func (a *webApp) handleAdminFiles(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	csrf := a.csrfHiddenInput(r)
+	areaOptionRows := strings.Builder{}
 	areaRows := strings.Builder{}
 	for _, area := range areas {
+		selected := ""
+		if area.ID == fileAreaID {
+			selected = ` selected`
+		}
+		areaOptionRows.WriteString(`<option value="` + strconv.FormatInt(area.ID, 10) + `"` + selected + `>` + htmlEscape(area.Name) + `</option>`)
 		areaRows.WriteString(fmt.Sprintf(`<tr><td>%d</td><td>%s</td><td>%s</td><td>%s</td>`, area.ID, htmlEscape(area.Name), htmlEscape(area.Path), htmlEscape(area.Description)))
 		areaRows.WriteString(`<td><form method="POST" action="/admin/files">` + csrf + `<input type="hidden" name="action" value="index_area"><input type="hidden" name="id" value="` + strconv.FormatInt(area.ID, 10) + `"><input type="hidden" name="uploader_id" value="` + strconv.FormatInt(user.ID, 10) + `"><button type="submit">index</button></form></td>`)
 		areaRows.WriteString(`<td><form method="POST" action="/admin/files">` + csrf + `<input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="` + strconv.FormatInt(area.ID, 10) + `"><button type="submit">delete</button></form></td></tr>`)
@@ -8912,23 +10346,30 @@ func (a *webApp) handleAdminFiles(w http.ResponseWriter, r *http.Request) {
 	for _, row := range files {
 		tags := htmlEscape(strings.Join(row.Tags, ","))
 		areaName := htmlEscape(areaNames[row.AreaID])
-		fileRows.WriteString(`<tr><td>` + strconv.FormatInt(row.ID, 10) + `</td><td>` + areaName + `</td><td>` + htmlEscape(row.Name) + `</td><td>` + tags + `</td><td>` + fmt.Sprintf("%.2f", row.RatingAvg) + ` (` + strconv.Itoa(row.RatingCount) + `)</td><td>` + htmlEscape(row.SHA256) + `</td>`)
+		reviewStatus := htmlEscape(a.reviewStatusLabel(row.ID))
+		fileRows.WriteString(`<tr><td>` + strconv.FormatInt(row.ID, 10) + `</td><td>` + areaName + `</td><td>` + htmlEscape(row.Name) + `</td><td>` + tags + `</td><td>` + reviewStatus + `</td><td>` + fmt.Sprintf("%.2f", row.RatingAvg) + ` (` + strconv.Itoa(row.RatingCount) + `)</td><td>` + htmlEscape(row.SHA256) + `</td>`)
 		fileRows.WriteString(`<td><form method="POST" action="/admin/files">` + csrf +
 			`<input type="hidden" name="action" value="rate"><input type="hidden" name="file_id" value="` + strconv.FormatInt(row.ID, 10) + `"><input type="hidden" name="user_id" value="` + strconv.FormatInt(user.ID, 10) + `">` +
 			`<input name="rating" size="2" value="5"><button type="submit">rate</button></form>`)
 		fileRows.WriteString(`<form method="POST" action="/admin/files">` + csrf +
-			`<input type="hidden" name="action" value="queue_add"><input type="hidden" name="file_id" value="` + strconv.FormatInt(row.ID, 10) + `"><input name="queue_user_id" size="6" value="` + strconv.FormatInt(user.ID, 10) + `"><button type="submit">queue</button></form></td></tr>`)
+			`<input type="hidden" name="action" value="queue_add"><input type="hidden" name="file_id" value="` + strconv.FormatInt(row.ID, 10) + `"><input name="queue_user_id" size="6" value="` + strconv.FormatInt(user.ID, 10) + `"><button type="submit">queue</button></form>`)
+		fileRows.WriteString(`<form method="POST" action="/admin/files">` + csrf +
+			`<input type="hidden" name="action" value="delete_file"><input type="hidden" name="file_id" value="` + strconv.FormatInt(row.ID, 10) + `"><button type="submit">delete file</button></form></td></tr>`)
 	}
 	if fileRows.Len() == 0 {
-		fileRows.WriteString(`<tr><td colspan="7">No indexed files matched</td></tr>`)
+		fileRows.WriteString(`<tr><td colspan="8">No indexed files matched</td></tr>`)
 	}
 
 	filterRows := strings.Builder{}
 	for _, row := range filters {
-		filterRows.WriteString(`<tr><td>` + strconv.FormatInt(row.ID, 10) + `</td><td>` + strconv.FormatInt(row.UserID, 10) + `</td><td>` + htmlEscape(row.Name) + `</td><td>` + htmlEscape(row.Query) + `</td><td>` + htmlEscape(strings.Join(row.Tags, ",")) + `</td></tr>`)
+		applyURL := `/admin/files?saved_filter=` + strconv.FormatInt(row.ID, 10)
+		if row.UserID > 0 {
+			applyURL += `&filter_user=` + strconv.FormatInt(row.UserID, 10)
+		}
+		filterRows.WriteString(`<tr><td>` + strconv.FormatInt(row.ID, 10) + `</td><td>` + strconv.FormatInt(row.UserID, 10) + `</td><td>` + htmlEscape(row.Name) + `</td><td>` + htmlEscape(row.Query) + `</td><td>` + htmlEscape(strings.Join(row.Tags, ",")) + `</td><td><a href="` + applyURL + `">apply</a></td></tr>`)
 	}
 	if filterRows.Len() == 0 {
-		filterRows.WriteString(`<tr><td colspan="5">No saved filters</td></tr>`)
+		filterRows.WriteString(`<tr><td colspan="6">No saved filters</td></tr>`)
 	}
 
 	queueRows := strings.Builder{}
@@ -8946,19 +10387,58 @@ func (a *webApp) handleAdminFiles(w http.ResponseWriter, r *http.Request) {
 		queueRows.WriteString(`<tr><td colspan="5">No queue rows for selected user</td></tr>`)
 	}
 
+	reviewRows := strings.Builder{}
+	reviewList := make([]fileReviewItem, 0, len(reviewQueue))
+	for _, row := range reviewQueue {
+		reviewList = append(reviewList, row)
+	}
+	sort.Slice(reviewList, func(i, j int) bool {
+		if reviewList[i].CreatedAt.Equal(reviewList[j].CreatedAt) {
+			return reviewList[i].FileID > reviewList[j].FileID
+		}
+		return reviewList[i].CreatedAt.After(reviewList[j].CreatedAt)
+	})
+	for _, row := range reviewList {
+		areaName := areaNames[row.AreaID]
+		if areaName == "" {
+			areaName = "Area " + strconv.FormatInt(row.AreaID, 10)
+		}
+		reviewRows.WriteString(`<tr><td>` + strconv.FormatInt(row.FileID, 10) + `</td><td>` + htmlEscape(areaName) + `</td><td>` + htmlEscape(row.Name) + `</td><td>` + htmlEscape(row.Status) + `</td><td>` + htmlEscape(defaultIfBlank(row.Uploader, "unknown")) + `</td><td>` + row.CreatedAt.Local().Format("2006-01-02 15:04") + `</td><td>` + htmlEscape(row.Notes) + `</td><td><div class="wolfbbs-inline-actions"><form method="POST" action="/admin/files">` + csrf + `<input type="hidden" name="action" value="review_file"><input type="hidden" name="file_id" value="` + strconv.FormatInt(row.FileID, 10) + `"><select name="status"><option value="hold"` + selectedIf(row.Status == fileReviewHold) + `>hold</option><option value="approved"` + selectedIf(row.Status == fileReviewApproved) + `>approved</option><option value="rejected"` + selectedIf(row.Status == fileReviewRejected) + `>rejected</option></select><input name="review_notes" size="20" value="` + htmlEscape(row.Notes) + `" placeholder="review notes"><button type="submit">save</button></form><form method="POST" action="/admin/files">` + csrf + `<input type="hidden" name="action" value="delete_file"><input type="hidden" name="file_id" value="` + strconv.FormatInt(row.FileID, 10) + `"><button type="submit">delete file</button></form></div></td></tr>`)
+	}
+	if reviewRows.Len() == 0 {
+		reviewRows.WriteString(`<tr><td colspan="8">No uploads waiting for review.</td></tr>`)
+	}
+
 	var ticketNotice string
 	if issuedToken != "" {
 		ticketNotice = `<p><strong>Issued ticket:</strong> <code>` + htmlEscape(issuedToken) + `</code><br><a href="/gateway?download=` + url.QueryEscape(issuedToken) + `">/gateway?download=` + url.QueryEscape(issuedToken) + `</a></p>`
 	}
+	activeFilters := make([]string, 0, 4)
+	if fileAreaID > 0 {
+		activeFilters = append(activeFilters, "area #"+strconv.FormatInt(fileAreaID, 10))
+	}
+	if searchQuery != "" {
+		activeFilters = append(activeFilters, "query: "+searchQuery)
+	}
+	if searchTagsRaw != "" {
+		activeFilters = append(activeFilters, "tags: "+searchTagsRaw)
+	}
+	if appliedFilterName != "" {
+		activeFilters = append(activeFilters, "saved filter: "+appliedFilterName)
+	}
+	filterSummary := renderActiveFilterPanel("Active File Filters", "/admin/files", activeFilters)
 
 	page := `<html><body><h1>Files</h1><p><a href="/admin">back</a> | <a href="/gateway">gateway</a> | <a href="/help">help</a></p>` + ticketNotice +
+		`<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Upload intake is browser-native now</strong><p>Use the upload form to land a file directly into a file area, extract metadata, and optionally put it on hold for review.</p></article><article class="wolfbbs-helper-card"><strong>Review before public exposure</strong><p>Hold status keeps a file out of caller-facing file lists until a sysop approves it.</p></article><article class="wolfbbs-helper-card"><strong>Use saved filters deliberately</strong><p>Saved filters are now actionable. Apply one to reload the indexed table instead of manually retyping the search every time.</p></article></section>` + filterSummary +
 		`<form method="POST"><input type="hidden" name="action" value="create">` + csrf +
 		`<label>Name <input name="name"></label> <label>Path <input name="path" size="30"></label> <label>Description <input name="description" size="40"></label> <button type="submit">add</button></form>` +
 		`<table border="1"><tr><th>ID</th><th>Name</th><th>Path</th><th>Description</th><th>Index</th><th>Delete</th></tr>` + areaRows.String() + `</table>` +
-		`<h2>Indexed Files</h2><form method="GET"><label>Area ID <input name="area" value="` + strconv.FormatInt(fileAreaID, 10) + `" size="6"></label> <label>Query <input name="q" value="` + htmlEscape(searchQuery) + `" size="24"></label> <label>Tags <input name="tags" value="` + htmlEscape(searchTagsRaw) + `" size="24"></label> <button type="submit">search</button></form>` +
-		`<table border="1"><tr><th>ID</th><th>Area</th><th>Name</th><th>Tags</th><th>Rating</th><th>SHA-256</th><th>Actions</th></tr>` + fileRows.String() + `</table>` +
+		`<h2>Upload Intake</h2><form method="POST" enctype="multipart/form-data">` + csrf + `<input type="hidden" name="action" value="upload"><label>Area <select name="area_id">` + areaOptionRows.String() + `</select></label> <label>File <input type="file" name="upload_file"></label> <label>Description <input name="description" size="28"></label> <label>Tags <input name="tags" size="24" placeholder="ansi,retro,zip"></label> <label><input type="checkbox" name="review_hold" value="1" checked> Hold for review</label> <label>Review notes <input name="review_notes" size="24" placeholder="scan pending"></label> <button type="submit">Upload file</button></form>` +
+		`<h2>Review Queue</h2><table border="1"><tr><th>File ID</th><th>Area</th><th>Name</th><th>Status</th><th>Uploader</th><th>Uploaded</th><th>Notes</th><th>Action</th></tr>` + reviewRows.String() + `</table>` +
+		`<h2>Indexed Files</h2><form method="GET" data-filter-form="1" data-filter-reset="/admin/files"><label>Area ID <input name="area" value="` + strconv.FormatInt(fileAreaID, 10) + `" size="6" data-filter-label="area"></label> <label>Query <input name="q" value="` + htmlEscape(searchQuery) + `" size="24" data-filter-label="query"></label> <label>Tags <input name="tags" value="` + htmlEscape(searchTagsRaw) + `" size="24" data-filter-label="tags"></label> <button type="submit">search</button></form>` +
+		`<table border="1"><tr><th>ID</th><th>Area</th><th>Name</th><th>Tags</th><th>Review</th><th>Rating</th><th>SHA-256</th><th>Actions</th></tr>` + fileRows.String() + `</table>` +
 		`<h2>Saved Filters</h2><form method="POST">` + csrf + `<input type="hidden" name="action" value="save_filter"><label>User ID <input name="filter_user_id" value="` + strconv.FormatInt(maxInt64(filterUserID, user.ID), 10) + `" size="8"></label> <label>Name <input name="name" size="16"></label> <label>Query <input name="query" size="24"></label> <label>Tags <input name="tags" size="24" placeholder="tag1,tag2"></label> <button type="submit">save</button></form>` +
-		`<table border="1"><tr><th>ID</th><th>User</th><th>Name</th><th>Query</th><th>Tags</th></tr>` + filterRows.String() + `</table>` +
+		`<table border="1"><tr><th>ID</th><th>User</th><th>Name</th><th>Query</th><th>Tags</th><th>Action</th></tr>` + filterRows.String() + `</table>` +
 		`<h2>Download Queue</h2><form method="GET"><label>User ID <input name="queue_user" value="` + strconv.FormatInt(maxInt64(queueUserID, user.ID), 10) + `" size="8"></label><button type="submit">view queue</button></form>` +
 		`<table border="1"><tr><th>ID</th><th>User</th><th>File</th><th>Queued At</th><th>Actions</th></tr>` + queueRows.String() + `</table></body></html>`
 	w.WriteHeader(http.StatusOK)
@@ -9664,6 +11144,14 @@ func defaultConferenceValue(value string) string {
 	return value
 }
 
+func defaultIfBlank(value, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
 func (a *webApp) roleForUser(u *domain.User) int {
 	if u == nil {
 		return 0
@@ -10329,6 +11817,143 @@ func parseLocalDateTime(raw string) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("datetime is required")
 	}
 	return time.ParseInLocation("2006-01-02T15:04", raw, time.Local)
+}
+
+func formatLocalDateTimeValue(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.In(time.Local).Format("2006-01-02T15:04")
+}
+
+func findCommunityEvent(rows []communityEvent, id string) (communityEvent, int, bool) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return communityEvent{}, -1, false
+	}
+	for idx, row := range rows {
+		if strings.TrimSpace(row.ID) == id {
+			return row, idx, true
+		}
+	}
+	return communityEvent{}, -1, false
+}
+
+func communityEventTemplate(key string, now time.Time) (communityEvent, string, bool) {
+	key = strings.ToLower(strings.TrimSpace(key))
+	if now.IsZero() {
+		now = time.Now()
+	}
+	baseStart := now.In(time.Local).Add(2 * time.Hour).Truncate(30 * time.Minute)
+	switch key {
+	case "tournament":
+		start := time.Date(baseStart.Year(), baseStart.Month(), baseStart.Day(), 20, 0, 0, 0, time.Local)
+		for start.Weekday() != time.Friday {
+			start = start.AddDate(0, 0, 1)
+		}
+		return communityEvent{
+			Title:       "Tournament Night",
+			Category:    "tournament",
+			StartsAt:    start,
+			EndsAt:      start.Add(2 * time.Hour),
+			Recurrence:  "weekly",
+			RepeatUntil: start.AddDate(0, 2, 0),
+			Location:    "/doors",
+			Host:        "sysop",
+			Audience:    "ranked callers",
+			Description: "Weekly ladder or bracket night with a clear join path, host, and scoreboard follow-up.",
+			Link:        "/tournaments",
+		}, "Tournament template loaded.", true
+	case "social":
+		start := time.Date(baseStart.Year(), baseStart.Month(), baseStart.Day(), 21, 0, 0, 0, time.Local)
+		return communityEvent{
+			Title:       "Lobby Net",
+			Category:    "social",
+			StartsAt:    start,
+			EndsAt:      start.Add(time.Hour),
+			Recurrence:  "weekdays",
+			RepeatUntil: start.AddDate(0, 1, 0),
+			Location:    "#lobby",
+			Host:        "sysop",
+			Audience:    "all callers",
+			Description: "Short social net to keep the live layer warm and give callers a predictable check-in window.",
+			Link:        "/chat",
+		}, "Social net template loaded.", true
+	case "content":
+		start := time.Date(baseStart.Year(), baseStart.Month(), baseStart.Day(), 19, 30, 0, 0, time.Local).AddDate(0, 0, 1)
+		return communityEvent{
+			Title:       "Featured Content Drop",
+			Category:    "content",
+			StartsAt:    start,
+			EndsAt:      start.Add(90 * time.Minute),
+			Recurrence:  "weekly",
+			RepeatUntil: start.AddDate(0, 2, 0),
+			Location:    "/bulletins",
+			Host:        "sysop",
+			Audience:    "all callers",
+			Description: "Publish a featured thread, file, or bulletin with a specific time so the board feels programmed.",
+			Link:        "/bulletins",
+		}, "Content-drop template loaded.", true
+	case "ops":
+		start := time.Date(baseStart.Year(), baseStart.Month(), baseStart.Day(), 18, 0, 0, 0, time.Local)
+		if start.Weekday() == time.Saturday {
+			start = start.AddDate(0, 0, 2)
+		}
+		if start.Weekday() == time.Sunday {
+			start = start.AddDate(0, 0, 1)
+		}
+		return communityEvent{
+			Title:       "Sysop Review Window",
+			Category:    "ops",
+			StartsAt:    start,
+			EndsAt:      start.Add(45 * time.Minute),
+			Recurrence:  "weekdays",
+			RepeatUntil: start.AddDate(0, 1, 0),
+			Location:    "/admin/ops",
+			Host:        "sysop",
+			Audience:    "sysops",
+			Description: "Short operator review for launch checks, runtime issues, scheduled content, and caller escalations.",
+			Link:        "/admin/ops",
+		}, "Ops template loaded.", true
+	default:
+		return communityEvent{}, "", false
+	}
+}
+
+func renderCommunityEventPreview(row communityEvent, count int) string {
+	if row.StartsAt.IsZero() {
+		return `<p class="wolfbbs-muted">Set a valid start time to preview how this event will land on the public calendar.</p>`
+	}
+	occurrences := expandCommunityEvent(row, row.StartsAt.UTC().Add(-time.Minute), row.StartsAt.UTC().AddDate(0, 3, 0), count)
+	if len(occurrences) == 0 {
+		return `<p class="wolfbbs-muted">No occurrences fall inside the current preview window.</p>`
+	}
+	var out strings.Builder
+	out.WriteString(`<ul class="wolfbbs-list-clean">`)
+	for _, occurrence := range occurrences {
+		meta := []string{formatCommunityEventWindow(occurrence)}
+		if recurrence := recurrenceSummary(occurrence); recurrence != "" {
+			meta = append(meta, recurrence)
+		}
+		if strings.TrimSpace(occurrence.Location) != "" {
+			meta = append(meta, occurrence.Location)
+		}
+		out.WriteString(`<li><strong>` + htmlEscape(occurrence.Title) + `</strong><br><span class="wolfbbs-muted">` + htmlEscape(strings.Join(meta, " | ")) + `</span></li>`)
+	}
+	out.WriteString(`</ul>`)
+	return out.String()
+}
+
+func findFileFilterByID(rows []domain.FileFilter, id int64) (domain.FileFilter, bool) {
+	if id <= 0 {
+		return domain.FileFilter{}, false
+	}
+	for _, row := range rows {
+		if row.ID == id {
+			return row, true
+		}
+	}
+	return domain.FileFilter{}, false
 }
 
 func randomEventID() string {
@@ -11284,14 +12909,18 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 		csrf = state.csrf
 	}
 	csrfJSON := fmt.Sprintf("%q", csrf)
+	canModerateJSON := "false"
+	if a.hasRole(user, roleModerator) {
+		canModerateJSON = "true"
+	}
 
 	modActions := ""
 	csrfInput := a.csrfHiddenInput(r)
 	if a.hasRole(user, roleModerator) {
 		modActions = `
-			<section id="mod">
-				<h3>Moderation</h3>
-				<form id="modForm" action="/chat/moderation" method="POST">
+			<section id="mod" class="wolfbbs-card">
+				<h2>Moderation</h2>
+				<form id="modForm" action="/chat/moderation" method="POST" class="wolfbbs-inline-form" data-no-auto-busy="1">
 					` + csrfInput + `
 					<label>Channel:
 						<input type="text" name="channel" value="#lobby">
@@ -11299,7 +12928,6 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 					<label>Target: <input type="text" name="target" placeholder="target" required></label>
 					<label>Reason: <input type="text" name="reason"></label>
 					<label>Duration (optional): <input type="text" name="duration" value="" placeholder="5m"></label>
-					<input type="hidden" name="action">
 					<select name="action">
 						<option value="kick">Kick</option>
 						<option value="mute">Mute</option>
@@ -11309,10 +12937,11 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 					</select>
 					<button type="submit">Apply</button>
 				</form>
+				<p class="wolfbbs-muted">Use moderation from the live room when a channel needs intervention. Locked rooms are read-only for non-moderators.</p>
 			</section>`
 	}
 
-	chatEmptyHelper := ``
+	chatEmptyHelper := ""
 	if len(a.chatSvc.History("#lobby", 1)) == 0 {
 		chatEmptyHelper = a.renderRoleAwareEmptyState(user, "chat")
 	}
@@ -11321,26 +12950,64 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 	<html>
 	<body>
 		<h1>` + htmlEscape(a.siteDisplayName()) + ` Chat</h1>
-		<p>Logged in as ` + user.Handle + `</p>
-		<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/settings">settings</a> | <a href="/doors">doors</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
-		<p><strong>Quick keys:</strong> Enter sends message, Ctrl+L clears chat pane, channel selector switches rooms instantly.</p>
+		<p><a href="/boards">boards</a> | <a href="/today">today</a> | <a href="/attention">attention</a> | <a href="/bookmarks">bookmarks</a> | <a href="/mail">mail</a> | <a href="/doors">doors</a> | <a href="/clubhouse">clubhouse</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
+		` + pageMessageBlock(r) + `
+		<p>Logged in as ` + user.Handle + `. Web chat and IRC are the same live conversation layer, so this page has to behave like a real client instead of a raw debug pane.</p>
+		<section class="wolfbbs-kpi-grid"><article class="wolfbbs-kpi-card"><strong>#lobby</strong><span>default room</span></article><article class="wolfbbs-kpi-card"><strong>live</strong><span>shared with IRC bridge</span></article><article class="wolfbbs-kpi-card"><strong>Ctrl+L</strong><span>clear transcript</span></article><article class="wolfbbs-kpi-card"><strong>Enter</strong><span>send line</span></article></section>
+		<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Switch rooms without losing context</strong><p>The selector and custom channel box both move the transcript, online list, and moderation target together.</p></article><article class="wolfbbs-helper-card"><strong>Locked rooms are explicit</strong><p>If a channel is locked, the composer disables itself for non-moderators instead of failing only after submit.</p></article><article class="wolfbbs-helper-card"><strong>Reconnect is stateful</strong><p>The stream resumes after the last seen line so reconnects do not duplicate the transcript.</p></article></section>
 		` + chatEmptyHelper + `
-		<p><label>Channel:
-			<select id="channelSelect"></select>
-		</label></p>
-		<div id="chat" style="height:300px; width: 800px; border:1px solid #333; overflow:auto; font-family: monospace; white-space: pre;"></div>
-		<p id="chatStatus" style="font-family: monospace;">Ready.</p>
-		<form id="sendForm">
-			<input type="text" id="message" style="width: 600px;" autocomplete="off">
-			<button type="submit">Send</button>
-		</form>
-		<p>Online:
-			<span id="online"></span>
-		</p>
-		` + modActions + `
+		<section class="wolfbbs-chat-layout">
+			<article class="wolfbbs-card">
+				<h2>Transcript</h2>
+				<div class="wolfbbs-control-strip">
+					<label>Channel
+						<select id="channelSelect"></select>
+					</label>
+					<form id="customChannelForm" class="wolfbbs-inline-form">
+						<label>Join or create room
+							<input type="text" id="customChannel" placeholder="#ansi-lab" autocomplete="off">
+						</label>
+						<button type="submit">Open Channel</button>
+					</form>
+					<button type="button" id="chatReconnect">Reconnect Stream</button>
+				</div>
+				<div id="chat" class="wolfbbs-chat-pane" aria-live="polite"></div>
+				<p id="chatStatus" style="font-family: monospace;">Ready.</p>
+				<form id="sendForm" class="wolfbbs-inline-form">
+					<label style="flex:1 1 420px">Message
+						<input type="text" id="message" autocomplete="off" placeholder="Say something in the room...">
+					</label>
+					<button type="submit" id="sendButton">Send</button>
+				</form>
+			</article>
+			<section class="wolfbbs-stack wolfbbs-chat-sidebar">
+				<article class="wolfbbs-card">
+					<h2>Room State</h2>
+					<dl class="wolfbbs-meta-list"><div><dt>Current room</dt><dd id="chatCurrentChannel">#lobby</dd></div><div><dt>Mode</dt><dd id="chatMode">open</dd></div><div><dt>Online now</dt><dd id="onlineCount">0</dd></div><div><dt>Last sync</dt><dd id="chatLastSync">waiting</dd></div></dl>
+					<div class="wolfbbs-channel-badges" id="channelBadges"></div>
+				</article>
+				<article class="wolfbbs-card">
+					<h2>Who Is Here</h2>
+					<div id="online">loading...</div>
+					<p class="wolfbbs-muted">The list reflects the room you are actively viewing, including IRC callers in the same channel.</p>
+				</article>
+				<article class="wolfbbs-card">
+					<h2>Fast Moves</h2>
+					<div class="wolfbbs-action-grid"><a class="wolfbbs-action-card" href="/clubhouse"><strong>Clubhouse</strong><span>one-liners, neighboring boards, social layer</span></a><a class="wolfbbs-action-card" href="/attention"><strong>Attention</strong><span>return to direct follow-up</span></a><a class="wolfbbs-action-card" href="/connect"><strong>Connect</strong><span>SSH, IRC, and terminal access help</span></a></div>
+				</article>
+				` + modActions + `
+			</section>
+		</section>
 		<script>
 			const csrf = ` + csrfJSON + `;
-			const streamState = {es: null, channel: '#lobby'};
+			const canModerate = ` + canModerateJSON + `;
+			const streamState = {
+				es: null,
+				channel: '#lobby',
+				lastSeenId: 0,
+				reconnectTimer: null,
+				locked: new Set(),
+			};
 			function setStatus(msg) {
 				const el = document.getElementById('chatStatus');
 				if (el) el.textContent = msg;
@@ -11359,6 +13026,122 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 				return '[' + stamp + '] ' + from + ': ' + body;
 			}
 
+			function normalizeChannelName(value) {
+				const raw = String(value || '').trim();
+				if (!raw) return '';
+				return raw[0] === '#' ? raw : ('#' + raw);
+			}
+
+			function isNearBottom(box) {
+				return (box.scrollTop + box.clientHeight) >= (box.scrollHeight - 32);
+			}
+
+			function updateComposerState() {
+				const message = document.getElementById('message');
+				const sendButton = document.getElementById('sendButton');
+				const locked = streamState.locked.has(streamState.channel);
+				const readOnly = locked && !canModerate;
+				message.disabled = readOnly;
+				sendButton.disabled = readOnly;
+				document.getElementById('chatCurrentChannel').textContent = streamState.channel;
+				document.getElementById('chatMode').textContent = readOnly ? 'read-only' : (locked ? 'locked (mod write)' : 'open');
+				if (readOnly) {
+					message.placeholder = 'This room is locked for non-moderators.';
+				} else {
+					message.placeholder = 'Say something in the room...';
+				}
+			}
+
+			function noteSync() {
+				document.getElementById('chatLastSync').textContent = new Date().toLocaleTimeString();
+			}
+
+			function appendMessage(m) {
+				const box = document.getElementById('chat');
+				const stick = isNearBottom(box);
+				const line = document.createElement('div');
+				line.className = 'wolfbbs-chat-line';
+				const meta = document.createElement('div');
+				meta.className = 'wolfbbs-chat-line-meta';
+				meta.textContent = '[' + msgValue(m, 'created_at', 'CreatedAt', '--:--:--') + ']';
+				const body = document.createElement('div');
+				body.className = 'wolfbbs-chat-line-body';
+				const from = document.createElement('strong');
+				from.textContent = msgValue(m, 'from', 'From', 'system') + ': ';
+				body.appendChild(from);
+				body.appendChild(document.createTextNode(msgValue(m, 'body', 'Body', '')));
+				line.appendChild(meta);
+				line.appendChild(body);
+				box.appendChild(line);
+				const id = Number(msgValue(m, 'id', 'ID', 0)) || 0;
+				if (id > streamState.lastSeenId) {
+					streamState.lastSeenId = id;
+				}
+				if (stick) {
+					box.scrollTop = box.scrollHeight;
+				}
+			}
+
+			function ensureChannelOption(channel) {
+				if (!channel) return;
+				const normalized = normalizeChannelName(channel);
+				const select = document.getElementById('channelSelect');
+				const existing = Array.from(select.options).find((option) => option.value === normalized);
+				if (existing) return;
+				const option = document.createElement('option');
+				option.value = normalized;
+				option.textContent = normalized;
+				select.appendChild(option);
+			}
+
+			function renderChannelBadges(channels) {
+				const wrap = document.getElementById('channelBadges');
+				wrap.innerHTML = '';
+				(channels || []).slice(0, 8).forEach((name) => {
+					const button = document.createElement('button');
+					button.type = 'button';
+					button.textContent = name;
+					button.addEventListener('click', () => {
+						refreshChannel(name);
+					});
+					wrap.appendChild(button);
+				});
+			}
+
+			function renderPresenceList(rows) {
+				const online = document.getElementById('online');
+				const list = Array.isArray(rows) ? rows : [];
+				if (!list.length) {
+					online.textContent = 'none';
+					document.getElementById('onlineCount').textContent = '0';
+					return;
+				}
+				const wrap = document.createElement('div');
+				wrap.className = 'wolfbbs-presence-list';
+				list.forEach((row) => {
+					const card = document.createElement('div');
+					card.className = 'wolfbbs-presence-card';
+					const nick = document.createElement('strong');
+					nick.textContent = row.nick || 'caller';
+					card.appendChild(nick);
+					const meta1 = document.createElement('span');
+					meta1.textContent = (row.area || streamState.channel) + ' • ' + (row.node || 'web');
+					card.appendChild(meta1);
+					const meta2 = document.createElement('span');
+					meta2.textContent = 'idle ' + String(row.idle_sec || 0) + 's';
+					card.appendChild(meta2);
+					if (row.login_at) {
+						const meta3 = document.createElement('span');
+						meta3.textContent = 'since ' + row.login_at;
+						card.appendChild(meta3);
+					}
+					wrap.appendChild(card);
+				});
+				online.innerHTML = '';
+				online.appendChild(wrap);
+				document.getElementById('onlineCount').textContent = String(list.length);
+			}
+
 			async function loadChannels() {
 				const res = await fetch('/chat/channels', {credentials: 'same-origin'});
 				if (!res.ok) {
@@ -11369,17 +13152,17 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 				const select = document.getElementById('channelSelect');
 				select.innerHTML = '';
 				const channels = payload.channels || ['#lobby'];
-				const lockedSet = new Set(payload.locked || []);
+				streamState.locked = new Set(payload.locked || []);
 				channels.forEach((name) => {
 					const option = document.createElement('option');
 					option.value = name;
-					option.textContent = lockedSet.has(name) ? (name + ' [locked]') : name;
+					option.textContent = streamState.locked.has(name) ? (name + ' [locked]') : name;
 					select.appendChild(option);
 				});
-				if (!channels.includes(streamState.channel)) {
-					streamState.channel = channels[0] || '#lobby';
-				}
+				ensureChannelOption(streamState.channel);
 				select.value = streamState.channel;
+				renderChannelBadges(channels);
+				updateComposerState();
 			}
 
 			async function loadHistory() {
@@ -11392,11 +13175,16 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 				const payload = await res.json();
 				const box = document.getElementById('chat');
 				box.textContent = '';
+				streamState.lastSeenId = 0;
 				for (const m of payload.messages || []) {
-					const line = document.createElement('div');
-					line.textContent = formatLine(m);
-					box.appendChild(line);
+					appendMessage(m);
 				}
+				if (payload.last_id) {
+					streamState.lastSeenId = Number(payload.last_id) || streamState.lastSeenId;
+				}
+				noteSync();
+				renderPresenceList(payload.online || []);
+				box.scrollTop = box.scrollHeight;
 			}
 
 			async function loadOnline() {
@@ -11407,27 +13195,15 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 					return;
 				}
 				const payload = await res.json();
-				const online = document.getElementById('online');
-				const names = (payload.presence || []).map((p) => p.nick).join(', ');
-				online.textContent = names || 'none';
-			}
-
-			async function join() {
-				const ch = streamState.channel;
-				const res = await fetch('/chat/join', {
-					method: 'POST',
-					headers: {
-						'Content-Type': 'application/json',
-						'X-CSRF-Token': csrf,
-					},
-					body: JSON.stringify({ channel: ch }),
-				});
-				if (!res.ok) {
-					setStatus('Join failed for ' + ch);
-				}
+				renderPresenceList(payload.presence || []);
+				noteSync();
 			}
 
 			function stopStream() {
+				if (streamState.reconnectTimer) {
+					window.clearTimeout(streamState.reconnectTimer);
+					streamState.reconnectTimer = null;
+				}
 				if (streamState.es) {
 					streamState.es.close();
 					streamState.es = null;
@@ -11436,47 +13212,53 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 
 			function watch() {
 				stopStream();
-				const es = new EventSource('/chat/stream?channel=' + encodeURIComponent(streamState.channel) + '&after_id=0');
+				const es = new EventSource('/chat/stream?channel=' + encodeURIComponent(streamState.channel) + '&after_id=' + encodeURIComponent(String(streamState.lastSeenId || 0)));
 				streamState.es = es;
 				es.onmessage = function(evt){
 					const msg = JSON.parse(evt.data);
-					const line = document.createElement('div');
-					line.textContent = formatLine(msg);
-					const box = document.getElementById('chat');
-					box.appendChild(line);
-					box.scrollTop = box.scrollHeight;
+					appendMessage(msg);
 					setStatus('Live on ' + streamState.channel);
+					noteSync();
 				};
 				es.onerror = function() {
 					es.close();
 					setStatus('Realtime disconnected; retrying...');
-					setTimeout(watch, 1200);
+					streamState.reconnectTimer = window.setTimeout(watch, 1200);
 				};
 			}
 
-			async function switchChannel(next) {
-				streamState.channel = next;
-				await join();
+			async function refreshChannel(next) {
+				const channel = normalizeChannelName(next);
+				if (!channel) return;
+				streamState.channel = channel;
+				ensureChannelOption(channel);
+				document.getElementById('channelSelect').value = channel;
+				updateComposerState();
 				await loadHistory();
 				await loadOnline();
 				watch();
-			}
-
-			async function leave(channel) {
-				await fetch('/chat/leave', {
-					method: 'POST',
-					headers: {'Content-Type':'application/json','X-CSRF-Token': csrf},
-					body: JSON.stringify({channel: channel}),
-				});
+				updateComposerState();
+				const readOnly = streamState.locked.has(streamState.channel) && !canModerate;
+				setStatus(readOnly ? ('Live on ' + streamState.channel + ' (read-only)') : ('Live on ' + streamState.channel));
+				document.getElementById('message').focus();
 			}
 
 			document.getElementById('channelSelect').addEventListener('change', async function(evt){
-				await switchChannel(evt.target.value);
+				await refreshChannel(evt.target.value);
+			});
+
+			document.getElementById('customChannelForm').addEventListener('submit', async function(evt){
+				evt.preventDefault();
+				const field = document.getElementById('customChannel');
+				const channel = normalizeChannelName(field.value);
+				if (!channel) return;
+				field.value = '';
+				await refreshChannel(channel);
 			});
 
 			document.getElementById('sendForm').addEventListener('submit', async function(evt){
 				evt.preventDefault();
-				const message = document.getElementById('message').value;
+				const message = document.getElementById('message').value.trim();
 				if (!message) return;
 				const sendRes = await fetch('/chat/send', {
 					method:'POST',
@@ -11490,7 +13272,6 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 				}
 				document.getElementById('message').value = '';
 				setStatus('Sent to ' + streamState.channel);
-				await loadHistory();
 			});
 
 			document.getElementById('message').addEventListener('keydown', function(evt){
@@ -11502,18 +13283,47 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 				}
 			});
 
+			const modForm = document.getElementById('modForm');
+			if (modForm) {
+				modForm.addEventListener('submit', async function(evt){
+					evt.preventDefault();
+					const form = new FormData(modForm);
+					const payload = {
+						channel: normalizeChannelName(form.get('channel')),
+						action: String(form.get('action') || '').trim(),
+						target: String(form.get('target') || '').trim(),
+						reason: String(form.get('reason') || '').trim(),
+						duration: String(form.get('duration') || '').trim(),
+					};
+					const res = await fetch('/chat/moderation', {
+						method: 'POST',
+						headers: {'Content-Type':'application/json','X-CSRF-Token': csrf},
+						body: JSON.stringify(payload),
+					});
+					if (!res.ok) {
+						setStatus('Moderation failed.');
+						return;
+					}
+					setStatus('Moderation applied to ' + payload.channel);
+					if (payload.channel === streamState.channel) {
+						await loadOnline();
+					}
+				});
+			}
+
+			document.getElementById('chatReconnect').addEventListener('click', async function(){
+				await loadChannels();
+				await refreshChannel(streamState.channel);
+			});
+
 			window.addEventListener('load', async () => {
 				await loadChannels();
 				streamState.channel = document.getElementById('channelSelect').value || '#lobby';
-				await join();
-				await loadHistory();
-				await loadOnline();
-				watch();
+				await refreshChannel(streamState.channel);
 				setInterval(loadOnline, 5000);
 			});
 
-			window.addEventListener('beforeunload', async () => {
-				await leave(streamState.channel);
+			window.addEventListener('beforeunload', () => {
 				stopStream();
 			});
 		</script>
@@ -11575,7 +13385,11 @@ func (a *webApp) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	if channel == "" {
 		channel = "#lobby"
 	}
-	a.chatSvc.JoinChannel(user.Handle, channel)
+	joinedForStream := !a.chatSvc.IsInChannel(user.Handle, channel)
+	if joinedForStream {
+		a.chatSvc.JoinChannel(user.Handle, channel)
+		defer a.chatSvc.LeaveChannel(user.Handle, channel)
+	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -11757,6 +13571,9 @@ func (a *webApp) handleChatOnline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	channel := chat.NormalizeChannel(strings.TrimSpace(r.URL.Query().Get("channel")))
+	if channel == "" {
+		channel = "#lobby"
+	}
 	presence := a.chatSvc.OnlineInChannel(channel)
 	_ = writeJSON(w, http.StatusOK, map[string]interface{}{
 		"channel":  channel,
@@ -12357,12 +14174,18 @@ func webQuickJumpPath(raw string) string {
 		return "/attention"
 	case "today", "brief", "daily", "t":
 		return "/today"
+	case "digest", "daily-digest":
+		return "/digest"
 	case "events", "calendar", "event", "e":
 		return "/events"
+	case "tournaments", "tourney", "bracket":
+		return "/tournaments"
 	case "boards", "messages", "msg", "m":
 		return "/boards"
 	case "mail", "pm", "p":
 		return "/mail"
+	case "bookmarks", "saved", "later", "read-later":
+		return "/bookmarks"
 	case "chat", "c":
 		return "/chat"
 	case "bulletins", "bulletin", "news", "b":
@@ -12915,6 +14738,7 @@ func (a *webApp) buildBulletinSnapshot(user *domain.User) bulletinSnapshot {
 	}
 	if a.adminRepo != nil {
 		entries, _ := a.adminRepo.ListFileEntries(0, "", nil, 6)
+		entries = a.filterVisibleFiles(entries)
 		areaNames := map[int64]string{}
 		if areas, err := a.adminRepo.ListFileAreas(); err == nil {
 			for _, area := range areas {
@@ -13046,6 +14870,53 @@ func (a *webApp) buildBoardMenuRows(user *domain.User, boards []domain.Board, qu
 	return filtered, queue
 }
 
+func moderationFingerprint(msg domain.Message) string {
+	subject := strings.ToLower(strings.TrimSpace(msg.Subject))
+	body := strings.ToLower(strings.TrimSpace(msg.Body))
+	body = cleanOneLiner(body, 160)
+	return subject + "|" + body
+}
+
+func buildModerationHints(msgs []domain.Message, reports []domain.MessageReport) map[int64]string {
+	threadCounts := map[int64]int{}
+	reportCounts := map[int64]int{}
+	fingerprintCounts := map[string]int{}
+	fingerprintByMessage := map[int64]string{}
+	now := time.Now().UTC()
+	for _, row := range msgs {
+		threadCounts[row.ThreadID]++
+		fp := moderationFingerprint(row)
+		fingerprintByMessage[row.ID] = fp
+		if strings.TrimSpace(fp) != "|" {
+			fingerprintCounts[fp]++
+		}
+	}
+	for _, row := range reports {
+		reportCounts[row.MessageID]++
+	}
+	out := map[int64]string{}
+	for _, row := range msgs {
+		hints := make([]string, 0, 4)
+		if count := threadCounts[row.ThreadID]; count > 1 {
+			hints = append(hints, "thread "+strconv.Itoa(count))
+		}
+		if count := reportCounts[row.ID]; count > 0 {
+			hints = append(hints, "reports "+strconv.Itoa(count))
+		}
+		if fp := fingerprintByMessage[row.ID]; fp != "" {
+			if count := fingerprintCounts[fp]; count > 1 {
+				hints = append(hints, "possible duplicate x"+strconv.Itoa(count))
+			}
+		}
+		age := now.Sub(row.CreatedAt)
+		if age > 0 {
+			hints = append(hints, "age "+formatDurationCompact(age))
+		}
+		out[row.ID] = strings.Join(hints, " • ")
+	}
+	return out
+}
+
 func (a *webApp) buildDirectoryRows(query string, onlineOnly bool, verifiedFilter, roleFilter string) []directoryRow {
 	users, err := a.authSvc.ListUsers()
 	if err != nil {
@@ -13057,11 +14928,22 @@ func (a *webApp) buildDirectoryRows(query string, onlineOnly bool, verifiedFilte
 	presence := map[string]directoryRow{}
 	if a.adminRepo != nil {
 		if sessions, err := a.adminRepo.ListNodeSessions(200); err == nil {
+			now := time.Now().UTC()
 			for _, row := range sessions {
+				idle := time.Duration(0)
+				if !row.LastActivity.IsZero() {
+					idle = now.Sub(row.LastActivity)
+					if idle < 0 {
+						idle = 0
+					}
+				}
 				presence[strings.ToLower(row.Username)] = directoryRow{
 					Online: true,
+					Node:   "Node " + strconv.Itoa(row.NodeID),
+					Idle:   formatDurationCompact(idle),
 					Area:   row.Area,
 					Origin: strings.ToUpper(netutil.RemoteOrigin(row.RemoteAddr)),
+					From:   remoteHostDisplay(row.RemoteAddr),
 				}
 			}
 		}
@@ -13102,7 +14984,7 @@ func (a *webApp) buildDirectoryRows(query string, onlineOnly bool, verifiedFilte
 			}
 		}
 		if query != "" {
-			hay := strings.ToLower(strings.Join([]string{entry.Handle, entry.Role, entry.Theme, entry.LastLogin, entry.Area, entry.Origin}, " "))
+			hay := strings.ToLower(strings.Join([]string{entry.Handle, entry.Role, entry.Theme, entry.LastLogin, entry.Node, entry.Idle, entry.Area, entry.Origin, entry.From}, " "))
 			if !strings.Contains(hay, query) {
 				continue
 			}
@@ -13138,13 +15020,24 @@ func (a *webApp) buildDirectoryProfile(currentUser, target *domain.User) *direct
 	}
 	if a.adminRepo != nil {
 		if sessions, err := a.adminRepo.ListNodeSessions(200); err == nil {
+			now := time.Now().UTC()
 			for _, row := range sessions {
 				if !strings.EqualFold(row.Username, target.Handle) {
 					continue
 				}
+				idle := time.Duration(0)
+				if !row.LastActivity.IsZero() {
+					idle = now.Sub(row.LastActivity)
+					if idle < 0 {
+						idle = 0
+					}
+				}
 				profile.Online = true
+				profile.OnlineNode = "Node " + strconv.Itoa(row.NodeID)
+				profile.OnlineIdle = formatDurationCompact(idle)
 				profile.OnlineArea = row.Area
-				profile.OnlineOrigin = remoteHostDisplay(row.RemoteAddr)
+				profile.OnlineOrigin = strings.ToUpper(netutil.RemoteOrigin(row.RemoteAddr))
+				profile.OnlineFrom = remoteHostDisplay(row.RemoteAddr)
 				break
 			}
 		}
@@ -13357,6 +15250,7 @@ func (a *webApp) buildNewFilesSnapshot(user *domain.User, sinceFilter, tagFilter
 		}
 	}
 	if rows, err := a.adminRepo.ListFileEntries(0, "", nil, 120); err == nil {
+		rows = a.filterVisibleFiles(rows)
 		filtered := make([]domain.FileEntry, 0, len(rows))
 		cutoff := time.Time{}
 		switch sinceFilter {
@@ -13413,12 +15307,14 @@ func (a *webApp) buildNewFilesSnapshot(user *domain.User, sinceFilter, tagFilter
 		snapshot.SavedFilters = rows
 	}
 	if rows, err := a.adminRepo.ListDownloadQueue(user.ID, 100); err == nil {
-		snapshot.Queue = rows
+		filteredQueue := make([]domain.DownloadQueueItem, 0, len(rows))
 		for _, row := range rows {
-			if entry, err := a.adminRepo.GetFileEntry(row.FileID); err == nil && entry != nil {
+			if entry, err := a.adminRepo.GetFileEntry(row.FileID); err == nil && entry != nil && a.fileVisibleToCallers(entry.ID) {
+				filteredQueue = append(filteredQueue, row)
 				snapshot.QueueNames[row.FileID] = entry.Name
 			}
 		}
+		snapshot.Queue = filteredQueue
 	}
 	if len(snapshot.RecentUploads) > 16 {
 		snapshot.RecentUploads = snapshot.RecentUploads[:16]

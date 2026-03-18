@@ -307,9 +307,35 @@
       "notes": "Discovered from cmd/wolfbbs-web route registration."
     },
     {
+      "id": "web:/bookmarks",
+      "type": "web_route",
+      "entrypoint": "/bookmarks",
+      "user_tui": false,
+      "user_web": true,
+      "admin_tui": false,
+      "admin_web": false,
+      "config_ui": "/admin/config",
+      "status_ui": "/status",
+      "state_visibility": "enabled/configured/healthy surfaced via status center",
+      "notes": "Discovered from cmd/wolfbbs-web route registration."
+    },
+    {
       "id": "web:/events",
       "type": "web_route",
       "entrypoint": "/events",
+      "user_tui": false,
+      "user_web": true,
+      "admin_tui": false,
+      "admin_web": true,
+      "config_ui": "/admin/events",
+      "status_ui": "/status",
+      "state_visibility": "enabled/configured/healthy surfaced via status center",
+      "notes": "Discovered from cmd/wolfbbs-web route registration."
+    },
+    {
+      "id": "web:/tournaments",
+      "type": "web_route",
+      "entrypoint": "/tournaments",
       "user_tui": false,
       "user_web": true,
       "admin_tui": false,
@@ -606,6 +632,19 @@
       "notes": "Discovered from cmd/wolfbbs-web route registration."
     },
     {
+      "id": "web:/handles/suggest",
+      "type": "web_route",
+      "entrypoint": "/handles/suggest",
+      "user_tui": false,
+      "user_web": true,
+      "admin_tui": false,
+      "admin_web": false,
+      "config_ui": "/admin/config",
+      "status_ui": "/status",
+      "state_visibility": "enabled/configured/healthy surfaced via status center",
+      "notes": "Authenticated JSON handle-assist endpoint discovered from cmd/wolfbbs-web route registration."
+    },
+    {
       "id": "web:/healthz",
       "type": "web_route",
       "entrypoint": "/healthz",
@@ -809,6 +848,19 @@
       "admin_tui": false,
       "admin_web": false,
       "config_ui": "/admin/events",
+      "status_ui": "/status",
+      "state_visibility": "enabled/configured/healthy surfaced via status center",
+      "notes": "Discovered from cmd/wolfbbs-web route registration."
+    },
+    {
+      "id": "web:/digest",
+      "type": "web_route",
+      "entrypoint": "/digest",
+      "user_tui": true,
+      "user_web": true,
+      "admin_tui": false,
+      "admin_web": false,
+      "config_ui": "/settings",
       "status_ui": "/status",
       "state_visibility": "enabled/configured/healthy surfaced via status center",
       "notes": "Discovered from cmd/wolfbbs-web route registration."

@@ -2,12 +2,16 @@ const path = require("path");
 const { defineConfig } = require("@playwright/test");
 
 const repoRoot = process.env.WOLFBBS_E2E_REPO_ROOT || path.resolve(__dirname, "..", "..");
-const baseURL = process.env.WOLFBBS_E2E_BASE_URL || "http://127.0.0.1:18080";
+const localWebPort = process.env.WOLFBBS_E2E_LOCAL_WEB_PORT || "18080";
+const localBaseURL = `http://127.0.0.1:${localWebPort}`;
+const externalBaseURL = process.env.WOLFBBS_E2E_BASE_URL;
+const baseURL = externalBaseURL || localBaseURL;
 const sqlitePath = process.env.WOLFBBS_E2E_SQLITE_PATH || "/tmp/wolfbbs-playwright-e2e.db";
 const configuredDatabaseURL =
   process.env.WOLFBBS_E2E_DATABASE_URL ||
-  process.env.WOLFBBS_DATABASE_URL ||
-  process.env.DATABASE_URL ||
+  (externalBaseURL
+    ? process.env.WOLFBBS_DATABASE_URL || process.env.DATABASE_URL
+    : undefined) ||
   `sqlite://${sqlitePath}`;
 
 function normalizeDatabaseURL(value) {
@@ -64,19 +68,19 @@ const sharedEnv = [
 ];
 const envPrefix = `env ${sharedEnv.join(" ")}`;
 
-const webServer = process.env.WOLFBBS_E2E_BASE_URL
+const webServer = externalBaseURL
   ? undefined
   : {
       command: sqliteMode
-        ? `${envPrefix} go run ./cmd/wolfbbs-web -listen 127.0.0.1:18080`
+        ? `${envPrefix} go run ./cmd/wolfbbs-web -listen 127.0.0.1:${localWebPort}`
         : `${envPrefix} sh -c ${shellQuote(
             `trap 'kill 0' EXIT; ` +
               `go run ./cmd/wolfbbs-irc -listen 127.0.0.1:${ircPort} >/tmp/wolfbbs-e2e-irc.log 2>&1 & ` +
-              `go run ./cmd/wolfbbs-web -listen 127.0.0.1:18080`,
+              `go run ./cmd/wolfbbs-web -listen 127.0.0.1:${localWebPort}`,
           )}`,
       cwd: repoRoot,
       url: `${baseURL}/healthz`,
-      reuseExistingServer: true,
+      reuseExistingServer: false,
       timeout: 120_000,
     };
 

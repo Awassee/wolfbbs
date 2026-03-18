@@ -547,6 +547,20 @@ func (s *Service) LeaveChannel(nick, channel string) {
 	})
 }
 
+func (s *Service) IsInChannel(nick, channel string) bool {
+	nick = normalizeNick(nick)
+	channel = normalizeChannel(channel)
+	if nick == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if members, ok := s.channels[channel]; ok {
+		return members[nick]
+	}
+	return false
+}
+
 func (s *Service) Subscribe(channel, nick string) (chan Message, func()) {
 	channel = normalizeChannel(channel)
 	s.mu.Lock()

@@ -172,6 +172,166 @@ func deriveTags(filename, description string) []string {
 	return tags
 }
 
+func mergeFileTags(existing []string, raw string) []string {
+	out := map[string]struct{}{}
+	for _, tag := range existing {
+		tag = strings.ToLower(strings.TrimSpace(tag))
+		if tag != "" {
+			out[tag] = struct{}{}
+		}
+	}
+	for _, tag := range strings.Split(raw, ",") {
+		tag = strings.ToLower(strings.TrimSpace(tag))
+		tag = strings.TrimFunc(tag, func(r rune) bool {
+			return !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9') && r != '-' && r != '_'
+		})
+		if len(tag) >= 2 {
+			out[tag] = struct{}{}
+		}
+	}
+	tags := make([]string, 0, len(out))
+	for tag := range out {
+		tags = append(tags, tag)
+	}
+	sort.Strings(tags)
+	if len(tags) > 10 {
+		tags = tags[:10]
+	}
+	return tags
+}
+
+func sanitizeUploadFilename(name string) string {
+	name = filepath.Base(strings.ReplaceAll(strings.TrimSpace(name), "\\", "/"))
+	name = strings.TrimSpace(name)
+	name = strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z':
+			return r
+		case r >= 'A' && r <= 'Z':
+			return r
+		case r >= '0' && r <= '9':
+			return r
+		case r == '.', r == '-', r == '_':
+			return r
+		default:
+			return '_'
+		}
+	}, name)
+	name = strings.Trim(name, "._")
+	if name == "" {
+		return ""
+	}
+	return name
+}
+
+func nextAvailableUploadPath(root, name string) (string, string) {
+	name = sanitizeUploadFilename(name)
+	if name == "" {
+		return "", ""
+	}
+	destPath := filepath.Join(root, name)
+	if _, err := os.Stat(destPath); errors.Is(err, os.ErrNotExist) {
+		return destPath, name
+	}
+	ext := filepath.Ext(name)
+	stem := strings.TrimSuffix(name, ext)
+	for i := 2; i <= 200; i++ {
+		candidate := fmt.Sprintf("%s-%d%s", stem, i, ext)
+		destPath = filepath.Join(root, candidate)
+		if _, err := os.Stat(destPath); errors.Is(err, os.ErrNotExist) {
+			return destPath, candidate
+		}
+	}
+	return "", ""
+}
+
+func (a *webApp) importUploadedFile(r *http.Request, area domain.FileArea, uploader *domain.User, description, rawTags string) (*domain.FileEntry, error) {
+	if a.adminRepo == nil {
+		return nil, errors.New("admin repository unavailable")
+	}
+	if uploader == nil || uploader.ID <= 0 {
+		return nil, errors.New("uploader is required")
+	}
+	root := filepath.Clean(strings.TrimSpace(area.Path))
+	if root == "" || root == "." {
+		return nil, errors.New("invalid area path")
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return nil, err
+	}
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		return nil, fmt.Errorf("parse upload: %w", err)
+	}
+	src, header, err := r.FormFile("upload_file")
+	if err != nil {
+		return nil, err
+	}
+	defer src.Close()
+	destPath, displayName := nextAvailableUploadPath(root, header.Filename)
+	if destPath == "" || displayName == "" {
+		return nil, errors.New("invalid upload filename")
+	}
+	dst, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := io.Copy(dst, src); err != nil {
+		_ = dst.Close()
+		_ = os.Remove(destPath)
+		return nil, err
+	}
+	if err := dst.Close(); err != nil {
+		_ = os.Remove(destPath)
+		return nil, err
+	}
+	sum, err := fileSHA256(destPath)
+	if err != nil {
+		_ = os.Remove(destPath)
+		return nil, err
+	}
+	autoDesc, autoTags := fileMetadata(root, displayName)
+	finalDesc := strings.TrimSpace(description)
+	if finalDesc == "" {
+		finalDesc = autoDesc
+	}
+	info, err := os.Stat(destPath)
+	if err != nil {
+		_ = os.Remove(destPath)
+		return nil, err
+	}
+	entry := &domain.FileEntry{
+		AreaID:      area.ID,
+		Name:        displayName,
+		Path:        destPath,
+		Description: finalDesc,
+		Tags:        mergeFileTags(autoTags, rawTags),
+		SHA256:      sum,
+		SizeBytes:   info.Size(),
+		UploaderID:  uploader.ID,
+		UploadedAt:  info.ModTime().UTC(),
+	}
+	if err := a.adminRepo.UpsertFileEntry(entry); err != nil {
+		_ = os.Remove(destPath)
+		return nil, err
+	}
+	return entry, nil
+}
+
+func (a *webApp) deleteIndexedFile(entry *domain.FileEntry) error {
+	if entry == nil {
+		return errors.New("file entry is required")
+	}
+	if a.adminRepo == nil {
+		return errors.New("admin repository unavailable")
+	}
+	if path := strings.TrimSpace(entry.Path); path != "" {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return a.adminRepo.DeleteFileEntry(entry.ID)
+}
+
 func (a *webApp) createDownloadTicket(userID, fileID int64, ttl time.Duration) (*domain.DownloadTicket, error) {
 	if a.adminRepo == nil {
 		return nil, errors.New("admin repository unavailable")
@@ -252,6 +412,10 @@ func (a *webApp) handleGatewayFileAction(w http.ResponseWriter, r *http.Request,
 		fileID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("file_id")), 10, 64)
 		rating := parseInt(r.FormValue("rating"), 0)
 		if fileID > 0 && rating > 0 {
+			if !a.fileVisibleToCallers(fileID) {
+				errMsg = "File is still in review."
+				break
+			}
 			if err := a.adminRepo.SetFileRating(user.ID, fileID, rating); err != nil {
 				errMsg = "Could not save rating."
 				break
@@ -284,6 +448,10 @@ func (a *webApp) handleGatewayFileAction(w http.ResponseWriter, r *http.Request,
 	case "queue_add":
 		fileID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("file_id")), 10, 64)
 		if fileID > 0 {
+			if !a.fileVisibleToCallers(fileID) {
+				errMsg = "File is still in review."
+				break
+			}
 			if err := a.adminRepo.EnqueueDownload(user.ID, fileID); err != nil {
 				errMsg = "Could not add file to queue."
 				break
@@ -310,6 +478,10 @@ func (a *webApp) handleGatewayFileAction(w http.ResponseWriter, r *http.Request,
 			ttlMinutes = 15
 		}
 		if fileID > 0 {
+			if !a.fileVisibleToCallers(fileID) {
+				errMsg = "File is still in review."
+				break
+			}
 			ticket, err := a.createDownloadTicket(user.ID, fileID, time.Duration(ttlMinutes)*time.Minute)
 			if err == nil && ticket != nil {
 				redirectURL += "&issued_token=" + url.QueryEscape(ticket.Token)
@@ -336,12 +508,74 @@ func (a *webApp) handleGatewayFileAction(w http.ResponseWriter, r *http.Request,
 	return true
 }
 
+func (a *webApp) relatedVisibleFiles(entry *domain.FileEntry, limit int) []domain.FileEntry {
+	if a.adminRepo == nil || entry == nil {
+		return nil
+	}
+	if limit <= 0 {
+		limit = 6
+	}
+	all, err := a.adminRepo.ListFileEntries(0, "", nil, 400)
+	if err != nil {
+		return nil
+	}
+	all = a.filterVisibleFiles(all)
+	type scoredEntry struct {
+		entry domain.FileEntry
+		score int
+	}
+	tagSet := map[string]struct{}{}
+	for _, tag := range entry.Tags {
+		tag = strings.ToLower(strings.TrimSpace(tag))
+		if tag != "" {
+			tagSet[tag] = struct{}{}
+		}
+	}
+	scored := make([]scoredEntry, 0, len(all))
+	for _, row := range all {
+		if row.ID == entry.ID {
+			continue
+		}
+		score := 0
+		if row.AreaID == entry.AreaID {
+			score += 3
+		}
+		for _, tag := range row.Tags {
+			if _, ok := tagSet[strings.ToLower(strings.TrimSpace(tag))]; ok {
+				score += 2
+			}
+		}
+		if score == 0 {
+			continue
+		}
+		scored = append(scored, scoredEntry{entry: row, score: score})
+	}
+	sort.Slice(scored, func(i, j int) bool {
+		if scored[i].score != scored[j].score {
+			return scored[i].score > scored[j].score
+		}
+		if scored[i].entry.RatingAvg != scored[j].entry.RatingAvg {
+			return scored[i].entry.RatingAvg > scored[j].entry.RatingAvg
+		}
+		return scored[i].entry.UploadedAt.After(scored[j].entry.UploadedAt)
+	})
+	out := make([]domain.FileEntry, 0, limit)
+	for _, row := range scored {
+		out = append(out, row.entry)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
 func (a *webApp) renderGatewayFiles(w http.ResponseWriter, r *http.Request, user *domain.User) {
 	if a.adminRepo == nil {
 		http.Error(w, "filebase unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	fileAreaID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("area")), 10, 64)
+	fileID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("id")), 10, 64)
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	tagsRaw := strings.TrimSpace(r.URL.Query().Get("tags"))
 	tags := make([]string, 0)
@@ -352,6 +586,7 @@ func (a *webApp) renderGatewayFiles(w http.ResponseWriter, r *http.Request, user
 		}
 	}
 	files, _ := a.adminRepo.ListFileEntries(fileAreaID, query, tags, 250)
+	files = a.filterVisibleFiles(files)
 	filters, _ := a.adminRepo.ListFileFilters(user.ID)
 	queue, _ := a.adminRepo.ListDownloadQueue(user.ID, 200)
 	areas, _ := a.adminRepo.ListFileAreas()
@@ -361,20 +596,24 @@ func (a *webApp) renderGatewayFiles(w http.ResponseWriter, r *http.Request, user
 	}
 	queueNames := map[int64]string{}
 	for _, row := range queue {
-		if entry, err := a.adminRepo.GetFileEntry(row.FileID); err == nil && entry != nil {
+		if entry, err := a.adminRepo.GetFileEntry(row.FileID); err == nil && entry != nil && a.fileVisibleToCallers(entry.ID) {
 			queueNames[row.FileID] = entry.Name
 		}
 	}
 	issuedToken := strings.TrimSpace(r.URL.Query().Get("issued_token"))
 	csrf := a.csrfHiddenInput(r)
 	messageBlock := pageMessageBlock(r)
+	returnTo := "/gateway?view=files"
+	if raw := r.URL.RawQuery; strings.TrimSpace(raw) != "" {
+		returnTo += "&" + raw
+	}
 
 	fileRows := strings.Builder{}
 	for _, row := range files {
 		tagsText := htmlEscape(strings.Join(row.Tags, ","))
-		fileRows.WriteString(`<tr><td>` + strconv.FormatInt(row.ID, 10) + `</td><td>` + htmlEscape(areaNames[row.AreaID]) + `</td><td>` + htmlEscape(row.Name) + `</td><td>` + tagsText + `</td><td>` + fmt.Sprintf("%.2f", row.RatingAvg) + ` (` + strconv.Itoa(row.RatingCount) + `)</td><td>`)
-		fileRows.WriteString(`<form method="POST" action="/gateway">` + csrf + `<input type="hidden" name="action" value="rate_file"><input type="hidden" name="file_id" value="` + strconv.FormatInt(row.ID, 10) + `"><input name="rating" size="2" value="5"><button type="submit">rate</button></form>`)
-		fileRows.WriteString(`<form method="POST" action="/gateway">` + csrf + `<input type="hidden" name="action" value="queue_add"><input type="hidden" name="file_id" value="` + strconv.FormatInt(row.ID, 10) + `"><button type="submit">queue</button></form></td></tr>`)
+		fileRows.WriteString(`<tr><td>` + strconv.FormatInt(row.ID, 10) + `</td><td>` + htmlEscape(areaNames[row.AreaID]) + `</td><td><a href="/gateway?view=files&id=` + strconv.FormatInt(row.ID, 10) + `">` + htmlEscape(row.Name) + `</a><br><span class="wolfbbs-muted">` + htmlEscape(cleanOneLiner(defaultIfBlank(row.Description, "No description yet."), 120)) + `</span></td><td>` + tagsText + `</td><td>` + fmt.Sprintf("%.2f", row.RatingAvg) + ` (` + strconv.Itoa(row.RatingCount) + `)</td><td>`)
+		fileRows.WriteString(`<form method="POST" action="/gateway">` + csrf + `<input type="hidden" name="action" value="rate_file"><input type="hidden" name="file_id" value="` + strconv.FormatInt(row.ID, 10) + `"><input type="hidden" name="return_to" value="` + htmlEscape(returnTo) + `"><input name="rating" size="2" value="5"><button type="submit">rate</button></form>`)
+		fileRows.WriteString(`<form method="POST" action="/gateway">` + csrf + `<input type="hidden" name="action" value="queue_add"><input type="hidden" name="file_id" value="` + strconv.FormatInt(row.ID, 10) + `"><input type="hidden" name="return_to" value="` + htmlEscape(returnTo) + `"><button type="submit">queue</button></form></td></tr>`)
 	}
 	if fileRows.Len() == 0 {
 		fileRows.WriteString(`<tr><td colspan="6">No files matched.</td></tr>`)
@@ -390,6 +629,9 @@ func (a *webApp) renderGatewayFiles(w http.ResponseWriter, r *http.Request, user
 
 	queueRows := strings.Builder{}
 	for _, row := range queue {
+		if !a.fileVisibleToCallers(row.FileID) {
+			continue
+		}
 		name := queueNames[row.FileID]
 		if name == "" {
 			name = "file #" + strconv.FormatInt(row.FileID, 10)
@@ -408,11 +650,40 @@ func (a *webApp) renderGatewayFiles(w http.ResponseWriter, r *http.Request, user
 		issuedBlock = `<p><strong>Ticket issued:</strong> <code>` + htmlEscape(issuedToken) + `</code><br><a href="/gateway?download=` + url.QueryEscape(issuedToken) + `">/gateway?download=` + url.QueryEscape(issuedToken) + `</a></p>`
 	}
 
+	previewBlock := ``
+	if fileID > 0 {
+		if entry, err := a.adminRepo.GetFileEntry(fileID); err == nil && entry != nil && a.fileVisibleToCallers(entry.ID) {
+			relatedRows := strings.Builder{}
+			for _, related := range a.relatedVisibleFiles(entry, 6) {
+				relatedRows.WriteString(`<li><a href="/gateway?view=files&id=` + strconv.FormatInt(related.ID, 10) + `">` + htmlEscape(related.Name) + `</a> <span class="wolfbbs-muted">` + htmlEscape(strings.Join(related.Tags, ", ")) + `</span></li>`)
+			}
+			if relatedRows.Len() == 0 {
+				relatedRows.WriteString(`<li>No related uploads yet.</li>`)
+			}
+			tagLinks := strings.Builder{}
+			for _, tag := range entry.Tags {
+				clean := strings.TrimSpace(tag)
+				if clean == "" {
+					continue
+				}
+				if tagLinks.Len() > 0 {
+					tagLinks.WriteString(` `)
+				}
+				tagLinks.WriteString(`<a href="/gateway?view=files&tags=` + url.QueryEscape(clean) + `">#` + htmlEscape(clean) + `</a>`)
+			}
+			if tagLinks.Len() == 0 {
+				tagLinks.WriteString(`<span class="wolfbbs-muted">No tags yet.</span>`)
+			}
+			previewBlock = `<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>File Preview</h2><p><strong>` + htmlEscape(entry.Name) + `</strong> in ` + htmlEscape(areaNames[entry.AreaID]) + `</p><p>` + htmlEscape(defaultIfBlank(entry.Description, "No description provided yet.")) + `</p><ul class="wolfbbs-list-clean"><li>Size: ` + strconv.FormatInt(entry.SizeBytes, 10) + ` bytes</li><li>Uploaded: ` + entry.UploadedAt.Local().Format("2006-01-02 15:04") + `</li><li>Rating: ` + fmt.Sprintf("%.2f", entry.RatingAvg) + ` from ` + strconv.Itoa(entry.RatingCount) + ` votes</li><li>SHA-256: <code>` + htmlEscape(entry.SHA256) + `</code></li></ul><p><strong>Tags:</strong> ` + tagLinks.String() + `</p><div class="wolfbbs-inline-actions"><form method="POST" action="/gateway">` + csrf + `<input type="hidden" name="action" value="queue_add"><input type="hidden" name="file_id" value="` + strconv.FormatInt(entry.ID, 10) + `"><input type="hidden" name="return_to" value="/gateway?view=files&id=` + strconv.FormatInt(entry.ID, 10) + `"><button type="submit">Add To Queue</button></form><form method="POST" action="/gateway">` + csrf + `<input type="hidden" name="action" value="ticket"><input type="hidden" name="file_id" value="` + strconv.FormatInt(entry.ID, 10) + `"><input type="hidden" name="return_to" value="/gateway?view=files&id=` + strconv.FormatInt(entry.ID, 10) + `"><input name="ttl_minutes" size="4" value="15"><button type="submit">Issue Ticket</button></form></div></article><article class="wolfbbs-card"><h2>Related Uploads</h2><ul>` + relatedRows.String() + `</ul></article></section>`
+		}
+	}
+
 	page := `<html><body>
 	<h1>Gateway FileBase</h1>
 	<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/gateway">gateway</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>` +
 		messageBlock +
 		issuedBlock +
+		previewBlock +
 		`<p><strong>Tip:</strong> Queue files first, then issue one-time tickets or download the batch ZIP.</p>` +
 		`<form method="GET" action="/gateway">
 			<input type="hidden" name="view" value="files">
@@ -463,7 +734,7 @@ func (a *webApp) serveGatewayBatchZip(w http.ResponseWriter, r *http.Request, us
 	nameCount := map[string]int{}
 	for _, row := range queue {
 		entry, err := a.adminRepo.GetFileEntry(row.FileID)
-		if err != nil || entry == nil {
+		if err != nil || entry == nil || !a.fileVisibleToCallers(entry.ID) {
 			continue
 		}
 		path, err := a.resolveDownloadPath(entry)
@@ -535,6 +806,10 @@ func (a *webApp) serveGatewayDownload(w http.ResponseWriter, r *http.Request, us
 	entry, err := a.adminRepo.GetFileEntry(ticket.FileID)
 	if err != nil || entry == nil {
 		http.Error(w, "file entry not found", http.StatusNotFound)
+		return true
+	}
+	if !a.fileVisibleToCallers(entry.ID) && rbac.NormalizeRole(user.Role) != roleAdmin {
+		http.Error(w, "file still in review", http.StatusForbidden)
 		return true
 	}
 	path, err := a.resolveDownloadPath(entry)

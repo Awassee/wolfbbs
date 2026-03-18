@@ -70,8 +70,10 @@ Auto-generated from `docs/function-registry.json`.
 | `web:/admin/users` | `web_route` | N | N | N | Y | `/admin/config` | `/admin/system` |
 | `web:/attention` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/ap/users/` | `web_route` | N | N | N | N | `/admin/config` | `/status` |
+| `web:/bookmarks` | `web_route` | Y | Y | N | N | `/settings` | `/status` |
 | `web:/boards` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/events` | `web_route` | N | Y | N | Y | `/admin/events` | `/status` |
+| `web:/tournaments` | `web_route` | N | Y | N | Y | `/admin/events` | `/status` |
 | `web:/chat` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/chat/channels` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/chat/history` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
@@ -94,6 +96,7 @@ Auto-generated from `docs/function-registry.json`.
 | `web:/clubhouse` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/doors` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/gateway` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
+| `web:/handles/suggest` | `web_route` | N | Y | N | N | `/admin/config` | `/status` |
 | `web:/healthz` | `web_route` | N | N | N | N | `N/A (operational endpoint)` | `/admin/system` |
 | `web:/help` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/login` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
@@ -110,4 +113,5 @@ Auto-generated from `docs/function-registry.json`.
 | `web:/statusz` | `web_route` | N | Y | N | N | `/admin/config` | `/status` |
 | `web:/start` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |
 | `web:/today` | `web_route` | Y | Y | N | N | `/admin/events` | `/status` |
+| `web:/digest` | `web_route` | Y | Y | N | N | `/settings` | `/status` |
 | `web:/tour` | `web_route` | Y | Y | N | N | `/admin/config` | `/status` |

@@ -69,7 +69,7 @@ def main() -> int:
     host = os.environ.get("IRC_HOST", "127.0.0.1")
     port = int(os.environ.get("IRC_PORT", "6667"))
     auth_user = os.environ.get("IRC_TEST_USER", "sysop")
-    auth_pass = os.environ.get("IRC_TEST_PASS", "wolfbbs-sysop")
+    auth_pass = os.environ.get("IRC_TEST_PASS", "password123")
 
     # 1) Unauthenticated JOIN should fail with 451.
     try:

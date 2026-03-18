@@ -35,10 +35,10 @@ Value: makes repeat visits faster.
 Status: shipped in v1.1.13.
 9. Daily digest email or web summary opt-in.
 Value: supports return behavior outside active sessions.
-Status: planned.
+Status: shipped as web summary in this pass.
 10. Mobile-first connect guidance for SSH, web terminal, and IRC.
 Value: lowers friction for non-desktop callers.
-Status: planned.
+Status: shipped in this pass.
 
 ## Theme 2: Communication and social depth
 11. Persistent notification model with read/unread state, not just generated queues.
@@ -49,16 +49,16 @@ Value: gives users more control than a binary watch list.
 Status: shipped in v1.1.12.
 13. Mention autocomplete in boards, mail, and chat.
 Value: reduces failed mentions and typing friction.
-Status: planned.
+Status: shipped in v1.1.14.
 14. Caller presence cards showing current surface, idle, and entry source.
 Value: makes the board feel alive.
-Status: planned.
+Status: shipped in v1.1.14.
 15. Rich private mail folders and labels.
 Value: improves mailbox triage.
 Status: planned.
 16. Thread bookmarking and later-read queue.
 Value: supports deep boards without overload.
-Status: planned.
+Status: shipped in v1.1.14 as persistent read-later queue for board posts and mail.
 17. Scheduled announcements and bulletin publishing.
 Value: lets sysops plan communication instead of posting ad hoc.
 Status: planned.
@@ -81,7 +81,7 @@ Value: speeds catch-up in long discussions.
 Status: planned.
 23. Moderator review queue with duplicate/spam triage helpers.
 Value: reduces moderation overhead.
-Status: planned.
+Status: shipped in v1.1.14 as moderation hints and duplicate/report surfacing.
 24. Board-level posting templates and pinned welcome messages.
 Value: improves content quality and consistency.
 Status: planned.
@@ -107,10 +107,10 @@ Status: later.
 ## Theme 4: Files, downloads, and offline use
 31. Modernized upload flow with metadata extraction and moderation hold queue.
 Value: makes the filebase usable as a living system.
-Status: next.
+Status: shipped in this pass.
 32. Rich file preview pages with tags, ratings, and related uploads.
 Value: improves discoverability.
-Status: planned.
+Status: shipped in v1.1.14.
 33. Resumable download tokens and clearer download desk UX.
 Value: reduces failed transfers.
 Status: planned.
@@ -139,7 +139,7 @@ Status: later.
 ## Theme 5: Doors, events, and retention loops
 41. Tournament engine with brackets, standings, and reward surfaces.
 Value: makes competitive doors feel like a product system.
-Status: next.
+Status: in progress. Tournament Center, standings, and bracket preview shipped through v1.1.14; full event-linked bracket engine still planned.
 42. Event recurrence and series management in `/admin/events`.
 Value: reduces manual calendar maintenance.
 Status: shipped in v1.1.12.
@@ -168,8 +168,5 @@ Status: later.
 Value: keeps product improvement tied to operational quality.
 Status: later.
 
-## Next recommended tranche
-- Tournament scaffolding on top of the recurring events system.
-- File upload modernization.
-- Daily digest email or web summary opt-in.
-- Mobile-first connect guidance for SSH, web terminal, and IRC.
+## Continuation
+- The next ordered 50-item backlog continues in `docs/ROADMAP_NEXT_50.md`.

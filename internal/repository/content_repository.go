@@ -255,6 +255,7 @@ type AdminRepository interface {
 	DeleteFileArea(id int64) error
 	GetFileEntry(id int64) (*domain.FileEntry, error)
 	UpsertFileEntry(entry *domain.FileEntry) error
+	DeleteFileEntry(id int64) error
 	ListFileEntries(areaID int64, query string, tags []string, limit int) ([]domain.FileEntry, error)
 	SetFileRating(userID, fileID int64, rating int) error
 	SaveFileFilter(filter *domain.FileFilter) error
@@ -637,6 +638,31 @@ func (r *InMemoryAdminRepository) UpsertFileEntry(entry *domain.FileEntry) error
 	entry.CreatedAt = now
 	entry.UpdatedAt = now
 	r.fileEntries[entry.ID] = *entry
+	return nil
+}
+
+func (r *InMemoryAdminRepository) DeleteFileEntry(id int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.fileEntries[id]; !ok {
+		return ErrNotFound
+	}
+	delete(r.fileEntries, id)
+	for key := range r.fileRatings {
+		if key[1] == id {
+			delete(r.fileRatings, key)
+		}
+	}
+	for queueID, row := range r.downloadQueue {
+		if row.FileID == id {
+			delete(r.downloadQueue, queueID)
+		}
+	}
+	for token, row := range r.downloadTickets {
+		if row.FileID == id {
+			delete(r.downloadTickets, token)
+		}
+	}
 	return nil
 }
 

@@ -1556,6 +1556,44 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	return nil
 }
 
+func (r *SQLiteAdminRepository) DeleteFileEntry(id int64) error {
+	tx, err := r.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	res, err := tx.ExecContext(context.Background(), `DELETE FROM file_entries WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.ExecContext(context.Background(), `DELETE FROM file_ratings WHERE file_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(context.Background(), `DELETE FROM download_queue WHERE file_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(context.Background(), `DELETE FROM download_tickets WHERE file_id = ?`, id); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	tx = nil
+	return nil
+}
+
 func (r *SQLiteAdminRepository) ListFileEntries(areaID int64, query string, tags []string, limit int) ([]domain.FileEntry, error) {
 	if limit <= 0 {
 		limit = 200
