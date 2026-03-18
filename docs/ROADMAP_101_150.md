@@ -10,31 +10,31 @@ This document extends the ordered backlog beyond `docs/ROADMAP_NEXT_50.md`.
 ## Theme 11: Notification and pacing control
 101. Per-route digest frequency controls.
 Value: lets callers shape how often each surface interrupts them.
-Status: planned.
+Status: shipped in v1.1.16.
 
 102. Announcement acknowledgement tracking.
 Value: shows whether important board-wide notices were actually seen.
-Status: planned.
+Status: shipped in v1.1.16.
 
 103. Per-board quiet hours.
 Value: reduces low-value attention churn.
-Status: planned.
+Status: shipped in v1.1.16.
 
 104. Direct message urgency levels.
 Value: gives callers better signaling than plain subject text.
-Status: planned.
+Status: shipped in v1.1.16.
 
 105. Staff escalation queue for unresolved pages and notes.
 Value: prevents live support requests from evaporating.
-Status: planned.
+Status: shipped in v1.1.16.
 
 106. Reminder snooze controls on attention items.
 Value: supports deliberate triage instead of hard dismiss/read only.
-Status: planned.
+Status: shipped in v1.1.16.
 
 107. Weekly digest delivery by mail.
 Value: turns web digest into a true return channel.
-Status: planned.
+Status: shipped in v1.1.16.
 
 108. Activity heatmap for callers.
 Value: makes habits and quiet periods visible.

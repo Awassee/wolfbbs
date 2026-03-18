@@ -235,6 +235,26 @@ type pageRequest struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type quietHoursWindow struct {
+	Enabled   bool `json:"enabled"`
+	StartHour int  `json:"start_hour"`
+	EndHour   int  `json:"end_hour"`
+}
+
+type bulletinAckSummary struct {
+	Count  int
+	LastAt time.Time
+}
+
+type staffEscalationEntry struct {
+	ID         string    `json:"id"`
+	Handle     string    `json:"handle"`
+	Actor      string    `json:"actor"`
+	Note       string    `json:"note"`
+	CreatedAt  time.Time `json:"created_at"`
+	ResolvedAt time.Time `json:"resolved_at,omitempty"`
+}
+
 type bulletinSnapshot struct {
 	SystemWire     []string
 	DigestItems    []string
@@ -397,10 +417,14 @@ type firstCallSnapshot struct {
 }
 
 type digestPreferences struct {
-	Enabled       bool `json:"enabled"`
-	MaxItems      int  `json:"max_items"`
-	IncludeEvents bool `json:"include_events"`
-	IncludeBoards bool `json:"include_boards"`
+	Enabled          bool   `json:"enabled"`
+	MaxItems         int    `json:"max_items"`
+	IncludeEvents    bool   `json:"include_events"`
+	IncludeBoards    bool   `json:"include_boards"`
+	WeeklyMail       bool   `json:"weekly_mail"`
+	AttentionCadence string `json:"attention_cadence"`
+	BulletinCadence  string `json:"bulletin_cadence"`
+	EventCadence     string `json:"event_cadence"`
 }
 
 type fileReviewItem struct {
@@ -503,15 +527,21 @@ const (
 	sysSettingCommunityEvents        = "community.calendar.events"
 	sysSettingScheduledBulletins     = "community.bulletins.schedule"
 	sysSettingPageRequests           = "community.pages"
+	sysSettingBulletinAckRoot        = "community.bulletins.ack."
+	sysSettingStaffEscalations       = "staff.escalations"
 	sysSettingBoardSubscriptionsRoot = "web.board_subscriptions."
 	sysSettingBoardWatchRoot         = "web.board_watch."
+	sysSettingBoardQuietHoursRoot    = "web.board_quiet."
 	sysSettingAttentionDismissedRoot = "web.attention.dismissed."
 	sysSettingAttentionReadRoot      = "web.attention.read."
+	sysSettingAttentionSnoozeRoot    = "web.attention.snooze."
 	sysSettingLaunchChecklistRoot    = "web.launch_checklist."
 	sysSettingHomeRouteRoot          = "web.home_route."
 	sysSettingDigestPrefsRoot        = "web.digest_prefs."
 	sysSettingBookmarksRoot          = "web.bookmarks."
 	sysSettingFavoriteCallersRoot    = "web.favorite_callers."
+	sysSettingRouteSeenRoot          = "web.route_seen."
+	sysSettingWeeklyDigestSentRoot   = "web.digest_mail_sent."
 	sysSettingStaffNotesRoot         = "staff.notes."
 	sysSettingFileReviewQueue        = "web.file_review.queue"
 	maxAdminErrorEntries             = 300
@@ -524,10 +554,12 @@ const (
 	defaultResetRateWindow           = 30 * time.Minute
 	maxAttentionDismissedItems       = 200
 	maxAttentionReadItems            = 300
+	maxAttentionSnoozedItems         = 200
 	maxBookmarkItems                 = 200
 	maxHandleSuggestions             = 8
 	maxFavoriteCallers               = 32
 	maxPageRequests                  = 200
+	maxStaffEscalations              = 200
 )
 
 const (
@@ -547,53 +579,55 @@ type webApp struct {
 	email     *gateway.EmailGateway
 	sessions  map[string]sessionState
 	sync.Mutex
-	proxyResolver        *netutil.ProxyResolver
-	rateLimits           map[string][]time.Time
-	loginRateLimit       int
-	loginRateWindow      time.Duration
-	resetRateLimit       int
-	resetRateWindow      time.Duration
-	chatSvc              *chat.Service
-	doorRegistry         *doors.Registry
-	eventBus             *events.Bus
-	offlineDir           string
-	siteName             string
-	siteHostname         string
-	readOnly             bool
-	secureCookie         bool
-	requireVerifiedEmail bool
-	inboundToken         string
-	inboundAllow         map[string]struct{}
-	resetTTL             time.Duration
-	showResetDev         bool
-	apEnabled            bool
-	apBaseURL            string
-	publicBaseURL        string
-	resetNotifier        func(handle, token string, r *http.Request) error
-	startedAt            time.Time
-	runtimeCfg           config.Runtime
-	modernOnRamp         bool
-	guestTour            bool
-	discover             bool
-	quickJump            bool
-	classicSearch        bool
-	wsTerminalURL        string
-	menuRoot             string
-	savedSearches        map[string][]string
-	attentionDismissed   map[string]map[string]time.Time
-	attentionLoaded      map[string]bool
-	attentionRead        map[string]map[string]time.Time
-	attentionReadLoaded  map[string]bool
-	motd                 string
-	announcement         string
-	errorLog             []appErrorEntry
-	lockedChat           map[string]bool
-	networkSvc           *network.Service
-	modsManager          *mods.Manager
-	oneLinerzMod         *mods.OneLinerzMod
-	rumorzMod            *mods.RumorzMod
-	bbsListMod           *mods.BBSListMod
-	whoOnlineMod         *mods.WhoOnlineMod
+	proxyResolver         *netutil.ProxyResolver
+	rateLimits            map[string][]time.Time
+	loginRateLimit        int
+	loginRateWindow       time.Duration
+	resetRateLimit        int
+	resetRateWindow       time.Duration
+	chatSvc               *chat.Service
+	doorRegistry          *doors.Registry
+	eventBus              *events.Bus
+	offlineDir            string
+	siteName              string
+	siteHostname          string
+	readOnly              bool
+	secureCookie          bool
+	requireVerifiedEmail  bool
+	inboundToken          string
+	inboundAllow          map[string]struct{}
+	resetTTL              time.Duration
+	showResetDev          bool
+	apEnabled             bool
+	apBaseURL             string
+	publicBaseURL         string
+	resetNotifier         func(handle, token string, r *http.Request) error
+	startedAt             time.Time
+	runtimeCfg            config.Runtime
+	modernOnRamp          bool
+	guestTour             bool
+	discover              bool
+	quickJump             bool
+	classicSearch         bool
+	wsTerminalURL         string
+	menuRoot              string
+	savedSearches         map[string][]string
+	attentionDismissed    map[string]map[string]time.Time
+	attentionLoaded       map[string]bool
+	attentionRead         map[string]map[string]time.Time
+	attentionReadLoaded   map[string]bool
+	attentionSnoozed      map[string]map[string]time.Time
+	attentionSnoozeLoaded map[string]bool
+	motd                  string
+	announcement          string
+	errorLog              []appErrorEntry
+	lockedChat            map[string]bool
+	networkSvc            *network.Service
+	modsManager           *mods.Manager
+	oneLinerzMod          *mods.OneLinerzMod
+	rumorzMod             *mods.RumorzMod
+	bbsListMod            *mods.BBSListMod
+	whoOnlineMod          *mods.WhoOnlineMod
 }
 
 func seedWebUsers(authSvc *auth.Service) {
@@ -1044,10 +1078,14 @@ func digestPreferencesSettingKey(handle string) string {
 
 func defaultDigestPreferences() digestPreferences {
 	return digestPreferences{
-		Enabled:       false,
-		MaxItems:      12,
-		IncludeEvents: true,
-		IncludeBoards: true,
+		Enabled:          false,
+		MaxItems:         12,
+		IncludeEvents:    true,
+		IncludeBoards:    true,
+		WeeklyMail:       false,
+		AttentionCadence: "always",
+		BulletinCadence:  "daily",
+		EventCadence:     "daily",
 	}
 }
 
@@ -1058,7 +1096,37 @@ func normalizeDigestPreferences(pref digestPreferences) digestPreferences {
 	if pref.MaxItems > 24 {
 		pref.MaxItems = 24
 	}
+	pref.AttentionCadence = normalizeDigestCadence(pref.AttentionCadence)
+	pref.BulletinCadence = normalizeDigestCadence(pref.BulletinCadence)
+	pref.EventCadence = normalizeDigestCadence(pref.EventCadence)
 	return pref
+}
+
+func normalizeDigestCadence(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "always", "daily", "weekly", "off":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "daily"
+	}
+}
+
+func digestCadenceOptionRows(current string) string {
+	current = normalizeDigestCadence(current)
+	options := []struct {
+		Value string
+		Label string
+	}{
+		{Value: "always", Label: "always"},
+		{Value: "daily", Label: "daily"},
+		{Value: "weekly", Label: "weekly"},
+		{Value: "off", Label: "off"},
+	}
+	var out strings.Builder
+	for _, option := range options {
+		out.WriteString(`<option value="` + option.Value + `"` + selectedIf(option.Value == current) + `>` + option.Label + `</option>`)
+	}
+	return out.String()
 }
 
 func (a *webApp) loadDigestPreferences(handle string) digestPreferences {
@@ -1093,6 +1161,277 @@ func (a *webApp) persistDigestPreferences(handle string, pref digestPreferences)
 		return
 	}
 	a.persistSystemSetting(key, string(raw))
+}
+
+func routeSeenSettingKey(handle string) string {
+	handle = normalizeHandleKey(handle)
+	if handle == "" {
+		return ""
+	}
+	return sysSettingRouteSeenRoot + handle
+}
+
+func (a *webApp) loadRouteSeen(handle string) map[string]time.Time {
+	if a.adminRepo == nil {
+		return nil
+	}
+	key := routeSeenSettingKey(handle)
+	if key == "" {
+		return nil
+	}
+	raw, err := a.adminRepo.GetSystemSetting(key)
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	decoded := map[string]string{}
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		a.addAppError("route.seen", fmt.Errorf("decode route seen for %s: %w", handle, err))
+		return nil
+	}
+	out := map[string]time.Time{}
+	for route, value := range decoded {
+		route = strings.TrimSpace(route)
+		at, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(value))
+		if route == "" || err != nil {
+			continue
+		}
+		out[route] = at.UTC()
+	}
+	return out
+}
+
+func (a *webApp) persistRouteSeen(handle string, rows map[string]time.Time) {
+	key := routeSeenSettingKey(handle)
+	if key == "" {
+		return
+	}
+	encoded := map[string]string{}
+	for route, at := range rows {
+		route = strings.TrimSpace(route)
+		if route == "" || at.IsZero() {
+			continue
+		}
+		encoded[route] = at.UTC().Format(time.RFC3339Nano)
+	}
+	body := ""
+	if len(encoded) > 0 {
+		raw, err := json.Marshal(encoded)
+		if err != nil {
+			a.addAppError("route.seen", fmt.Errorf("encode route seen for %s: %w", handle, err))
+			return
+		}
+		body = string(raw)
+	}
+	a.persistSystemSetting(key, body)
+}
+
+func (a *webApp) markRouteSeen(handle, route string) {
+	handle = normalizeHandleKey(handle)
+	route = safeLocalRedirectPath(route, "")
+	if handle == "" || route == "" {
+		return
+	}
+	rows := a.loadRouteSeen(handle)
+	if rows == nil {
+		rows = map[string]time.Time{}
+	}
+	rows[route] = time.Now().UTC()
+	a.persistRouteSeen(handle, rows)
+}
+
+func routeCadenceDue(cadence string, lastSeen, now time.Time) bool {
+	switch normalizeDigestCadence(cadence) {
+	case "off":
+		return false
+	case "always":
+		return true
+	case "daily":
+		return lastSeen.IsZero() || now.Sub(lastSeen) >= 24*time.Hour
+	case "weekly":
+		return lastSeen.IsZero() || now.Sub(lastSeen) >= 7*24*time.Hour
+	default:
+		return true
+	}
+}
+
+func (a *webApp) routeSummaryDue(handle, route, cadence string, now time.Time) bool {
+	rows := a.loadRouteSeen(handle)
+	if rows == nil {
+		return routeCadenceDue(cadence, time.Time{}, now)
+	}
+	return routeCadenceDue(cadence, rows[safeLocalRedirectPath(route, "")], now)
+}
+
+func weeklyDigestSentSettingKey(handle string) string {
+	handle = normalizeHandleKey(handle)
+	if handle == "" {
+		return ""
+	}
+	return sysSettingWeeklyDigestSentRoot + handle
+}
+
+func (a *webApp) loadWeeklyDigestSentAt(handle string) time.Time {
+	if a.adminRepo == nil {
+		return time.Time{}
+	}
+	key := weeklyDigestSentSettingKey(handle)
+	if key == "" {
+		return time.Time{}
+	}
+	raw, err := a.adminRepo.GetSystemSetting(key)
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return time.Time{}
+	}
+	at, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(raw))
+	if err != nil {
+		return time.Time{}
+	}
+	return at.UTC()
+}
+
+func (a *webApp) persistWeeklyDigestSentAt(handle string, at time.Time) {
+	key := weeklyDigestSentSettingKey(handle)
+	if key == "" {
+		return
+	}
+	body := ""
+	if !at.IsZero() {
+		body = at.UTC().Format(time.RFC3339Nano)
+	}
+	a.persistSystemSetting(key, body)
+}
+
+func normalizeMailUrgency(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "low", "urgent":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "normal"
+	}
+}
+
+func mailUrgencyOptionRows(current string) string {
+	current = normalizeMailUrgency(current)
+	options := []struct {
+		Value string
+		Label string
+	}{
+		{Value: "normal", Label: "normal"},
+		{Value: "urgent", Label: "urgent"},
+		{Value: "low", Label: "low"},
+	}
+	var out strings.Builder
+	for _, option := range options {
+		out.WriteString(`<option value="` + option.Value + `"` + selectedIf(option.Value == current) + `>` + option.Label + `</option>`)
+	}
+	return out.String()
+}
+
+func applyMailUrgency(subject, urgency string) string {
+	subject = strings.TrimSpace(subject)
+	urgency = normalizeMailUrgency(urgency)
+	_, base := splitMailUrgency(subject)
+	switch urgency {
+	case "urgent":
+		return "[URGENT] " + base
+	case "low":
+		return "[LOW] " + base
+	default:
+		return base
+	}
+}
+
+func splitMailUrgency(subject string) (string, string) {
+	subject = strings.TrimSpace(subject)
+	upper := strings.ToUpper(subject)
+	switch {
+	case strings.HasPrefix(upper, "[URGENT] "):
+		return "urgent", strings.TrimSpace(subject[len("[URGENT] "):])
+	case strings.HasPrefix(upper, "[LOW] "):
+		return "low", strings.TrimSpace(subject[len("[LOW] "):])
+	default:
+		return "normal", subject
+	}
+}
+
+func mailUrgencyBadgeHTML(subject string) string {
+	urgency, _ := splitMailUrgency(subject)
+	switch urgency {
+	case "urgent":
+		return `<span class="wolfbbs-status-pill danger">urgent</span> `
+	case "low":
+		return `<span class="wolfbbs-status-pill">low</span> `
+	default:
+		return ``
+	}
+}
+
+func (a *webApp) sendWeeklyDigestMail(user *domain.User, pref digestPreferences, now time.Time) error {
+	if user == nil || a.mailRepo == nil {
+		return nil
+	}
+	if !pref.WeeklyMail {
+		return nil
+	}
+	if !routeCadenceDue("weekly", a.loadWeeklyDigestSentAt(user.Handle), now) {
+		return nil
+	}
+	fromUser, err := a.authSvc.GetUser("mailbot")
+	if err != nil || fromUser == nil {
+		return fmt.Errorf("mailbot account unavailable")
+	}
+	digest, err := discovery.BuildSinceLastCall(a.boardRepo, a.msgRepo, a.mailRepo, user, pref.MaxItems)
+	if err != nil {
+		return err
+	}
+	visibleBoards := a.visibleBoardsFor(user)
+	boardPulse := []boardPulseRow{}
+	if pref.IncludeBoards {
+		boardPulse = a.buildBoardPulse(user, filterBoardsByWatch(visibleBoards, a.boardSubscriptionIDs(user.Handle, boardSubscriptionDigest)), 6)
+	}
+	events := []communityEvent{}
+	if pref.IncludeEvents {
+		events = a.upcomingCommunityEvents(4, now)
+	}
+	lines := []string{
+		"Weekly WolfBBS digest",
+		"",
+		"Direct follow-up:",
+	}
+	if len(digest.Items) == 0 {
+		lines = append(lines, "- No new direct follow-up.")
+	} else {
+		for _, item := range digest.Items {
+			lines = append(lines, "- "+item.Line)
+		}
+	}
+	lines = append(lines, "", "Digest-tier boards:")
+	if len(boardPulse) == 0 {
+		lines = append(lines, "- No digest-tier board movement.")
+	} else {
+		for _, row := range boardPulse {
+			lines = append(lines, fmt.Sprintf("- %s: %d new, last %s (%s)", row.BoardName, row.NewCount, row.LastSubject, row.LastAt))
+		}
+	}
+	lines = append(lines, "", "Upcoming events:")
+	if len(events) == 0 {
+		lines = append(lines, "- No scheduled events.")
+	} else {
+		for _, row := range events {
+			lines = append(lines, "- "+row.Title+" | "+formatCommunityEventWindow(row))
+		}
+	}
+	lines = append(lines, "", "Open /digest, /today, or /attention for the live web views.")
+	if err := a.mailRepo.CreateMail(&domain.PrivateMail{
+		FromUserID: fromUser.ID,
+		ToUserID:   user.ID,
+		Subject:    "Weekly Digest",
+		Body:       strings.Join(lines, "\n"),
+	}); err != nil {
+		return err
+	}
+	a.persistWeeklyDigestSentAt(user.Handle, now)
+	return nil
 }
 
 func bookmarkSettingKey(handle string) string {
@@ -1512,6 +1851,30 @@ func (a *webApp) activePageRequestsFor(handle string, limit int) []pageRequest {
 		}
 	}
 	return out
+}
+
+func (a *webApp) resolvePageRequest(id string) bool {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false
+	}
+	rows := a.loadPageRequests()
+	if len(rows) == 0 {
+		return false
+	}
+	next := make([]pageRequest, 0, len(rows))
+	removed := false
+	for _, row := range rows {
+		if row.ID == id {
+			removed = true
+			continue
+		}
+		next = append(next, row)
+	}
+	if removed {
+		a.persistPageRequests(next)
+	}
+	return removed
 }
 
 func pageAttentionKey(id string) string {
@@ -2299,19 +2662,19 @@ func (a *webApp) handleAttentionCenter(w http.ResponseWriter, r *http.Request) {
 			keys := make([]string, 0, len(digest.Items)+len(boardPulse))
 			for _, item := range digest.Items {
 				key := attentionItemKey(item)
-				if key != "" && !a.isAttentionKeyDismissed(user.Handle, key) {
+				if key != "" && !a.isAttentionKeyDismissed(user.Handle, key) && a.attentionSnoozedUntil(user.Handle, key).IsZero() {
 					keys = append(keys, key)
 				}
 			}
 			for _, row := range boardPulse {
 				key := boardAttentionItemKey(row)
-				if key != "" && !a.isAttentionKeyDismissed(user.Handle, key) {
+				if key != "" && !a.isAttentionKeyDismissed(user.Handle, key) && a.attentionSnoozedUntil(user.Handle, key).IsZero() {
 					keys = append(keys, key)
 				}
 			}
 			for _, row := range loadPages() {
 				key := pageAttentionKey(row.ID)
-				if key != "" && !a.isAttentionKeyDismissed(user.Handle, key) {
+				if key != "" && !a.isAttentionKeyDismissed(user.Handle, key) && a.attentionSnoozedUntil(user.Handle, key).IsZero() {
 					keys = append(keys, key)
 				}
 			}
@@ -2321,6 +2684,31 @@ func (a *webApp) handleAttentionCenter(w http.ResponseWriter, r *http.Request) {
 		case "clear_dismissed":
 			a.clearAttentionDismissals(user.Handle)
 			redirectWithNotice(w, r, "/attention", "Dismissed attention items restored.")
+			return
+		case "snooze":
+			itemKey := strings.TrimSpace(r.FormValue("item_key"))
+			if itemKey == "" {
+				redirectWithError(w, r, "/attention", "Attention item key is required.")
+				return
+			}
+			hours := parseIntWithFallback(r.FormValue("snooze_hours"), 4)
+			if hours < 1 {
+				hours = 1
+			}
+			if hours > 168 {
+				hours = 168
+			}
+			a.snoozeAttentionItem(user.Handle, itemKey, time.Now().UTC().Add(time.Duration(hours)*time.Hour))
+			redirectWithNotice(w, r, "/attention", fmt.Sprintf("Attention item snoozed for %d hour(s).", hours))
+			return
+		case "unsnooze":
+			itemKey := strings.TrimSpace(r.FormValue("item_key"))
+			if itemKey == "" {
+				redirectWithError(w, r, "/attention", "Attention item key is required.")
+				return
+			}
+			a.clearAttentionSnooze(user.Handle, itemKey)
+			redirectWithNotice(w, r, "/attention", "Attention item restored from snooze.")
 			return
 		case "mark_mail_read":
 			mailID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("mail_id")), 10, 64)
@@ -2375,6 +2763,7 @@ func (a *webApp) handleAttentionCenter(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	a.markRouteSeen(user.Handle, "/attention")
 
 	digest, boardPulse, upcomingEvents, trackedLabel, watchSubs, digestSubs, err := buildAttentionContext()
 	if err != nil {
@@ -2389,6 +2778,7 @@ func (a *webApp) handleAttentionCenter(w http.ResponseWriter, r *http.Request) {
 	directSeen := make([]attentionActionRow, 0, 8)
 	pageUnread := make([]attentionActionRow, 0, 8)
 	pageSeen := make([]attentionActionRow, 0, 8)
+	snoozedRows := make([]attentionActionRow, 0, 8)
 	boardQueueUnread := make([]attentionActionRow, 0, 8)
 	boardUnread := make([]attentionActionRow, 0, 8)
 	boardSeen := make([]attentionActionRow, 0, 8)
@@ -2399,6 +2789,7 @@ func (a *webApp) handleAttentionCenter(w http.ResponseWriter, r *http.Request) {
 	seenCount := 0
 	for _, item := range digest.Items {
 		itemKey := attentionItemKey(item)
+		snoozedUntil := a.attentionSnoozedUntil(user.Handle, itemKey)
 		if a.isAttentionKeyDismissed(user.Handle, itemKey) {
 			continue
 		}
@@ -2420,6 +2811,11 @@ func (a *webApp) handleAttentionCenter(w http.ResponseWriter, r *http.Request) {
 			ItemKey:     itemKey,
 			Read:        a.isAttentionKeyRead(user.Handle, itemKey),
 			Dismissible: item.Kind != "mail",
+		}
+		if !snoozedUntil.IsZero() {
+			row.Meta += " | snoozed until " + snoozedUntil.Local().Format("01-02 15:04")
+			snoozedRows = append(snoozedRows, row)
+			continue
 		}
 		if row.Read {
 			seenCount++
@@ -2444,6 +2840,7 @@ func (a *webApp) handleAttentionCenter(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, item := range loadPages() {
 		itemKey := pageAttentionKey(item.ID)
+		snoozedUntil := a.attentionSnoozedUntil(user.Handle, itemKey)
 		if a.isAttentionKeyDismissed(user.Handle, itemKey) {
 			continue
 		}
@@ -2463,6 +2860,11 @@ func (a *webApp) handleAttentionCenter(w http.ResponseWriter, r *http.Request) {
 			ItemKey:     itemKey,
 			Read:        a.isAttentionKeyRead(user.Handle, itemKey),
 			Dismissible: true,
+		}
+		if !snoozedUntil.IsZero() {
+			row.Meta += " | snoozed until " + snoozedUntil.Local().Format("01-02 15:04")
+			snoozedRows = append(snoozedRows, row)
+			continue
 		}
 		if row.Read {
 			seenCount++
@@ -2510,6 +2912,9 @@ func (a *webApp) handleAttentionCenter(w http.ResponseWriter, r *http.Request) {
 			if row.Dismissible && row.ItemKey != "" {
 				list.WriteString(`<form method="POST" action="/attention"><input type="hidden" name="action" value="dismiss"><input type="hidden" name="item_key" value="` + htmlEscape(row.ItemKey) + `">` + csrf + `<button type="submit">Dismiss</button></form>`)
 			}
+			if !row.Read && row.ItemKey != "" {
+				list.WriteString(`<form method="POST" action="/attention"><input type="hidden" name="action" value="snooze"><input type="hidden" name="item_key" value="` + htmlEscape(row.ItemKey) + `"><input type="hidden" name="snooze_hours" value="4">` + csrf + `<button type="submit">Snooze 4h</button></form>`)
+			}
 			list.WriteString(`</div></li>`)
 		}
 		if list.Len() == 0 {
@@ -2520,6 +2925,7 @@ func (a *webApp) handleAttentionCenter(w http.ResponseWriter, r *http.Request) {
 
 	for _, row := range boardPulse {
 		itemKey := boardAttentionItemKey(row)
+		snoozedUntil := a.attentionSnoozedUntil(user.Handle, itemKey)
 		if a.isAttentionKeyDismissed(user.Handle, itemKey) {
 			continue
 		}
@@ -2530,6 +2936,11 @@ func (a *webApp) handleAttentionCenter(w http.ResponseWriter, r *http.Request) {
 			ItemKey:     itemKey,
 			Read:        a.isAttentionKeyRead(user.Handle, itemKey),
 			Dismissible: true,
+		}
+		if !snoozedUntil.IsZero() {
+			actionRow.Meta += " | snoozed until " + snoozedUntil.Local().Format("01-02 15:04")
+			snoozedRows = append(snoozedRows, actionRow)
+			continue
 		}
 		if actionRow.Read {
 			seenCount++
@@ -2546,6 +2957,13 @@ func (a *webApp) handleAttentionCenter(w http.ResponseWriter, r *http.Request) {
 	seenList := renderAttentionList(append(append([]attentionActionRow{}, directSeen...), boardSeen...), "No previously seen attention items are active.")
 	if len(pageSeen) > 0 {
 		seenList = renderAttentionList(append(append(append([]attentionActionRow{}, directSeen...), pageSeen...), boardSeen...), "No previously seen attention items are active.")
+	}
+	snoozedList := strings.Builder{}
+	for _, row := range snoozedRows {
+		snoozedList.WriteString(`<li><div class="wolfbbs-inline-actions"><a href="` + htmlEscape(row.Href) + `">` + htmlEscape(row.Label) + `</a><span class="wolfbbs-muted">` + htmlEscape(row.Meta) + `</span><form method="POST" action="/attention"><input type="hidden" name="action" value="unsnooze"><input type="hidden" name="item_key" value="` + htmlEscape(row.ItemKey) + `">` + csrf + `<button type="submit">Restore</button></form></div></li>`)
+	}
+	if snoozedList.Len() == 0 {
+		snoozedList.WriteString(`<li>No snoozed items.</li>`)
 	}
 
 	inboxList := strings.Builder{}
@@ -2595,6 +3013,7 @@ func (a *webApp) handleAttentionCenter(w http.ResponseWriter, r *http.Request) {
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(boardUpdates) + `</strong><span>board updates</span></article>
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(watchSubs)) + ` / ` + strconv.Itoa(len(digestSubs)) + `</strong><span>watch / digest boards</span></article>
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(upcomingEvents)) + `</strong><span>upcoming events</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(snoozedRows)) + `</strong><span>snoozed</span></article>
 </section>
 <section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Work top-down</strong><p>Direct replies, live pages, and mentions should be handled first because they are the clearest pending obligations.</p></article><article class="wolfbbs-helper-card"><strong>Unread mail is private follow-up</strong><p>Use inbox for direct conversation, then return to boards when the topic belongs in public.</p></article><article class="wolfbbs-helper-card"><strong>Use tiers deliberately</strong><p>The board pulse is showing ` + htmlEscape(trackedLabel) + `. Watch boards surface here, digest boards stay in <a href="/today">/today</a>, and mute hides noise.</p></article></section>
 <section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Queue Actions</h2><div class="wolfbbs-inline-actions"><form method="POST" action="/attention"><input type="hidden" name="action" value="mark_all_read">` + csrf + `<button type="submit">Mark Current Attention Read</button></form><form method="POST" action="/attention"><input type="hidden" name="action" value="mark_all_mail_read">` + csrf + `<button type="submit">Mark All Mail Read</button></form><form method="POST" action="/attention"><input type="hidden" name="action" value="clear_dismissed">` + csrf + `<button type="submit">Restore Dismissed Items</button></form><a class="wolfbbs-filter-reset" href="/discover">Open Full Discover Feed</a></div></article></section>
@@ -2608,6 +3027,7 @@ func (a *webApp) handleAttentionCenter(w http.ResponseWriter, r *http.Request) {
 <article class="wolfbbs-card"><h2>Community Calendar</h2><ul class="wolfbbs-list-clean">` + eventList.String() + `</ul><p><a href="/events">Open calendar</a> | <a href="/today">Open today brief</a></p></article>
 </section>
 <section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Unread Notification Feed</h2><ul class="wolfbbs-list-clean">` + discoveryList + `</ul><p><a href="/discover">Open full discover feed</a></p></article><article class="wolfbbs-card"><h2>Seen This Cycle</h2><ul class="wolfbbs-list-clean">` + seenList + `</ul><p>Read items stay out of your way until the board moves again.</p></article></section>
+<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Snoozed</h2><ul class="wolfbbs-list-clean">` + snoozedList.String() + `</ul><p>Snooze is for reminders you intend to come back to later without dismissing them permanently.</p></article></section>
 </body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -2659,6 +3079,24 @@ func (a *webApp) handleAdminOps(w http.ResponseWriter, r *http.Request) {
 			a.recordAdminAction(user.Handle, "web_rate_limits", "clear_rate_limits", fmt.Sprintf("cleared=%d", cleared))
 			redirectWithNotice(w, r, "/admin/ops", fmt.Sprintf("Cleared %d active rate-limit bucket(s).", cleared))
 			return
+		case "resolve_page":
+			id := strings.TrimSpace(r.FormValue("id"))
+			if !a.resolvePageRequest(id) {
+				redirectWithError(w, r, "/admin/ops", "Page request not found.")
+				return
+			}
+			a.recordAdminAction(user.Handle, "page_requests", "resolve_page", "id="+id)
+			redirectWithNotice(w, r, "/admin/ops", "Page request resolved.")
+			return
+		case "resolve_escalation":
+			id := strings.TrimSpace(r.FormValue("id"))
+			if !a.resolveStaffEscalation(id) {
+				redirectWithError(w, r, "/admin/ops", "Staff escalation not found.")
+				return
+			}
+			a.recordAdminAction(user.Handle, "staff_escalations", "resolve_escalation", "id="+id)
+			redirectWithNotice(w, r, "/admin/ops", "Staff escalation resolved.")
+			return
 		default:
 			redirectWithError(w, r, "/admin/ops", "Unsupported ops action.")
 			return
@@ -2676,6 +3114,8 @@ func (a *webApp) handleAdminOps(w http.ResponseWriter, r *http.Request) {
 	auditRows := []domain.AdminAudit{}
 	nodeSessions := []domain.NodeSession{}
 	callerHistory := []domain.CallerHistory{}
+	pageRequests := a.loadPageRequests()
+	escalations := a.loadStaffEscalations()
 	webSessionCount := a.countWebSessions()
 	rateLimitCount := a.countRateLimits()
 	if a.adminRepo != nil {
@@ -2693,6 +3133,18 @@ func (a *webApp) handleAdminOps(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(errors) > 0 {
 		nextActions.WriteString(`<li>Review runtime errors below before treating current health as trustworthy.</li>`)
+	}
+	if len(pageRequests) > 0 {
+		nextActions.WriteString(`<li>` + strconv.Itoa(len(pageRequests)) + ` unresolved page request(s) are still live. Clear or respond before they expire silently.</li>`)
+	}
+	unresolvedEscalations := 0
+	for _, row := range escalations {
+		if row.ResolvedAt.IsZero() {
+			unresolvedEscalations++
+		}
+	}
+	if unresolvedEscalations > 0 {
+		nextActions.WriteString(`<li>` + strconv.Itoa(unresolvedEscalations) + ` staff escalation(s) still need closure.</li>`)
 	}
 	if nextActions.Len() == 0 {
 		nextActions.WriteString(`<li>No urgent blockers detected. Walk the caller path once, then review audits and logs for anything surprising.</li>`)
@@ -2734,6 +3186,26 @@ func (a *webApp) handleAdminOps(w http.ResponseWriter, r *http.Request) {
 	if callerTable.Len() == 0 {
 		callerTable.WriteString(`<tr><td colspan="6">No recent caller history.</td></tr>`)
 	}
+	pageTable := strings.Builder{}
+	for _, row := range pageRequests {
+		pageTable.WriteString(`<tr><td>` + row.CreatedAt.Local().Format("2006-01-02 15:04") + `</td><td>` + htmlEscape(row.From) + `</td><td>` + htmlEscape(row.To) + `</td><td>` + htmlEscape(defaultIfBlank(row.Source, "page")) + `</td><td>` + htmlEscape(defaultIfBlank(row.Message, "(no message)")) + `</td><td><form method="POST" action="/admin/ops"><input type="hidden" name="action" value="resolve_page"><input type="hidden" name="id" value="` + htmlEscape(row.ID) + `">` + csrf + `<button type="submit">Resolve</button></form></td></tr>`)
+	}
+	if pageTable.Len() == 0 {
+		pageTable.WriteString(`<tr><td colspan="6">No unresolved pages.</td></tr>`)
+	}
+	escalationTable := strings.Builder{}
+	for _, row := range escalations {
+		state := `resolved ` + row.ResolvedAt.Local().Format("2006-01-02 15:04")
+		actionCell := `<span class="wolfbbs-muted">closed</span>`
+		if row.ResolvedAt.IsZero() {
+			state = "open"
+			actionCell = `<form method="POST" action="/admin/ops"><input type="hidden" name="action" value="resolve_escalation"><input type="hidden" name="id" value="` + htmlEscape(row.ID) + `">` + csrf + `<button type="submit">Resolve</button></form>`
+		}
+		escalationTable.WriteString(`<tr><td>` + row.CreatedAt.Local().Format("2006-01-02 15:04") + `</td><td>` + htmlEscape(row.Handle) + `</td><td>` + htmlEscape(defaultIfBlank(row.Actor, "staff")) + `</td><td>` + htmlEscape(row.Note) + `</td><td>` + htmlEscape(state) + `</td><td>` + actionCell + `</td></tr>`)
+	}
+	if escalationTable.Len() == 0 {
+		escalationTable.WriteString(`<tr><td colspan="6">No staff escalations.</td></tr>`)
+	}
 
 	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Ops Center</title></head><body>
 <p><a href="/admin">admin</a> | <a href="/admin/launch">launch</a> | <a href="/admin/setup">setup</a> | <a href="/admin/system">system</a> | <a href="/admin/errors">errors</a> | <a href="/admin/audit">audit</a> | <a href="/status">status</a> | <a href="/help">help</a></p>
@@ -2747,6 +3219,8 @@ func (a *webApp) handleAdminOps(w http.ResponseWriter, r *http.Request) {
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(nodeSessions)) + `</strong><span>active sessions</span></article>
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(webSessionCount) + `</strong><span>web sessions</span></article>
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(rateLimitCount) + `</strong><span>rate-limit buckets</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(pageRequests)) + `</strong><span>open pages</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(unresolvedEscalations) + `</strong><span>staff escalations</span></article>
 </section>
 <section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Readiness before polish</strong><p>Use launch and status signals to decide whether you have a real blocker or just a minor cleanup item.</p></article><article class="wolfbbs-helper-card"><strong>Errors change the meaning of green</strong><p>If runtime errors are piling up, treat every passing screen as provisional until you understand the failures.</p></article><article class="wolfbbs-helper-card"><strong>Audit + sessions explain surprises</strong><p>When callers report something odd, the fastest answers usually come from the recent audit trail and who is online right now.</p></article></section>
 <section class="wolfbbs-grid">
@@ -2760,6 +3234,7 @@ bash install.sh --upgrade</pre></article>
 <table border="1"><tr><th>User</th><th>Node</th><th>Area</th><th>Login</th><th>Idle</th><th>Origin</th><th>From</th></tr>` + sessionTable.String() + `</table>
 <h2>Recent Runtime Errors</h2>
 <table border="1"><tr><th>When</th><th>Area</th><th>Error</th></tr>` + errorTable.String() + `</table>
+<section class="wolfbbs-grid"><article><h2>Open Pages</h2><table border="1"><tr><th>When</th><th>From</th><th>To</th><th>Source</th><th>Message</th><th>Action</th></tr>` + pageTable.String() + `</table></article><article><h2>Staff Escalations</h2><table border="1"><tr><th>When</th><th>Caller</th><th>Actor</th><th>Note</th><th>Status</th><th>Action</th></tr>` + escalationTable.String() + `</table></article></section>
 <section class="wolfbbs-grid">
 <article><h2>Recent Audit Trail</h2><table border="1"><tr><th>When</th><th>Actor</th><th>Action</th><th>Target</th><th>Details</th></tr>` + auditTable.String() + `</table></article>
 <article><h2>Recent Callers</h2><table border="1"><tr><th>Logout</th><th>User</th><th>Area</th><th>Duration</th><th>Origin</th><th>From</th></tr>` + callerTable.String() + `</table></article>
@@ -2778,6 +3253,9 @@ func (a *webApp) handleToday(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
+	}
+	if err := a.sendWeeklyDigestMail(user, a.loadDigestPreferences(user.Handle), time.Now().UTC()); err != nil {
+		a.addAppError("digest.weekly_mail", err)
 	}
 
 	visibleBoards := a.visibleBoardsFor(user)
@@ -2933,6 +3411,11 @@ func (a *webApp) handleDigest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pref := a.loadDigestPreferences(user.Handle)
+	now := time.Now().UTC()
+	if err := a.sendWeeklyDigestMail(user, pref, now); err != nil {
+		a.addAppError("digest.weekly_mail", err)
+	}
+	a.markRouteSeen(user.Handle, "/digest")
 	digest, err := discovery.BuildSinceLastCall(a.boardRepo, a.msgRepo, a.mailRepo, user, pref.MaxItems)
 	if err != nil {
 		http.Error(w, "digest unavailable", http.StatusInternalServerError)
@@ -2943,23 +3426,34 @@ func (a *webApp) handleDigest(w http.ResponseWriter, r *http.Request) {
 	if pref.IncludeBoards {
 		digestBoards = a.buildBoardPulse(user, filterBoardsByWatch(visibleBoards, a.boardSubscriptionIDs(user.Handle, boardSubscriptionDigest)), 8)
 	}
+	attentionDue := a.routeSummaryDue(user.Handle, "/attention", pref.AttentionCadence, now)
+	bulletinDue := a.routeSummaryDue(user.Handle, "/bulletins", pref.BulletinCadence, now)
+	eventDue := pref.IncludeEvents && a.routeSummaryDue(user.Handle, "/events", pref.EventCadence, now)
 	upcoming := []communityEvent{}
-	if pref.IncludeEvents {
-		upcoming = a.upcomingCommunityEvents(8, time.Now().UTC())
+	if eventDue {
+		upcoming = a.upcomingCommunityEvents(8, now)
+	}
+	bulletinSnapshot := bulletinSnapshot{}
+	if bulletinDue {
+		bulletinSnapshot = a.buildBulletinSnapshot(user)
 	}
 	itemRows := strings.Builder{}
-	for _, row := range digest.Items {
-		href := "/mail"
-		if row.BoardID > 0 {
-			href = "/boards?board=" + strconv.FormatInt(row.BoardID, 10)
-			if row.MessageID > 0 {
-				href += "&id=" + strconv.FormatInt(row.MessageID, 10)
+	if attentionDue {
+		for _, row := range digest.Items {
+			href := "/mail"
+			if row.BoardID > 0 {
+				href = "/boards?board=" + strconv.FormatInt(row.BoardID, 10)
+				if row.MessageID > 0 {
+					href += "&id=" + strconv.FormatInt(row.MessageID, 10)
+				}
 			}
+			itemRows.WriteString(`<li><a href="` + htmlEscape(href) + `">` + htmlEscape(row.Line) + `</a></li>`)
 		}
-		itemRows.WriteString(`<li><a href="` + htmlEscape(href) + `">` + htmlEscape(row.Line) + `</a></li>`)
-	}
-	if itemRows.Len() == 0 {
-		itemRows.WriteString(`<li>No direct follow-up accumulated since your last call.</li>`)
+		if itemRows.Len() == 0 {
+			itemRows.WriteString(`<li>No direct follow-up accumulated since your last call.</li>`)
+		}
+	} else {
+		itemRows.WriteString(`<li>Attention summary is held by your ` + htmlEscape(pref.AttentionCadence) + ` cadence. Open <a href="/attention">/attention</a> for the live queue.</li>`)
 	}
 	boardRows := strings.Builder{}
 	for _, row := range digestBoards {
@@ -2973,15 +3467,32 @@ func (a *webApp) handleDigest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	eventRows := strings.Builder{}
-	for _, row := range upcoming {
-		eventRows.WriteString(`<li><strong>` + htmlEscape(row.Title) + `</strong> <span class="wolfbbs-muted">` + htmlEscape(formatCommunityEventWindow(row)) + `</span></li>`)
-	}
-	if eventRows.Len() == 0 {
-		if pref.IncludeEvents {
-			eventRows.WriteString(`<li>No scheduled events in the current digest window.</li>`)
-		} else {
-			eventRows.WriteString(`<li>Event reminders are disabled in your digest preferences.</li>`)
+	if eventDue {
+		for _, row := range upcoming {
+			eventRows.WriteString(`<li><strong>` + htmlEscape(row.Title) + `</strong> <span class="wolfbbs-muted">` + htmlEscape(formatCommunityEventWindow(row)) + `</span></li>`)
 		}
+		if eventRows.Len() == 0 {
+			if pref.IncludeEvents {
+				eventRows.WriteString(`<li>No scheduled events in the current digest window.</li>`)
+			} else {
+				eventRows.WriteString(`<li>Event reminders are disabled in your digest preferences.</li>`)
+			}
+		}
+	} else if pref.IncludeEvents {
+		eventRows.WriteString(`<li>Event reminders are held by your ` + htmlEscape(pref.EventCadence) + ` cadence. Open <a href="/events">/events</a> for the full calendar.</li>`)
+	} else {
+		eventRows.WriteString(`<li>Event reminders are disabled in your digest preferences.</li>`)
+	}
+	bulletinRows := strings.Builder{}
+	if bulletinDue {
+		for _, row := range bulletinSnapshot.SystemWire {
+			bulletinRows.WriteString(`<li>` + htmlEscape(row) + `</li>`)
+		}
+		if bulletinRows.Len() == 0 {
+			bulletinRows.WriteString(`<li>No bulletin wire items are active.</li>`)
+		}
+	} else {
+		bulletinRows.WriteString(`<li>Bulletin wire is held by your ` + htmlEscape(pref.BulletinCadence) + ` cadence. Open <a href="/bulletins">/bulletins</a> for the live wire.</li>`)
 	}
 	stateLabel := "preview only"
 	if pref.Enabled {
@@ -2997,16 +3508,19 @@ func (a *webApp) handleDigest(w http.ResponseWriter, r *http.Request) {
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(digest.Items)) + `</strong><span>follow-up items</span></article>
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(digestBoards)) + `</strong><span>digest boards</span></article>
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(upcoming)) + `</strong><span>event reminders</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + htmlEscape(pref.AttentionCadence) + ` / ` + htmlEscape(pref.BulletinCadence) + ` / ` + htmlEscape(pref.EventCadence) + `</strong><span>attention / bulletins / events</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + boolToText(pref.WeeklyMail) + `</strong><span>weekly internal mail</span></article>
 </section>
-<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Web digest is ` + htmlEscape(stateLabel) + `</strong><p>Use <a href="/settings">/settings</a> to choose whether this stays as an explicit opt-in surface.</p></article><article class="wolfbbs-helper-card"><strong>Use this for low-noise loops</strong><p>Attention Center is still the place for urgent replies and mentions. Digest is the calmer summary.</p></article><article class="wolfbbs-helper-card"><strong>Subscription tiers shape this page</strong><p>Digest-tier boards land here while watch-tier boards stay in <a href="/today">/today</a> and <a href="/attention">/attention</a>.</p></article></section>
+<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Web digest is ` + htmlEscape(stateLabel) + `</strong><p>Use <a href="/settings">/settings</a> to choose whether this stays as an explicit opt-in surface.</p></article><article class="wolfbbs-helper-card"><strong>Use this for low-noise loops</strong><p>Attention Center is still the place for urgent replies and mentions. Digest is the calmer summary.</p></article><article class="wolfbbs-helper-card"><strong>Subscription tiers shape this page</strong><p>Digest-tier boards land here while watch-tier boards stay in <a href="/today">/today</a> and <a href="/attention">/attention</a>.</p></article><article class="wolfbbs-helper-card"><strong>Cadence is per route</strong><p>Attention, bulletins, and events can each be shown always, daily, weekly, or turned off from <a href="/settings">/settings</a>.</p></article></section>
 <section class="wolfbbs-grid">
 <article class="wolfbbs-card"><h2>Direct Follow-Up</h2><ul class="wolfbbs-list-clean">` + itemRows.String() + `</ul></article>
 <article class="wolfbbs-card"><h2>Event Reminders</h2><ul class="wolfbbs-list-clean">` + eventRows.String() + `</ul><p><a href="/events">Full calendar</a> | <a href="/tournaments">Tournament Center</a></p></article>
 </section>
 <section class="wolfbbs-grid">
 <article class="wolfbbs-card"><h2>Digest Tier Boards</h2><table border="1"><tr><th>Board</th><th>New</th><th>Last</th><th>Last subject</th></tr>` + boardRows.String() + `</table></article>
-<article class="wolfbbs-card"><h2>Next Move</h2><ul><li><a href="/attention">Attention Center</a> if something here needs direct response.</li><li><a href="/boards?mode=digest">Digest-tier boards</a> for longer reads.</li><li><a href="/today">Today Brief</a> if you want the full daily loop.</li><li><a href="/settings">Settings</a> to change digest behavior.</li></ul></article>
+<article class="wolfbbs-card"><h2>Bulletin Wire</h2><ul class="wolfbbs-list-clean">` + bulletinRows.String() + `</ul><p><a href="/bulletins">Open Bulletin Center</a></p></article>
 </section>
+<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Next Move</h2><ul><li><a href="/attention">Attention Center</a> if something here needs direct response.</li><li><a href="/boards?mode=digest">Digest-tier boards</a> for longer reads.</li><li><a href="/today">Today Brief</a> if you want the full daily loop.</li><li><a href="/settings">Settings</a> to change digest behavior.</li></ul></article></section>
 </body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -3018,6 +3532,9 @@ func (a *webApp) handleEventsCalendar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, _ := a.currentUser(r)
+	if user != nil {
+		a.markRouteSeen(user.Handle, "/events")
+	}
 	nav := `<a href="/start">start</a> | <a href="/connect">connect</a> | <a href="/tour">tour</a> | <a href="/help">help</a>`
 	if user != nil {
 		nav = `<a href="/start">start</a> | <a href="/today">today</a> | <a href="/attention">attention</a> | <a href="/boards">boards</a> | <a href="/chat">chat</a> | <a href="/help">help</a> | <a href="/logout">logout</a>`
@@ -6631,11 +7148,33 @@ func (a *webApp) handleBulletins(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
+	if r.Method == http.MethodPost {
+		if !a.requireCSRF(w, r) {
+			return
+		}
+		action := strings.ToLower(strings.TrimSpace(r.FormValue("action")))
+		switch action {
+		case "ack_bulletin":
+			id := strings.TrimSpace(r.FormValue("id"))
+			if id == "" {
+				redirectWithError(w, r, "/bulletins", "Bulletin ID is required.")
+				return
+			}
+			a.acknowledgeBulletin(user.Handle, id)
+			redirectWithNotice(w, r, "/bulletins", "Bulletin acknowledged.")
+			return
+		default:
+			redirectWithError(w, r, "/bulletins", "Unsupported bulletin action.")
+			return
+		}
+	}
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	a.markRouteSeen(user.Handle, "/bulletins")
 	snapshot := a.buildBulletinSnapshot(user)
+	csrf := a.csrfHiddenInput(r)
 	scheduledRows := strings.Builder{}
 	for _, row := range snapshot.Scheduled {
 		meta := []string{row.StartsAt.Local().Format("2006-01-02 15:04")}
@@ -6649,7 +7188,12 @@ func (a *webApp) handleBulletins(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(row.Link) != "" {
 			link = ` <a href="` + htmlEscape(row.Link) + `">open</a>`
 		}
-		scheduledRows.WriteString(`<li><strong>` + htmlEscape(row.Title) + `</strong> <span class="wolfbbs-muted">` + htmlEscape(strings.Join(meta, " | ")) + `</span><br>` + htmlEscape(row.Body) + link + `</li>`)
+		ackAt := a.bulletinAckedAt(user.Handle, row.ID)
+		ackBlock := `<form method="POST" action="/bulletins" class="wolfbbs-inline-actions"><input type="hidden" name="action" value="ack_bulletin"><input type="hidden" name="id" value="` + htmlEscape(row.ID) + `">` + csrf + `<button type="submit">Acknowledge</button></form>`
+		if !ackAt.IsZero() {
+			ackBlock = `<span class="wolfbbs-status-pill ok">acked ` + ackAt.Local().Format("01-02 15:04") + `</span>`
+		}
+		scheduledRows.WriteString(`<li><strong>` + htmlEscape(row.Title) + `</strong> <span class="wolfbbs-muted">` + htmlEscape(strings.Join(meta, " | ")) + `</span><br>` + htmlEscape(row.Body) + link + `<div class="wolfbbs-inline-actions">` + ackBlock + `</div></li>`)
 	}
 	if scheduledRows.Len() == 0 {
 		scheduledRows.WriteString(`<li>No timed bulletins are live right now.</li>`)
@@ -6841,6 +7385,7 @@ func (a *webApp) handleAdminBulletins(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows := a.loadScheduledBulletins()
+	ackSummary := a.loadBulletinAckSummary()
 	editID := strings.TrimSpace(r.URL.Query().Get("edit"))
 	formBulletin := scheduledBulletin{Audience: "all callers"}
 	formAction := "create"
@@ -6879,10 +7424,17 @@ func (a *webApp) handleAdminBulletins(w http.ResponseWriter, r *http.Request) {
 		if !row.EndsAt.IsZero() {
 			window += " to " + row.EndsAt.Local().Format("2006-01-02 15:04")
 		}
-		tableRows.WriteString(`<tr><td>` + htmlEscape(row.Title) + `</td><td>` + htmlEscape(window) + `</td><td>` + htmlEscape(defaultIfBlank(row.Audience, "all callers")) + `</td><td>` + htmlEscape(cleanOneLiner(row.Body, 96)) + `</td><td><a href="/admin/bulletins?edit=` + url.QueryEscape(row.ID) + `#bulletin-editor">Edit</a> <form method="POST" action="/admin/bulletins" style="display:inline"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="` + htmlEscape(row.ID) + `">` + csrf + `<button type="submit">Delete</button></form></td></tr>`)
+		ackMeta := "0"
+		if stat, ok := ackSummary[row.ID]; ok {
+			ackMeta = strconv.Itoa(stat.Count)
+			if !stat.LastAt.IsZero() {
+				ackMeta += ` / ` + stat.LastAt.Local().Format("01-02 15:04")
+			}
+		}
+		tableRows.WriteString(`<tr><td>` + htmlEscape(row.Title) + `</td><td>` + htmlEscape(window) + `</td><td>` + htmlEscape(defaultIfBlank(row.Audience, "all callers")) + `</td><td>` + htmlEscape(cleanOneLiner(row.Body, 96)) + `</td><td>` + htmlEscape(ackMeta) + `</td><td><a href="/admin/bulletins?edit=` + url.QueryEscape(row.ID) + `#bulletin-editor">Edit</a> <form method="POST" action="/admin/bulletins" style="display:inline"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="` + htmlEscape(row.ID) + `">` + csrf + `<button type="submit">Delete</button></form></td></tr>`)
 	}
 	if tableRows.Len() == 0 {
-		tableRows.WriteString(`<tr><td colspan="5">No scheduled bulletins yet.</td></tr>`)
+		tableRows.WriteString(`<tr><td colspan="6">No scheduled bulletins yet.</td></tr>`)
 	}
 	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Scheduled Bulletins</title></head><body>
 <p><a href="/admin">admin</a> | <a href="/bulletins">public bulletins</a> | <a href="/admin/events">events</a> | <a href="/admin/ops">ops</a> | <a href="/logout">logout</a></p>
@@ -6891,7 +7443,7 @@ func (a *webApp) handleAdminBulletins(w http.ResponseWriter, r *http.Request) {
 <p>Timed announcements for content drops, go-live notices, live sessions, and other system wire items that should appear on a schedule instead of being hand-posted.</p>
 <section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Use the wire deliberately</strong><p>Keep timed announcements short, concrete, and linked to a real next action like <a href="/events">/events</a>, <a href="/boards">/boards</a>, or <a href="/doors">/doors</a>.</p></article><article class="wolfbbs-helper-card"><strong>Start and end matter</strong><p>Use short windows for urgent notices so the bulletin center does not become a stale wall of yesterday’s news.</p></article><article class="wolfbbs-helper-card"><strong>Pair bulletins with routes</strong><p>Announcements work best when the link drops callers directly into the route they should use next.</p></article></section>
 <section class="wolfbbs-grid"><article class="wolfbbs-card" id="bulletin-editor"><h2>` + formTitle + `</h2><form method="POST" action="/admin/bulletins" data-draft-key="admin-bulletin-editor"><input type="hidden" name="action" value="` + formAction + `"><input type="hidden" name="id" value="` + htmlEscape(formBulletin.ID) + `">` + csrf + `<label>Title <input name="title" size="48" value="` + htmlEscape(formBulletin.Title) + `" placeholder="Tonight: Tournament Night"></label><br><label>Starts <input type="datetime-local" name="starts_at" value="` + htmlEscape(formatLocalDateTimeValue(formBulletin.StartsAt)) + `"></label><br><label>Ends <input type="datetime-local" name="ends_at" value="` + htmlEscape(formatLocalDateTimeValue(formBulletin.EndsAt)) + `"></label><br><label>Audience <input name="audience" size="32" value="` + htmlEscape(formBulletin.Audience) + `" placeholder="all callers"></label><br><label>Link <input name="link" size="56" value="` + htmlEscape(formBulletin.Link) + `" placeholder="/events or /doors"></label><br><label>Body<br><textarea name="body" rows="5" cols="72" placeholder="What is happening, why it matters, and where to go next.">` + htmlEscape(formBulletin.Body) + `</textarea></label><br><button type="submit">` + submitLabel + `</button></form>` + cancelLink + `</article><article class="wolfbbs-card"><h2>Live Wire Preview</h2><ul class="wolfbbs-list-clean">` + activeRows.String() + `</ul><h3>Upcoming</h3><ul class="wolfbbs-list-clean">` + upcomingRows.String() + `</ul></article></section>
-<section><h2>Queued Bulletins</h2><table border="1"><tr><th>Title</th><th>Window</th><th>Audience</th><th>Body</th><th>Action</th></tr>` + tableRows.String() + `</table></section>
+<section><h2>Queued Bulletins</h2><table border="1"><tr><th>Title</th><th>Window</th><th>Audience</th><th>Body</th><th>Acks / last</th><th>Action</th></tr>` + tableRows.String() + `</table></section>
 </body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -6909,13 +7461,11 @@ func (a *webApp) handleDirectory(w http.ResponseWriter, r *http.Request) {
 		}
 		action := strings.ToLower(strings.TrimSpace(r.FormValue("action")))
 		targetHandle := strings.TrimSpace(r.FormValue("target"))
-		returnTo := strings.TrimSpace(r.FormValue("return_to"))
-		if !strings.HasPrefix(returnTo, "/") {
-			returnTo = "/directory"
-			if targetHandle != "" {
-				returnTo = "/directory?handle=" + url.QueryEscape(targetHandle)
-			}
+		returnTo := "/directory"
+		if targetHandle != "" {
+			returnTo = "/directory?handle=" + url.QueryEscape(targetHandle)
 		}
+		returnTo = safeLocalRedirectPath(r.FormValue("return_to"), returnTo)
 		target, err := a.authSvc.GetUser(targetHandle)
 		if action != "save_staff_note" && (err != nil || !directoryVisibleUser(target)) {
 			redirectWithError(w, r, returnTo, "Caller not found.")
@@ -6967,6 +7517,9 @@ func (a *webApp) handleDirectory(w http.ResponseWriter, r *http.Request) {
 			}
 			note := strings.TrimSpace(r.FormValue("staff_note"))
 			a.persistStaffNote(target.Handle, note)
+			if parseCheckbox(r.FormValue("escalate")) && note != "" {
+				a.queueStaffEscalation(user.Handle, target.Handle, note)
+			}
 			a.recordAdminAction(user.Handle, "caller_profile", "save_staff_note", fmt.Sprintf("target=%s length=%d", target.Handle, len(note)))
 			redirectWithNotice(w, r, returnTo, "Staff note saved.")
 			return
@@ -7064,7 +7617,7 @@ func (a *webApp) handleDirectory(w http.ResponseWriter, r *http.Request) {
 		}
 		staffNoteBlock := ``
 		if a.hasRole(user, roleModerator) {
-			staffNoteBlock = `<article class="wolfbbs-card"><h2>Staff Notes</h2><form method="POST" action="/directory"><input type="hidden" name="action" value="save_staff_note"><input type="hidden" name="target" value="` + htmlEscape(profile.Handle) + `"><input type="hidden" name="return_to" value="/directory?handle=` + url.QueryEscape(profile.Handle) + `">` + a.csrfHiddenInput(r) + `<textarea name="staff_note" rows="6" cols="48" placeholder="Internal moderation/support context only.">` + htmlEscape(profile.StaffNote) + `</textarea><br><button type="submit">Save Staff Note</button></form></article>`
+			staffNoteBlock = `<article class="wolfbbs-card"><h2>Staff Notes</h2><form method="POST" action="/directory"><input type="hidden" name="action" value="save_staff_note"><input type="hidden" name="target" value="` + htmlEscape(profile.Handle) + `"><input type="hidden" name="return_to" value="/directory?handle=` + url.QueryEscape(profile.Handle) + `">` + a.csrfHiddenInput(r) + `<textarea name="staff_note" rows="6" cols="48" placeholder="Internal moderation/support context only.">` + htmlEscape(profile.StaffNote) + `</textarea><br><label><input type="checkbox" name="escalate" value="1"> Queue for staff follow-through</label><br><button type="submit">Save Staff Note</button></form></article>`
 		}
 		profileBlock = `<section class="wolfbbs-grid">
 <article class="wolfbbs-card"><h2>Caller Card: ` + htmlEscape(profile.Handle) + `</h2><p><strong>Role:</strong> ` + htmlEscape(profile.Role) + ` | <strong>Theme:</strong> ` + htmlEscape(profile.Theme) + ` | <strong>Verified:</strong> ` + boolToText(profile.Verified) + `</p><p><strong>Last login:</strong> ` + htmlEscape(profile.LastLogin) + `</p><p><strong>Online now:</strong> ` + boolToText(profile.Online) + ``
@@ -7078,6 +7631,7 @@ func (a *webApp) handleDirectory(w http.ResponseWriter, r *http.Request) {
 </section>`
 	}
 	favoriteRows := strings.Builder{}
+	visibleFavorites := 0
 	for _, handle := range favoriteHandles {
 		target, err := a.authSvc.GetUser(handle)
 		if err != nil || !directoryVisibleUser(target) {
@@ -7085,7 +7639,9 @@ func (a *webApp) handleDirectory(w http.ResponseWriter, r *http.Request) {
 		}
 		if profileTarget != nil && normalizeHandleKey(profileTarget.Handle) == normalizeHandleKey(handle) {
 			// keep current profile visible through the main card rather than duplicate it here
+			continue
 		}
+		visibleFavorites++
 		live, _ := a.activePresenceForHandle(handle)
 		actions := `<a href="/mail?to=` + url.QueryEscape(handle) + `">mail</a> | <a href="/directory?handle=` + url.QueryEscape(handle) + `">profile</a>`
 		if live.Online {
@@ -7143,7 +7699,7 @@ func (a *webApp) handleDirectory(w http.ResponseWriter, r *http.Request) {
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(onlineCount) + `</strong><span>online now</span></article>
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(verifiedCount) + `</strong><span>verified</span></article>
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(staffCount) + `</strong><span>staff in view</span></article>
-<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(favoriteHandles)) + `</strong><span>favorite callers</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(visibleFavorites) + `</strong><span>favorite callers</span></article>
 </section>
 <form method="GET" action="/directory" class="wolfbbs-inline-form"><label>Search <input name="q" value="` + htmlEscape(query) + `" placeholder="handle, role, theme"></label><label>Role <select name="role">` + roleOptionRows.String() + `</select></label><label>Verified <select name="verified">` + verifiedOptionRows.String() + `</select></label><label><input type="checkbox" name="online" value="1"`
 	if onlineOnly {
@@ -7509,6 +8065,32 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 			notice := "Board subscription cleared."
 			if mode != boardSubscriptionNone {
 				notice = "Board set to " + boardSubscriptionLabel(mode) + "."
+			}
+			redirectWithNotice(w, r, boardPath, notice)
+			return
+		case "quiet_hours":
+			if boardID <= 0 {
+				redirectWithError(w, r, "/boards", "Board ID is required.")
+				return
+			}
+			board, err := a.boardRepo.Get(boardID)
+			if err != nil || board == nil {
+				redirectWithError(w, r, "/boards", "Board not found.")
+				return
+			}
+			if !a.canReadBoard(user, board) {
+				http.Error(w, "quiet-hours denied by board ACS", http.StatusForbidden)
+				return
+			}
+			window := quietHoursWindow{
+				Enabled:   parseCheckbox(r.FormValue("quiet_enabled")),
+				StartHour: parseIntWithFallback(r.FormValue("quiet_start_hour"), 22),
+				EndHour:   parseIntWithFallback(r.FormValue("quiet_end_hour"), 8),
+			}
+			a.setBoardQuietHours(user.Handle, boardID, window)
+			notice := "Quiet hours cleared."
+			if normalizeQuietHoursWindow(window).Enabled {
+				notice = "Quiet hours set to " + formatQuietHoursWindow(window) + "."
 			}
 			redirectWithNotice(w, r, boardPath, notice)
 			return
@@ -7909,12 +8491,22 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 	if len(msgs) == 0 {
 		emptyBoardDetail = a.renderRoleAwareEmptyState(user, "board_detail")
 	}
+	quietWindow, quietConfigured := a.boardQuietHoursWindow(user.Handle, board.ID)
+	quietWindow = normalizeQuietHoursWindow(quietWindow)
+	quietStartOptions := strings.Builder{}
+	quietEndOptions := strings.Builder{}
+	for hour := 0; hour < 24; hour++ {
+		label := fmt.Sprintf("%02d:00", hour)
+		quietStartOptions.WriteString(`<option value="` + strconv.Itoa(hour) + `"` + selectedIf(hour == quietWindow.StartHour) + `>` + label + `</option>`)
+		quietEndOptions.WriteString(`<option value="` + strconv.Itoa(hour) + `"` + selectedIf(hour == quietWindow.EndHour) + `>` + label + `</option>`)
+	}
 	page := `<html><body><h1>Board: ` + htmlEscape(board.Name) + `</h1>` +
 		`<p><a href="/start">start</a> | <a href="/today">today</a> | <a href="/attention">attention</a> | <a href="/bookmarks">bookmarks</a> | <a href="/events">events</a> | <a href="/boards">all boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/doors">doors</a> | <a href="/status">status</a> | <a href="/config">config</a>` + discoverLink + ` | <a href="/help">help</a> | <a href="/logout">logout</a></p>` +
 		messageBlock +
 		`<p><strong>Reader keys:</strong> open subject to read, use Reply form, and Report for abuse/moderation queue.</p>` +
 		`<p><strong>Conference:</strong> ` + htmlEscape(defaultConferenceValue(board.Conference)) + `</p>` +
 		`<form method="POST" action="/boards" class="wolfbbs-inline-actions"><input type="hidden" name="action" value="subscribe"><input type="hidden" name="board_id" value="` + strconv.FormatInt(boardID, 10) + `">` + csrf + `<label>Subscription <select name="subscription_mode">` + boardSubscriptionOptionRows(normalizeBoardSubscriptionMode(string(subscriptions[board.ID]))) + `</select></label><button type="submit">Save</button></form>` +
+		`<form method="POST" action="/boards" class="wolfbbs-inline-actions"><input type="hidden" name="action" value="quiet_hours"><input type="hidden" name="board_id" value="` + strconv.FormatInt(boardID, 10) + `">` + csrf + `<label><input type="checkbox" name="quiet_enabled" value="1" ` + checkedAttr(quietConfigured && quietWindow.Enabled) + `> Quiet hours</label><label>from <select name="quiet_start_hour">` + quietStartOptions.String() + `</select></label><label>to <select name="quiet_end_hour">` + quietEndOptions.String() + `</select></label><button type="submit">Save Quiet Hours</button></form><p class="wolfbbs-muted">Current quiet window: ` + htmlEscape(formatQuietHoursWindow(quietWindow)) + `</p>` +
 		motdBlock + announcementBlock + boardHelperBlock + emptyBoardDetail +
 		`<table border="1"><tr><th>ID</th><th>New</th><th>Subject</th><th>Author</th><th>When</th></tr>` + rows.String() + `</table>`
 	if a.canWriteBoard(user, board) {
@@ -7950,10 +8542,12 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 		toRaw := strings.TrimSpace(r.FormValue("to"))
 		subject := strings.TrimSpace(r.FormValue("subject"))
 		body := strings.TrimSpace(r.FormValue("body"))
+		urgency := normalizeMailUrgency(r.FormValue("urgency"))
 		if toRaw == "" || subject == "" || body == "" {
 			redirectWithError(w, r, "/mail", "To, subject, and body are required.")
 			return
 		}
+		subject = applyMailUrgency(subject, urgency)
 
 		msg := &domain.PrivateMail{
 			FromUserID: user.ID,
@@ -8032,7 +8626,8 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 		if item.FromUserID != user.ID {
 			replyTo = handleByID[item.FromUserID]
 		}
-		replySubject := item.Subject
+		replyUrgency, cleanSubject := splitMailUrgency(item.Subject)
+		replySubject := cleanSubject
 		if !strings.HasPrefix(strings.ToLower(replySubject), "re:") {
 			replySubject = "Re: " + replySubject
 		}
@@ -8042,6 +8637,7 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 			replyBlock = `<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Reply in context</strong><p>Quick Reply carries the quoted body forward so you can answer without losing the thread.</p></article><article class="wolfbbs-helper-card"><strong>Use mail for direct follow-up</strong><p>Keep public discussion on boards and use mail when the conversation should stay private.</p></article></section>` +
 				`<h2>Quick Reply</h2><form method="POST" action="/mail" data-draft-key="mail-reply-` + strconv.FormatInt(item.ID, 10) + `" data-rich-compose="mail-reply" data-compose-signature="` + htmlEscape(user.Handle) + `" data-compose-quote="` + htmlEscape(replyBody) + `">` + a.csrfHiddenInput(r) +
 				`<label>To <input name="to" size="40" value="` + htmlEscape(replyTo) + `"></label><br>` +
+				`<label>Urgency <select name="urgency">` + mailUrgencyOptionRows(replyUrgency) + `</select></label><br>` +
 				`<label>Subject <input name="subject" size="60" value="` + htmlEscape(replySubject) + `"></label><br>` +
 				`<label>Body<br><textarea name="body" rows="10" cols="80">` + htmlEscape(replyBody) + `</textarea></label><br><button type="submit">Send Reply</button></form>`
 		}
@@ -8062,7 +8658,7 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 		page := `<html><body><h1>Mail #` + strconv.FormatInt(item.ID, 10) + `</h1><p><a href="/mail">back</a> | <a href="/bookmarks">bookmarks</a> | <a href="/boards">boards</a> | <a href="/help">help</a></p>` +
 			`<p><strong>From:</strong> ` + htmlEscape(handleByID[item.FromUserID]) + `<br>` +
 			`<strong>To:</strong> ` + htmlEscape(to) + `<br>` +
-			`<strong>Subject:</strong> ` + htmlEscape(item.Subject) + `<br>` +
+			`<strong>Subject:</strong> ` + mailUrgencyBadgeHTML(item.Subject) + htmlEscape(cleanSubject) + `<br>` +
 			`<strong>Sent:</strong> ` + item.CreatedAt.Format("2006-01-02 15:04:05") + `</p>` +
 			bookmarkBlock + `<pre>` + htmlEscape(item.Body) + `</pre>` + replyBlock + `</body></html>`
 		w.WriteHeader(http.StatusOK)
@@ -8097,8 +8693,9 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 		if row.ReadAt != nil {
 			status = "read"
 		}
+		_, cleanSubject := splitMailUrgency(row.Subject)
 		inRows.WriteString(fmt.Sprintf(`<tr><td><a href="/mail?id=%d">%d</a></td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>`,
-			row.ID, row.ID, htmlEscape(handleByID[row.FromUserID]), htmlEscape(row.Subject), row.CreatedAt.Format("2006-01-02 15:04"), status))
+			row.ID, row.ID, htmlEscape(handleByID[row.FromUserID]), mailUrgencyBadgeHTML(row.Subject)+htmlEscape(cleanSubject), row.CreatedAt.Format("2006-01-02 15:04"), status))
 	}
 	if inRows.Len() == 0 {
 		inRows.WriteString(`<tr><td colspan="5">Inbox is empty.</td></tr>`)
@@ -8109,8 +8706,9 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 		if row.ExternalTo != nil {
 			target = *row.ExternalTo
 		}
+		_, cleanSubject := splitMailUrgency(row.Subject)
 		outRows.WriteString(fmt.Sprintf(`<tr><td><a href="/mail?id=%d">%d</a></td><td>%s</td><td>%s</td><td>%s</td></tr>`,
-			row.ID, row.ID, htmlEscape(target), htmlEscape(row.Subject), row.CreatedAt.Format("2006-01-02 15:04")))
+			row.ID, row.ID, htmlEscape(target), mailUrgencyBadgeHTML(row.Subject)+htmlEscape(cleanSubject), row.CreatedAt.Format("2006-01-02 15:04")))
 	}
 	if outRows.Len() == 0 {
 		outRows.WriteString(`<tr><td colspan="4">Outbox is empty.</td></tr>`)
@@ -8195,6 +8793,7 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 		`<p><strong>Tip:</strong> Use handle for local mail, email address for external relay (if enabled by policy).</p>` +
 		`<h2>Compose</h2><form method="POST" action="/mail" data-draft-key="mail-compose" data-rich-compose="mail-compose" data-compose-signature="` + htmlEscape(user.Handle) + `">` + csrf +
 		`<label>To (handle or email): <input name="to" size="40" value="` + htmlEscape(prefillTo) + `"></label><br>` +
+		`<label>Urgency <select name="urgency">` + mailUrgencyOptionRows("normal") + `</select></label><br>` +
 		`<label>Subject: <input name="subject" size="60" value="` + htmlEscape(prefillSubject) + `"></label><br>` +
 		`<label>Body:<br><textarea name="body" rows="10" cols="80">` + htmlEscape(prefillBody) + `</textarea></label><br><button type="submit">Send</button></form>` +
 		`<section class="wolfbbs-grid"><article><h2>Recent Correspondents</h2><ul>` + addressRows.String() + `</ul></article><article><h2>Address Book</h2><ul>` + localRows.String() + `</ul></article></section>` +
@@ -8216,10 +8815,7 @@ func (a *webApp) handleBookmarks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		action := strings.ToLower(strings.TrimSpace(r.FormValue("action")))
-		returnTo := strings.TrimSpace(r.FormValue("return_to"))
-		if !strings.HasPrefix(returnTo, "/") {
-			returnTo = "/bookmarks"
-		}
+		returnTo := safeLocalRedirectPath(r.FormValue("return_to"), "/bookmarks")
 		switch action {
 		case "add_board_message":
 			messageID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("message_id")), 10, 64)
@@ -8483,10 +9079,14 @@ func (a *webApp) handleSettings(w http.ResponseWriter, r *http.Request) {
 			notice = "Display preferences saved."
 		case "update_digest":
 			pref := digestPreferences{
-				Enabled:       parseCheckbox(r.FormValue("digest_enabled")),
-				MaxItems:      parseInt(r.FormValue("digest_max_items"), defaultDigestPreferences().MaxItems),
-				IncludeEvents: parseCheckbox(r.FormValue("digest_include_events")),
-				IncludeBoards: parseCheckbox(r.FormValue("digest_include_boards")),
+				Enabled:          parseCheckbox(r.FormValue("digest_enabled")),
+				MaxItems:         parseInt(r.FormValue("digest_max_items"), defaultDigestPreferences().MaxItems),
+				IncludeEvents:    parseCheckbox(r.FormValue("digest_include_events")),
+				IncludeBoards:    parseCheckbox(r.FormValue("digest_include_boards")),
+				WeeklyMail:       parseCheckbox(r.FormValue("digest_weekly_mail")),
+				AttentionCadence: r.FormValue("digest_attention_cadence"),
+				BulletinCadence:  r.FormValue("digest_bulletin_cadence"),
+				EventCadence:     r.FormValue("digest_event_cadence"),
 			}
 			a.persistDigestPreferences(user.Handle, pref)
 			notice = "Digest preferences saved."
@@ -8571,6 +9171,10 @@ func (a *webApp) handleSettings(w http.ResponseWriter, r *http.Request) {
 		`<label>Digest size <select name="digest_max_items">` + digestOptions.String() + `</select></label><br>` +
 		`<label><input type="checkbox" name="digest_include_events" value="1" ` + checkedAttr(digestPref.IncludeEvents) + `> Include scheduled events</label><br>` +
 		`<label><input type="checkbox" name="digest_include_boards" value="1" ` + checkedAttr(digestPref.IncludeBoards) + `> Include digest-tier board pulse</label><br>` +
+		`<label><input type="checkbox" name="digest_weekly_mail" value="1" ` + checkedAttr(digestPref.WeeklyMail) + `> Send weekly digest by internal mail</label><br>` +
+		`<label>Attention cadence <select name="digest_attention_cadence">` + digestCadenceOptionRows(digestPref.AttentionCadence) + `</select></label><br>` +
+		`<label>Bulletin cadence <select name="digest_bulletin_cadence">` + digestCadenceOptionRows(digestPref.BulletinCadence) + `</select></label><br>` +
+		`<label>Event cadence <select name="digest_event_cadence">` + digestCadenceOptionRows(digestPref.EventCadence) + `</select></label><br>` +
 		`<button type="submit">Save Digest Preferences</button></form><p><a href="/digest">Open Daily Digest</a></p>` +
 		`<h2>Password</h2><form method="POST" action="/settings"><input type="hidden" name="action" value="change_password">` + csrf +
 		`<label>New password: <input name="password" type="password"></label><br>` +
@@ -12407,6 +13011,138 @@ func (a *webApp) persistWatchedBoardIDs(handle string, watched map[int64]bool) {
 	a.persistBoardSubscriptions(handle, subs)
 }
 
+func boardQuietHoursSettingKey(handle string) string {
+	handle = normalizeHandleKey(handle)
+	if handle == "" {
+		return ""
+	}
+	return sysSettingBoardQuietHoursRoot + handle
+}
+
+func normalizeQuietHoursWindow(window quietHoursWindow) quietHoursWindow {
+	window.StartHour = ((window.StartHour % 24) + 24) % 24
+	window.EndHour = ((window.EndHour % 24) + 24) % 24
+	if window.StartHour == window.EndHour {
+		window.Enabled = false
+	}
+	return window
+}
+
+func (a *webApp) loadBoardQuietHours(handle string) map[int64]quietHoursWindow {
+	if a.adminRepo == nil {
+		return nil
+	}
+	key := boardQuietHoursSettingKey(handle)
+	if key == "" {
+		return nil
+	}
+	raw, err := a.adminRepo.GetSystemSetting(key)
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	decoded := map[string]quietHoursWindow{}
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		a.addAppError("board.quiet_hours", fmt.Errorf("decode quiet hours for %s: %w", handle, err))
+		return nil
+	}
+	out := map[int64]quietHoursWindow{}
+	for rawID, window := range decoded {
+		boardID, err := strconv.ParseInt(strings.TrimSpace(rawID), 10, 64)
+		if err != nil || boardID <= 0 {
+			continue
+		}
+		window = normalizeQuietHoursWindow(window)
+		if !window.Enabled {
+			continue
+		}
+		out[boardID] = window
+	}
+	return out
+}
+
+func (a *webApp) persistBoardQuietHours(handle string, rows map[int64]quietHoursWindow) {
+	key := boardQuietHoursSettingKey(handle)
+	if key == "" {
+		return
+	}
+	encoded := map[string]quietHoursWindow{}
+	for boardID, window := range rows {
+		if boardID <= 0 {
+			continue
+		}
+		window = normalizeQuietHoursWindow(window)
+		if !window.Enabled {
+			continue
+		}
+		encoded[strconv.FormatInt(boardID, 10)] = window
+	}
+	body := ""
+	if len(encoded) > 0 {
+		raw, err := json.Marshal(encoded)
+		if err != nil {
+			a.addAppError("board.quiet_hours", fmt.Errorf("encode quiet hours for %s: %w", handle, err))
+			return
+		}
+		body = string(raw)
+	}
+	a.persistSystemSetting(key, body)
+}
+
+func (a *webApp) setBoardQuietHours(handle string, boardID int64, window quietHoursWindow) {
+	handle = normalizeHandleKey(handle)
+	if handle == "" || boardID <= 0 {
+		return
+	}
+	rows := a.loadBoardQuietHours(handle)
+	if rows == nil {
+		rows = map[int64]quietHoursWindow{}
+	}
+	window = normalizeQuietHoursWindow(window)
+	if !window.Enabled {
+		delete(rows, boardID)
+	} else {
+		rows[boardID] = window
+	}
+	a.persistBoardQuietHours(handle, rows)
+}
+
+func (a *webApp) boardQuietHoursWindow(handle string, boardID int64) (quietHoursWindow, bool) {
+	rows := a.loadBoardQuietHours(handle)
+	if rows == nil {
+		return quietHoursWindow{}, false
+	}
+	window, ok := rows[boardID]
+	return window, ok
+}
+
+func boardQuietHoursActive(window quietHoursWindow, now time.Time) bool {
+	window = normalizeQuietHoursWindow(window)
+	if !window.Enabled {
+		return false
+	}
+	hour := now.In(time.Local).Hour()
+	if window.StartHour < window.EndHour {
+		return hour >= window.StartHour && hour < window.EndHour
+	}
+	return hour >= window.StartHour || hour < window.EndHour
+}
+
+func (a *webApp) isBoardQuietActive(handle string, boardID int64, now time.Time) bool {
+	window, ok := a.boardQuietHoursWindow(handle, boardID)
+	if !ok {
+		return false
+	}
+	return boardQuietHoursActive(window, now)
+}
+
+func formatQuietHoursWindow(window quietHoursWindow) string {
+	window = normalizeQuietHoursWindow(window)
+	if !window.Enabled {
+		return "off"
+	}
+	return fmt.Sprintf("%02d:00-%02d:00", window.StartHour, window.EndHour)
+}
+
 func (a *webApp) persistBoardSubscriptions(handle string, subs map[int64]boardSubscriptionMode) {
 	if a.adminRepo == nil {
 		return
@@ -12828,6 +13564,251 @@ func (a *webApp) upcomingScheduledBulletins(now time.Time, limit int) []schedule
 		}
 	}
 	return out
+}
+
+func bulletinAckSettingKey(handle string) string {
+	handle = normalizeHandleKey(handle)
+	if handle == "" {
+		return ""
+	}
+	return sysSettingBulletinAckRoot + handle
+}
+
+func (a *webApp) loadBulletinAcks(handle string) map[string]time.Time {
+	if a.adminRepo == nil {
+		return nil
+	}
+	key := bulletinAckSettingKey(handle)
+	if key == "" {
+		return nil
+	}
+	raw, err := a.adminRepo.GetSystemSetting(key)
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	decoded := map[string]string{}
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		a.addAppError("bulletin.acks", fmt.Errorf("decode bulletin acks for %s: %w", handle, err))
+		return nil
+	}
+	out := map[string]time.Time{}
+	for id, value := range decoded {
+		id = strings.TrimSpace(id)
+		at, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(value))
+		if id == "" || err != nil {
+			continue
+		}
+		out[id] = at.UTC()
+	}
+	return out
+}
+
+func (a *webApp) persistBulletinAcks(handle string, rows map[string]time.Time) {
+	key := bulletinAckSettingKey(handle)
+	if key == "" {
+		return
+	}
+	encoded := map[string]string{}
+	for id, at := range rows {
+		id = strings.TrimSpace(id)
+		if id == "" || at.IsZero() {
+			continue
+		}
+		encoded[id] = at.UTC().Format(time.RFC3339Nano)
+	}
+	body := ""
+	if len(encoded) > 0 {
+		raw, err := json.Marshal(encoded)
+		if err != nil {
+			a.addAppError("bulletin.acks", fmt.Errorf("encode bulletin acks for %s: %w", handle, err))
+			return
+		}
+		body = string(raw)
+	}
+	a.persistSystemSetting(key, body)
+}
+
+func (a *webApp) acknowledgeBulletin(handle, id string) {
+	handle = normalizeHandleKey(handle)
+	id = strings.TrimSpace(id)
+	if handle == "" || id == "" {
+		return
+	}
+	rows := a.loadBulletinAcks(handle)
+	if rows == nil {
+		rows = map[string]time.Time{}
+	}
+	rows[id] = time.Now().UTC()
+	a.persistBulletinAcks(handle, rows)
+}
+
+func (a *webApp) bulletinAckedAt(handle, id string) time.Time {
+	rows := a.loadBulletinAcks(handle)
+	if rows == nil {
+		return time.Time{}
+	}
+	return rows[strings.TrimSpace(id)]
+}
+
+func (a *webApp) loadBulletinAckSummary() map[string]bulletinAckSummary {
+	if a.adminRepo == nil {
+		return nil
+	}
+	settings, err := a.adminRepo.ListSystemSettings()
+	if err != nil {
+		return nil
+	}
+	out := map[string]bulletinAckSummary{}
+	for key, raw := range settings {
+		if !strings.HasPrefix(key, sysSettingBulletinAckRoot) || strings.TrimSpace(raw) == "" {
+			continue
+		}
+		decoded := map[string]string{}
+		if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+			continue
+		}
+		for id, value := range decoded {
+			at, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(value))
+			if strings.TrimSpace(id) == "" || err != nil {
+				continue
+			}
+			row := out[id]
+			row.Count++
+			if at.After(row.LastAt) {
+				row.LastAt = at.UTC()
+			}
+			out[id] = row
+		}
+	}
+	return out
+}
+
+func loadStaffEscalationsFromSettings(raw string) []staffEscalationEntry {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var decoded []staffEscalationEntry
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		return nil
+	}
+	out := make([]staffEscalationEntry, 0, len(decoded))
+	for _, row := range decoded {
+		row.ID = strings.TrimSpace(row.ID)
+		row.Handle = strings.TrimSpace(row.Handle)
+		row.Actor = strings.TrimSpace(row.Actor)
+		row.Note = cleanOneLiner(row.Note, 160)
+		if row.ID == "" || row.Handle == "" || row.Note == "" || row.CreatedAt.IsZero() {
+			continue
+		}
+		out = append(out, row)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].ResolvedAt.IsZero() != out[j].ResolvedAt.IsZero() {
+			return out[i].ResolvedAt.IsZero()
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	if len(out) > maxStaffEscalations {
+		out = out[:maxStaffEscalations]
+	}
+	return out
+}
+
+func (a *webApp) loadStaffEscalations() []staffEscalationEntry {
+	if a.adminRepo == nil {
+		return nil
+	}
+	raw, err := a.adminRepo.GetSystemSetting(sysSettingStaffEscalations)
+	if err != nil {
+		return nil
+	}
+	return loadStaffEscalationsFromSettings(raw)
+}
+
+func (a *webApp) persistStaffEscalations(rows []staffEscalationEntry) {
+	if a.adminRepo == nil {
+		return
+	}
+	clean := make([]staffEscalationEntry, 0, len(rows))
+	for _, row := range rows {
+		row.ID = strings.TrimSpace(row.ID)
+		row.Handle = strings.TrimSpace(row.Handle)
+		row.Actor = strings.TrimSpace(row.Actor)
+		row.Note = cleanOneLiner(row.Note, 160)
+		if row.ID == "" || row.Handle == "" || row.Note == "" || row.CreatedAt.IsZero() {
+			continue
+		}
+		clean = append(clean, row)
+	}
+	sort.Slice(clean, func(i, j int) bool {
+		if clean[i].ResolvedAt.IsZero() != clean[j].ResolvedAt.IsZero() {
+			return clean[i].ResolvedAt.IsZero()
+		}
+		return clean[i].CreatedAt.After(clean[j].CreatedAt)
+	})
+	if len(clean) > maxStaffEscalations {
+		clean = clean[:maxStaffEscalations]
+	}
+	body := ""
+	if len(clean) > 0 {
+		raw, err := json.Marshal(clean)
+		if err != nil {
+			a.addAppError("staff.escalations", fmt.Errorf("encode escalations: %w", err))
+			return
+		}
+		body = string(raw)
+	}
+	a.persistSystemSetting(sysSettingStaffEscalations, body)
+}
+
+func (a *webApp) queueStaffEscalation(actor, handle, note string) {
+	handle = strings.TrimSpace(handle)
+	note = cleanOneLiner(note, 160)
+	if handle == "" || note == "" {
+		return
+	}
+	rows := a.loadStaffEscalations()
+	resolvedAt := time.Time{}
+	for idx, row := range rows {
+		if strings.EqualFold(row.Handle, handle) && row.ResolvedAt.IsZero() {
+			rows[idx].Actor = strings.TrimSpace(actor)
+			rows[idx].Note = note
+			rows[idx].CreatedAt = time.Now().UTC()
+			rows[idx].ResolvedAt = resolvedAt
+			a.persistStaffEscalations(rows)
+			return
+		}
+	}
+	rows = append([]staffEscalationEntry{{
+		ID:        randomEventID(),
+		Handle:    handle,
+		Actor:     strings.TrimSpace(actor),
+		Note:      note,
+		CreatedAt: time.Now().UTC(),
+	}}, rows...)
+	a.persistStaffEscalations(rows)
+}
+
+func (a *webApp) resolveStaffEscalation(id string) bool {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false
+	}
+	rows := a.loadStaffEscalations()
+	updated := false
+	now := time.Now().UTC()
+	for idx, row := range rows {
+		if row.ID != id || !row.ResolvedAt.IsZero() {
+			continue
+		}
+		rows[idx].ResolvedAt = now
+		updated = true
+		break
+	}
+	if updated {
+		a.persistStaffEscalations(rows)
+	}
+	return updated
 }
 
 func (a *webApp) persistCommunityEvents(rows []communityEvent) {
@@ -13449,6 +14430,202 @@ func (a *webApp) markAttentionItemsRead(handle string, keys []string) int {
 		count++
 	}
 	return count
+}
+
+func attentionSnoozeSettingKey(handle string) string {
+	handle = normalizeHandleKey(handle)
+	if handle == "" {
+		return ""
+	}
+	return sysSettingAttentionSnoozeRoot + handle
+}
+
+func (a *webApp) ensureAttentionSnoozeLoaded(handle string) {
+	handle = normalizeHandleKey(handle)
+	if handle == "" {
+		return
+	}
+
+	a.Lock()
+	if a.attentionSnoozeLoaded == nil {
+		a.attentionSnoozeLoaded = map[string]bool{}
+	}
+	if a.attentionSnoozed == nil {
+		a.attentionSnoozed = map[string]map[string]time.Time{}
+	}
+	if a.attentionSnoozeLoaded[handle] {
+		a.Unlock()
+		return
+	}
+	a.attentionSnoozeLoaded[handle] = true
+	a.Unlock()
+
+	rows := map[string]time.Time{}
+	if a.adminRepo != nil {
+		raw, err := a.adminRepo.GetSystemSetting(attentionSnoozeSettingKey(handle))
+		if err == nil && strings.TrimSpace(raw) != "" {
+			decoded := map[string]string{}
+			if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+				a.addAppError("attention.snooze", fmt.Errorf("decode snoozes for %s: %w", handle, err))
+			} else {
+				now := time.Now().UTC()
+				for key, value := range decoded {
+					at, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(value))
+					if err != nil || !at.After(now) {
+						continue
+					}
+					rows[strings.TrimSpace(key)] = at.UTC()
+				}
+			}
+		}
+	}
+
+	a.Lock()
+	if a.attentionSnoozed == nil {
+		a.attentionSnoozed = map[string]map[string]time.Time{}
+	}
+	if len(rows) == 0 {
+		delete(a.attentionSnoozed, handle)
+	} else {
+		a.attentionSnoozed[handle] = rows
+	}
+	a.Unlock()
+}
+
+func (a *webApp) persistAttentionSnoozes(handle string) {
+	handle = normalizeHandleKey(handle)
+	if handle == "" || a.adminRepo == nil {
+		return
+	}
+	a.ensureAttentionSnoozeLoaded(handle)
+
+	now := time.Now().UTC()
+	type row struct {
+		Key string
+		At  time.Time
+	}
+
+	a.Lock()
+	source := a.attentionSnoozed[handle]
+	rows := make([]row, 0, len(source))
+	for key, at := range source {
+		key = strings.TrimSpace(key)
+		if key == "" || !at.After(now) {
+			continue
+		}
+		rows = append(rows, row{Key: key, At: at.UTC()})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].At.Equal(rows[j].At) {
+			return rows[i].Key < rows[j].Key
+		}
+		return rows[i].At.After(rows[j].At)
+	})
+	if len(rows) > maxAttentionSnoozedItems {
+		rows = rows[:maxAttentionSnoozedItems]
+	}
+	if a.attentionSnoozed == nil {
+		a.attentionSnoozed = map[string]map[string]time.Time{}
+	}
+	if len(rows) == 0 {
+		delete(a.attentionSnoozed, handle)
+	} else {
+		pruned := make(map[string]time.Time, len(rows))
+		for _, row := range rows {
+			pruned[row.Key] = row.At
+		}
+		a.attentionSnoozed[handle] = pruned
+	}
+	a.Unlock()
+
+	encoded := map[string]string{}
+	for _, row := range rows {
+		encoded[row.Key] = row.At.Format(time.RFC3339Nano)
+	}
+	body := ""
+	if len(encoded) > 0 {
+		raw, err := json.Marshal(encoded)
+		if err != nil {
+			a.addAppError("attention.snooze", fmt.Errorf("encode snoozes for %s: %w", handle, err))
+			return
+		}
+		body = string(raw)
+	}
+	a.persistSystemSetting(attentionSnoozeSettingKey(handle), body)
+}
+
+func (a *webApp) attentionSnoozedUntil(handle, key string) time.Time {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return time.Time{}
+	}
+	handle = normalizeHandleKey(handle)
+	if handle == "" {
+		return time.Time{}
+	}
+	a.ensureAttentionSnoozeLoaded(handle)
+	persist := false
+	a.Lock()
+	rows := a.attentionSnoozed[handle]
+	if len(rows) == 0 {
+		a.Unlock()
+		return time.Time{}
+	}
+	at, ok := rows[key]
+	if !ok {
+		a.Unlock()
+		return time.Time{}
+	}
+	if !at.After(time.Now().UTC()) {
+		delete(rows, key)
+		if len(rows) == 0 {
+			delete(a.attentionSnoozed, handle)
+		}
+		persist = true
+	}
+	a.Unlock()
+	if persist {
+		a.persistAttentionSnoozes(handle)
+		return time.Time{}
+	}
+	return at
+}
+
+func (a *webApp) snoozeAttentionItem(handle, key string, until time.Time) {
+	handle = normalizeHandleKey(handle)
+	key = strings.TrimSpace(key)
+	if handle == "" || key == "" || until.IsZero() {
+		return
+	}
+	a.ensureAttentionSnoozeLoaded(handle)
+	a.Lock()
+	if a.attentionSnoozed == nil {
+		a.attentionSnoozed = map[string]map[string]time.Time{}
+	}
+	if a.attentionSnoozed[handle] == nil {
+		a.attentionSnoozed[handle] = map[string]time.Time{}
+	}
+	a.attentionSnoozed[handle][key] = until.UTC()
+	a.Unlock()
+	a.persistAttentionSnoozes(handle)
+}
+
+func (a *webApp) clearAttentionSnooze(handle, key string) {
+	handle = normalizeHandleKey(handle)
+	key = strings.TrimSpace(key)
+	if handle == "" || key == "" {
+		return
+	}
+	a.ensureAttentionSnoozeLoaded(handle)
+	a.Lock()
+	if rows := a.attentionSnoozed[handle]; rows != nil {
+		delete(rows, key)
+		if len(rows) == 0 {
+			delete(a.attentionSnoozed, handle)
+		}
+	}
+	a.Unlock()
+	a.persistAttentionSnoozes(handle)
 }
 
 func (a *webApp) pruneExpiredWebSessions() int {
@@ -14877,6 +16054,42 @@ func pageMessageBlock(r *http.Request) string {
 	return out.String()
 }
 
+func safeLocalRedirectPath(path, fallback string) string {
+	fallback = strings.TrimSpace(fallback)
+	if fallback == "" {
+		fallback = "/"
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fallback
+	}
+	if strings.ContainsAny(path, "\r\n") || !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") {
+		return fallback
+	}
+	u, err := url.Parse(path)
+	if err != nil || u.Scheme != "" || u.Host != "" || !strings.HasPrefix(u.Path, "/") {
+		return fallback
+	}
+	return u.String()
+}
+
+func appendRedirectQuery(path, key, value string) string {
+	path = safeLocalRedirectPath(path, "/")
+	key = strings.TrimSpace(key)
+	value = strings.TrimSpace(value)
+	if key == "" || value == "" {
+		return path
+	}
+	u, err := url.Parse(path)
+	if err != nil {
+		return path
+	}
+	q := u.Query()
+	q.Set(key, value)
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
 func redirectWithNotice(w http.ResponseWriter, r *http.Request, path, notice string) {
 	redirectWithQueryMessage(w, r, path, "notice", notice)
 }
@@ -14886,21 +16099,14 @@ func redirectWithError(w http.ResponseWriter, r *http.Request, path, errText str
 }
 
 func redirectWithQueryMessage(w http.ResponseWriter, r *http.Request, path, key, value string) {
+	path = safeLocalRedirectPath(path, "/")
 	key = strings.TrimSpace(key)
 	value = strings.TrimSpace(value)
 	if key == "" || value == "" {
 		http.Redirect(w, r, path, http.StatusFound)
 		return
 	}
-	u, err := url.Parse(path)
-	if err != nil {
-		http.Redirect(w, r, path, http.StatusFound)
-		return
-	}
-	q := u.Query()
-	q.Set(key, value)
-	u.RawQuery = q.Encode()
-	http.Redirect(w, r, u.String(), http.StatusFound)
+	http.Redirect(w, r, appendRedirectQuery(path, key, value), http.StatusFound)
 }
 
 func quoteBody(body string) string {
@@ -15401,6 +16607,9 @@ func (a *webApp) buildBoardPulse(user *domain.User, boards []domain.Board, limit
 	now := time.Now().UTC()
 	out := make([]boardPulseRow, 0, len(boards))
 	for _, board := range boards {
+		if a.isBoardQuietActive(user.Handle, board.ID, now) {
+			continue
+		}
 		msgs, err := a.msgRepo.ListByBoard(board.ID)
 		if err != nil {
 			continue

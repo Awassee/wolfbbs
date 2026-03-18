@@ -396,10 +396,7 @@ func (a *webApp) handleGatewayFileAction(w http.ResponseWriter, r *http.Request,
 	if action == "" || action == "fetch" {
 		return false
 	}
-	redirectPath := "/gateway?view=files"
-	if candidate := strings.TrimSpace(r.FormValue("return_to")); strings.HasPrefix(candidate, "/") {
-		redirectPath = candidate
-	}
+	redirectPath := safeLocalRedirectPath(r.FormValue("return_to"), "/gateway?view=files")
 	if a.adminRepo == nil {
 		redirectWithError(w, r, redirectPath, "FileBase is unavailable.")
 		return true
@@ -484,7 +481,7 @@ func (a *webApp) handleGatewayFileAction(w http.ResponseWriter, r *http.Request,
 			}
 			ticket, err := a.createDownloadTicket(user.ID, fileID, time.Duration(ttlMinutes)*time.Minute)
 			if err == nil && ticket != nil {
-				redirectURL += "&issued_token=" + url.QueryEscape(ticket.Token)
+				redirectURL = appendRedirectQuery(redirectURL, "issued_token", ticket.Token)
 				notice = "Download ticket issued."
 			} else {
 				errMsg = "Could not issue download ticket."

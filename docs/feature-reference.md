@@ -179,14 +179,19 @@ Documented in `docs/irc-compat.md`:
   - `digest` for lower-noise daily brief inclusion
   - `mute` to suppress board resurfacing in focused views
 - Attention Center at `/attention` with per-user read/unread and dismiss/restore state
+- Attention Center also supports per-item snooze/restore so callers can defer follow-up without losing it
 - Attention Center also surfaces live caller pages with mail handoff links
 - Read-Later Queue at `/bookmarks` for persistent saved board posts and mail
 - Daily brief at `/today` for watch-tier boards, digest-tier boards, upcoming events, and direct follow-up
 - Daily Digest at `/digest` with per-user opt-in preferences from `/settings`
+- Digest preferences now include per-route cadence controls for attention, bulletin wire, and event reminders
+- Weekly digest can be delivered by internal private mail from the `mailbot` service account
 - Guided onboarding at `/first-call` to create a first post, lobby line, private mail, and saved home route
 - Guest `/start` and caller `/today` surfaces now carry persistent quick-start checklists
 - `/settings` includes saved home-route preference for `/today`, `/digest`, `/boards`, `/chat`, or `/doors`
+- Private mail supports urgency levels (`normal`, `urgent`, `low`) rendered in inbox, outbox, and message reader views
 - SSH boards include conference filter toggle (`C`) for area-focused browsing
+- Board detail views support per-board quiet hours so lower-priority boards drop out of attention loops during configured windows
 - Mail inbox/outbox, read by ID, compose local/external (policy-gated)
 - Mail compose adds presence-aware handoff guidance when the local recipient is online now
 - Newscan/digest integration for message/mail activity
@@ -207,11 +212,18 @@ Documented in `docs/irc-compat.md`:
 - Public Bulletins Center at `/bulletins`
 - Sysop Bulletin Scheduler at `/admin/bulletins`
 - Timed announcements publish from the scheduler into the bulletins wire and caller-facing bulletin cards
+- Timed announcements support caller acknowledgement tracking, with aggregate ack counts visible in admin bulletins
 - Caller Directory at `/directory` includes live node, idle time, origin, and verified/role filtering
 - Favorite Callers with quick actions and dedicated filter lane
 - Recurring Correspondents surface on caller profiles to show repeat communication patterns
 - Live paging from caller profiles into the recipient's Attention Center
 - Moderator/sysop staff notes on caller profiles for continuity across support and moderation work
+- Moderator staff notes can be escalated into the shared Ops Center queue for follow-through
+
+## Operator Triage and Ops
+
+- Ops Center at `/admin/ops` now surfaces unresolved pages and staff escalations alongside errors, audits, and live sessions
+- Ops Center includes explicit resolve actions for live-page backlog and staff follow-through items
 
 ## Message Network Baseline
 
