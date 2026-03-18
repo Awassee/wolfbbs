@@ -534,6 +534,11 @@ func TestAdminSetupConfigAndErrorScreens(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), "After Bootstrap") {
 		t.Fatalf("missing after bootstrap section: %s", rr.Body.String())
 	}
+	for _, needle := range []string{"Work top to bottom", "Copy</button></li>"} {
+		if !strings.Contains(rr.Body.String(), needle) {
+			t.Fatalf("setup page missing %q: %s", needle, rr.Body.String())
+		}
+	}
 
 	form := url.Values{}
 	form.Set("action", "seed_default_boards")
@@ -1373,6 +1378,11 @@ func TestBoardsACSAndPointers(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200 for readable board, got %d", rr.Code)
 	}
+	for _, want := range []string{"Board scan", "Posting flow"} {
+		if !strings.Contains(rr.Body.String(), want) {
+			t.Fatalf("board view missing %q: %s", want, rr.Body.String())
+		}
+	}
 
 	form := url.Values{}
 	form.Set("board_id", strconv.FormatInt(general.ID, 10))
@@ -1409,6 +1419,11 @@ func TestBoardsACSAndPointers(t *testing.T) {
 	app.handleBoards(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200 for reader view, got %d", rr.Code)
+	}
+	for _, want := range []string{"Reading thread #", "Moderation path", `data-draft-key="board-`} {
+		if !strings.Contains(rr.Body.String(), want) {
+			t.Fatalf("board reader missing %q: %s", want, rr.Body.String())
+		}
 	}
 	ptr, err := msgRepo.GetPointer(user.ID, general.ID)
 	if err != nil {
@@ -2205,7 +2220,7 @@ func TestConnectAndTourPages(t *testing.T) {
 	if !strings.Contains(body, "WolfBBS Connect") || !strings.Contains(body, "ws://localhost:6080/ws-login") {
 		t.Fatalf("connect page missing expected content: %s", body)
 	}
-	for _, needle := range []string{"Choose your client", "First call checklist"} {
+	for _, needle := range []string{"Choose your client", "First call checklist", "Clipboard-Friendly Commands", "Connection Sanity"} {
 		if !strings.Contains(body, needle) {
 			t.Fatalf("connect page missing %q: %s", needle, body)
 		}
@@ -2379,7 +2394,7 @@ func TestAdminLaunchDashboardAndBoardsEmptyState(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("admin panel status = %d", rr.Code)
 	}
-	for _, needle := range []string{"Sysop Control Panel", "Launch Digest", "Launch Center"} {
+	for _, needle := range []string{"Sysop Control Panel", "Launch Digest", "Launch Center", "User Ops"} {
 		if !strings.Contains(rr.Body.String(), needle) {
 			t.Fatalf("admin panel missing %q: %s", needle, rr.Body.String())
 		}
@@ -2392,7 +2407,7 @@ func TestAdminLaunchDashboardAndBoardsEmptyState(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("admin launch status = %d", rr.Code)
 	}
-	for _, needle := range []string{"Launch Center", "Operator Commands", "docs/OPERATOR_PLAYBOOK.md"} {
+	for _, needle := range []string{"Launch Center", "Operator Commands", "docs/OPERATOR_PLAYBOOK.md", "Use Launch Center as home base"} {
 		if !strings.Contains(rr.Body.String(), needle) {
 			t.Fatalf("admin launch missing %q: %s", needle, rr.Body.String())
 		}
@@ -2405,7 +2420,7 @@ func TestAdminLaunchDashboardAndBoardsEmptyState(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("admin status center status = %d", rr.Code)
 	}
-	for _, needle := range []string{"Launch Readiness", "/admin/launch"} {
+	for _, needle := range []string{"Launch Readiness", "/admin/launch", "checks passing"} {
 		if !strings.Contains(rr.Body.String(), needle) {
 			t.Fatalf("admin status center missing %q: %s", needle, rr.Body.String())
 		}
@@ -3016,7 +3031,7 @@ func TestLegacyModernClassicRoutes(t *testing.T) {
 		t.Fatalf("mail status = %d", rr.Code)
 	}
 	body = rr.Body.String()
-	for _, want := range []string{"Recent Correspondents", "Address Book", `value="friend"`, "Meet me in the Door Hub", "all mail"} {
+	for _, want := range []string{"Recent Correspondents", "Address Book", `value="friend"`, "Meet me in the Door Hub", "all mail", "Active Mail Filters", `data-draft-key="mail-compose"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("mail missing %q: %s", want, body)
 		}
@@ -3030,7 +3045,7 @@ func TestLegacyModernClassicRoutes(t *testing.T) {
 		t.Fatalf("mail reader status = %d", rr.Code)
 	}
 	body = rr.Body.String()
-	for _, want := range []string{"Quick Reply", "Send Reply", "Ping caller"} {
+	for _, want := range []string{"Quick Reply", "Send Reply", "Ping caller", "Reply in context", `data-draft-key="mail-reply-1"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("mail reader missing %q: %s", want, body)
 		}

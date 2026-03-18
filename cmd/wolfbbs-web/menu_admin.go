@@ -173,8 +173,10 @@ func (a *webApp) renderAdminConfigPage(w http.ResponseWriter, r *http.Request, s
 	}
 
 	csrf := a.csrfHiddenInput(r)
+	configHelperBlock := `<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Use setup first</strong><p>Identity and baseline safety belong in /admin/setup before deeper runtime changes here.</p></article><article class="wolfbbs-helper-card"><strong>Treat transport changes carefully</strong><p>Listener, proxy, and exposure changes should be followed by a status check and a real caller walk-through.</p></article><article class="wolfbbs-helper-card"><strong>Menu editor is live config</strong><p>The ANSI menu file editor below saves runtime menu sources. Drafts are stored locally while you type.</p></article></section>`
 	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Runtime Configuration</title></head><body><h1>Runtime Configuration</h1><p><a href="/admin">back</a> | <a href="/admin/setup">setup</a> | <a href="/help">help</a></p>` +
 		`<p>These values are persisted in system settings and applied on service startup. Environment values remain fallback defaults.</p>` +
+		configHelperBlock +
 		`<h2>Basic: Identity</h2><form method="POST">` + csrf +
 		`<input type="hidden" name="action" value="save_identity">` +
 		`<label>Site Name <input name="site_name" value="` + htmlEscape(a.siteDisplayName()) + `" size="32"></label><br>` +
@@ -249,7 +251,7 @@ func (a *webApp) renderAdminConfigPage(w http.ResponseWriter, r *http.Request, s
 		`<label>Menu file <input name="menu_file" value="` + htmlEscape(menuFile) + `" size="64"></label> ` +
 		`<button type="submit">Save Menu Runtime</button></form>` +
 		`<p>Available menu files under <code>` + htmlEscape(a.menuRootPath()) + `</code>:</p><ul>` + menuRows.String() + `</ul>` +
-		`<form method="POST">` + csrf +
+		`<form method="POST" data-draft-key="menu-editor-` + htmlEscape(menuFile) + `">` + csrf +
 		`<label>Editing file <input name="menu_file" value="` + htmlEscape(menuFile) + `" size="64"></label><br>` +
 		`<textarea name="menu_body" rows="26" cols="120">` + htmlEscape(menuBody) + `</textarea><br>` +
 		`<button type="submit" name="action" value="validate_menu">Validate Menu</button> ` +

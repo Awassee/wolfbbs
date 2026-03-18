@@ -125,6 +125,8 @@ test("connect page exposes the web terminal entrypoint", async ({ page }) => {
   await expect(page.locator("h1")).toContainText(/Connect/i);
   await expect(page.locator("body")).toContainText("Choose your client");
   await expect(page.locator("body")).toContainText("First call checklist");
+  await expect(page.locator("body")).toContainText("Clipboard-Friendly Commands");
+  await expect(page.getByRole("button", { name: "Copy" }).first()).toBeVisible();
   await expect(page.locator("#xterm")).toBeVisible();
   await expect(page.locator("#termStatus")).toContainText(/connecting|connected|disconnected|socket error/i);
   await expect(page.locator("body")).toContainText("ws-login");
@@ -145,6 +147,7 @@ test("user web journey supports keyboard navigation and status/config visibility
   await page.goto("/boards?mode=mentions");
   await expect(page.locator("body")).toContainText("Personal Board Queue");
   await expect(page.locator("body")).toContainText("Mentions");
+  await expect(page.locator("body")).toContainText("Active Board Filters");
 
   await page.goto("/bulletins");
   await expect(page.locator("h1")).toContainText("Bulletin Center");
@@ -193,6 +196,7 @@ test("user web journey supports keyboard navigation and status/config visibility
   await expect(page.locator("h1")).toContainText("Private Mail");
   await page.goto("/mail?template=door_invite");
   await expect(page.locator('input[name="subject"]')).toHaveValue(/Meet me in the Door Hub/);
+  await expect(page.locator("body")).toContainText("Drafts are local");
   await page.fill('input[name="to"]', ADMIN_HANDLE);
   await page.fill('input[name="subject"]', "Playwright Mail");
   await page.fill('textarea[name="body"]', "Mail body from browser flow.");
@@ -253,12 +257,14 @@ test("admin journey enforces RBAC and exposes sysop pages", async ({ browser }) 
   await expect(adminPage.locator("h1")).toContainText("Launch Center");
   await expect(adminPage.locator("body")).toContainText("Operator Commands");
   await expect(adminPage.locator("body")).toContainText("docs/OPERATOR_PLAYBOOK.md");
+  await expect(adminPage.locator("body")).toContainText("Use Launch Center as home base");
   await adminPage.goto("/admin");
 
-  await adminPage.locator('a[href="/admin/users"]').focus();
+  await adminPage.locator('a[href="/admin/users"]').first().focus();
   await adminPage.keyboard.press("Enter");
   await expect(adminPage).toHaveURL(/\/admin\/users$/);
   await expect(adminPage.locator("h1")).toContainText("Sysop Users");
+  await expect(adminPage.locator("body")).toContainText("Create callers fast");
   const runID = Date.now().toString(36);
   const qaHandle = `qa${runID.slice(-5)}`;
   const qaBoardTitle = `QA Board ${runID}`;
