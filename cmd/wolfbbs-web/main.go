@@ -1448,6 +1448,199 @@ hr{
   border-radius:12px;
   box-shadow:var(--shadow);
 }
+.wolfbbs-banner{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+  margin:14px 0;
+  padding:14px 16px;
+  border-radius:14px;
+  border:1px solid var(--line);
+  background:linear-gradient(180deg,#fbfdff,#f3f8ff);
+  box-shadow:var(--shadow);
+}
+.wolfbbs-banner strong{
+  display:block;
+  margin-bottom:4px;
+}
+.wolfbbs-banner p{
+  margin:0;
+}
+.wolfbbs-banner[data-kind="notice"]{
+  border-color:#b9d5be;
+  background:linear-gradient(180deg,#f7fff9,#edf9f0);
+}
+.wolfbbs-banner[data-kind="error"]{
+  border-color:#efc1c6;
+  background:linear-gradient(180deg,#fff9fa,#fff0f2);
+}
+.wolfbbs-banner-close{
+  border:0;
+  min-height:auto;
+  padding:4px 8px;
+  border-radius:999px;
+  background:#e7eef8;
+  color:#26486f;
+  font-size:.8rem;
+  box-shadow:none;
+}
+.wolfbbs-banner-close:hover{
+  background:#d7e6fb;
+}
+.wolfbbs-filter-summary{
+  margin:12px 0 16px;
+}
+.wolfbbs-filter-summary h2{
+  margin-bottom:8px;
+}
+.wolfbbs-active-filters{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  align-items:center;
+  margin:10px 0 0;
+}
+.wolfbbs-filter-chip{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  min-height:28px;
+  padding:4px 10px;
+  border-radius:999px;
+  border:1px solid #c6d8ef;
+  background:#f6fbff;
+  color:#244c83;
+  font-size:.82rem;
+  font-weight:700;
+}
+.wolfbbs-filter-reset{
+  display:inline-flex;
+  align-items:center;
+  min-height:28px;
+  padding:4px 10px;
+  border-radius:999px;
+  border:1px solid #d3dce8;
+  background:#fff;
+  color:#37506c;
+  font-size:.82rem;
+  font-weight:700;
+}
+.wolfbbs-filter-reset:hover{
+  text-decoration:none;
+  background:#f5f9fe;
+}
+.wolfbbs-form-note{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  align-items:center;
+  margin:0 0 10px;
+  color:#35506b;
+  font-size:.86rem;
+}
+.wolfbbs-form-note strong{
+  color:#17385e;
+}
+.wolfbbs-form-status{
+  display:inline-flex;
+  align-items:center;
+  min-height:26px;
+  padding:3px 10px;
+  border-radius:999px;
+  background:#edf4ff;
+  border:1px solid #c8daf1;
+  color:#244c83;
+  font-size:.78rem;
+  font-weight:700;
+}
+.wolfbbs-form-status.dirty{
+  background:#fff5df;
+  border-color:#f0d7a0;
+  color:#7b5400;
+}
+.wolfbbs-form-status.error{
+  background:#fff0f2;
+  border-color:#efc1c6;
+  color:#8b2331;
+}
+.wolfbbs-form-secondary{
+  border:1px solid #c8d7ea;
+  background:#f6fbff;
+  color:#23497d;
+}
+.wolfbbs-form-secondary:hover{
+  background:#eaf3ff;
+}
+.wolfbbs-command-block{
+  position:relative;
+}
+.wolfbbs-copy-button{
+  position:absolute;
+  top:10px;
+  right:10px;
+  border:1px solid #cad8eb;
+  min-height:auto;
+  padding:4px 9px;
+  border-radius:999px;
+  background:#fff;
+  color:#26486f;
+  box-shadow:none;
+  font-size:.8rem;
+}
+.wolfbbs-copy-button:hover{
+  background:#eef5ff;
+}
+.wolfbbs-inline-actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  align-items:center;
+}
+.wolfbbs-split{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
+  gap:14px;
+  margin:14px 0 18px;
+}
+.wolfbbs-list-clean{
+  list-style:none;
+  padding:0;
+  margin:0;
+}
+.wolfbbs-list-clean li{
+  padding:8px 0;
+  border-bottom:1px solid #e6eef8;
+}
+.wolfbbs-list-clean li:last-child{
+  border-bottom:0;
+}
+.wolfbbs-helper-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
+  gap:10px;
+  margin:12px 0 16px;
+}
+.wolfbbs-helper-card{
+  padding:14px 16px;
+  border-radius:14px;
+  border:1px solid var(--line);
+  background:linear-gradient(180deg,#ffffff,#f5f9ff);
+  box-shadow:var(--shadow);
+}
+.wolfbbs-helper-card strong{
+  display:block;
+  margin-bottom:6px;
+  color:#17385e;
+}
+.wolfbbs-helper-card p{
+  margin:0;
+  color:#4b6178;
+}
+.wolfbbs-submit-busy{
+  opacity:.72;
+  pointer-events:none;
+}
 #chat{
   border:1px solid #173456 !important;
   border-radius:12px;
@@ -1723,6 +1916,271 @@ hr{
       }
     }
   } catch (_) {}
+
+  document.querySelectorAll('[data-wolfbbs-flash]').forEach((banner) => {
+    if (banner.querySelector('.wolfbbs-banner-close')) return;
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'wolfbbs-banner-close';
+    close.textContent = 'Dismiss';
+    close.addEventListener('click', () => banner.remove());
+    banner.appendChild(close);
+  });
+
+  function copyText(text) {
+    const value = String(text || "");
+    if (!value) return Promise.reject(new Error("empty"));
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(value);
+    }
+    const area = document.createElement("textarea");
+    area.value = value;
+    area.setAttribute("readonly", "readonly");
+    area.style.position = "absolute";
+    area.style.left = "-9999px";
+    document.body.appendChild(area);
+    area.select();
+    try {
+      document.execCommand("copy");
+      document.body.removeChild(area);
+      return Promise.resolve();
+    } catch (err) {
+      document.body.removeChild(area);
+      return Promise.reject(err);
+    }
+  }
+
+  document.addEventListener('click', (event) => {
+    const trigger = event.target.closest('[data-copy-text]');
+    if (!trigger) return;
+    event.preventDefault();
+    const text = trigger.getAttribute('data-copy-text') || '';
+    const original = trigger.textContent;
+    copyText(text).then(() => {
+      trigger.textContent = 'Copied';
+      window.setTimeout(() => {
+        trigger.textContent = original;
+      }, 1200);
+    }).catch(() => {
+      trigger.textContent = 'Copy failed';
+      window.setTimeout(() => {
+        trigger.textContent = original;
+      }, 1200);
+    });
+  });
+
+  document.querySelectorAll('pre').forEach((block) => {
+    if (block.closest('.wolfbbs-command-block')) return;
+    const wrapper = document.createElement('div');
+    wrapper.className = 'wolfbbs-command-block';
+    block.parentNode.insertBefore(wrapper, block);
+    wrapper.appendChild(block);
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'wolfbbs-copy-button';
+    copy.textContent = 'Copy';
+    copy.setAttribute('data-copy-text', block.textContent || '');
+    wrapper.appendChild(copy);
+  });
+
+  document.querySelectorAll('form[data-filter-form]').forEach((form) => {
+    const controls = Array.from(form.querySelectorAll('input[name], select[name]')).filter((control) => {
+      const type = (control.getAttribute('type') || '').toLowerCase();
+      if (type === 'hidden' || type === 'submit' || type === 'button') return false;
+      if (control.disabled) return false;
+      return true;
+    });
+    const active = controls.map((control) => {
+      const value = (control.value || '').trim();
+      if (!value) return null;
+      const label = control.getAttribute('data-filter-label') || control.name.replace(/_/g, ' ');
+      return { label, value };
+    }).filter(Boolean);
+    if (!active.length) return;
+    const summary = document.createElement('div');
+    summary.className = 'wolfbbs-active-filters';
+    active.forEach((item) => {
+      const chip = document.createElement('span');
+      chip.className = 'wolfbbs-filter-chip';
+      chip.textContent = item.label + ': ' + item.value;
+      summary.appendChild(chip);
+    });
+    const reset = document.createElement('a');
+    reset.className = 'wolfbbs-filter-reset';
+    reset.href = form.getAttribute('data-filter-reset') || form.getAttribute('action') || location.pathname;
+    reset.textContent = 'Reset filters';
+    summary.appendChild(reset);
+    form.insertAdjacentElement('afterend', summary);
+  });
+
+  const dirtyForms = new Set();
+  function draftFields(form) {
+    return Array.from(form.querySelectorAll('textarea[name], input[name], select[name]')).filter((field) => {
+      const type = (field.getAttribute('type') || '').toLowerCase();
+      if (type === 'hidden' || type === 'submit' || type === 'button' || type === 'checkbox' || type === 'radio' || type === 'password') return false;
+      return !field.disabled;
+    });
+  }
+
+  document.querySelectorAll('form[data-draft-key]').forEach((form) => {
+    const key = 'wolfbbs:draft:' + location.pathname + ':' + form.getAttribute('data-draft-key');
+    const fields = draftFields(form);
+    if (!fields.length) return;
+    const note = document.createElement('div');
+    note.className = 'wolfbbs-form-note';
+    note.innerHTML = '<strong>Drafts:</strong> <span>Saved locally in this browser while you type.</span>';
+    const status = document.createElement('span');
+    status.className = 'wolfbbs-form-status';
+    status.textContent = 'Draft idle';
+    note.appendChild(status);
+    const discard = document.createElement('button');
+    discard.type = 'button';
+    discard.className = 'wolfbbs-form-secondary';
+    discard.textContent = 'Discard draft';
+    note.appendChild(discard);
+    form.insertBefore(note, form.firstChild);
+
+    let dirty = false;
+    let saveTimer = null;
+
+    function markClean(message) {
+      dirty = false;
+      dirtyForms.delete(form);
+      status.classList.remove('dirty', 'error');
+      status.textContent = message || 'Draft idle';
+    }
+
+    function markDirty(message) {
+      dirty = true;
+      dirtyForms.add(form);
+      status.classList.remove('error');
+      status.classList.add('dirty');
+      status.textContent = message || 'Unsaved draft changes';
+    }
+
+    function serialize() {
+      const payload = {};
+      fields.forEach((field) => {
+        payload[field.name] = field.value || '';
+      });
+      return payload;
+    }
+
+    function saveDraft() {
+      try {
+        localStorage.setItem(key, JSON.stringify({
+          savedAt: new Date().toISOString(),
+          values: serialize()
+        }));
+        markClean('Draft saved locally');
+      } catch (_) {
+        status.classList.remove('dirty');
+        status.classList.add('error');
+        status.textContent = 'Draft storage unavailable';
+      }
+    }
+
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const saved = JSON.parse(raw);
+        if (saved && saved.values) {
+          fields.forEach((field) => {
+            if (!field.value && saved.values[field.name]) {
+              field.value = saved.values[field.name];
+            }
+          });
+          status.textContent = 'Draft restored';
+        }
+      }
+    } catch (_) {}
+
+    fields.forEach((field) => {
+      field.addEventListener('input', () => {
+        markDirty();
+        if (saveTimer) window.clearTimeout(saveTimer);
+        saveTimer = window.setTimeout(saveDraft, 400);
+      });
+      field.addEventListener('change', () => {
+        markDirty();
+        if (saveTimer) window.clearTimeout(saveTimer);
+        saveTimer = window.setTimeout(saveDraft, 250);
+      });
+    });
+
+    discard.addEventListener('click', () => {
+      try {
+        localStorage.removeItem(key);
+      } catch (_) {}
+      fields.forEach((field) => {
+        field.value = '';
+      });
+      markClean('Draft discarded');
+    });
+
+    form.addEventListener('submit', (event) => {
+      if (event.defaultPrevented) return;
+      try {
+        localStorage.removeItem(key);
+      } catch (_) {}
+      markClean('Submitting');
+    });
+  });
+
+  window.addEventListener('beforeunload', (event) => {
+    if (!dirtyForms.size) return;
+    event.preventDefault();
+    event.returnValue = '';
+  });
+
+  function inferredConfirmMessage(form, submitter) {
+    const actionValue = submitter && submitter.getAttribute('value') ? submitter.getAttribute('value') : '';
+    const hiddenAction = form.querySelector('input[name="action"]');
+    const hiddenActionValue = hiddenAction && hiddenAction.value ? hiddenAction.value.toLowerCase() : '';
+    const formAction = (form.getAttribute('action') || location.pathname || '').toLowerCase();
+    const adminScoped = formAction.indexOf('/admin') === 0 || formAction.includes('/admin/');
+    const text = [
+      submitter && submitter.textContent,
+      actionValue,
+      hiddenActionValue,
+      form.getAttribute('data-confirm')
+    ].join(' ').toLowerCase();
+    if (!text.trim()) return '';
+    if (submitter && submitter.getAttribute('data-confirm')) return submitter.getAttribute('data-confirm');
+    if (text.includes('delete') && adminScoped) return 'Delete this item? This cannot be undone.';
+    if (text.includes('reset password') && (adminScoped || hiddenActionValue === 'reset')) return 'Reset this password and replace the current one?';
+    if (text.includes('ban') && adminScoped) return 'Ban this account now?';
+    if (text.includes('disable') && adminScoped) return 'Disable this item now?';
+    if (text.includes('remove') && adminScoped) return 'Remove this item now?';
+    if (text.includes('lock') && adminScoped) return 'Apply this lock now?';
+    return '';
+  }
+
+  document.addEventListener('submit', (event) => {
+    const form = event.target;
+    if (!form || form.tagName.toLowerCase() !== 'form') return;
+    const submitter = event.submitter || form.querySelector('button[type="submit"], input[type="submit"]');
+    const confirmMessage = inferredConfirmMessage(form, submitter);
+    if (confirmMessage && !window.confirm(confirmMessage)) {
+      event.preventDefault();
+      return;
+    }
+    const method = (form.getAttribute('method') || 'get').toLowerCase();
+    if (method !== 'post') return;
+    const buttons = Array.from(form.querySelectorAll('button[type="submit"], input[type="submit"]'));
+    buttons.forEach((button) => {
+      if (button === submitter) {
+        button.setAttribute('data-original-label', button.textContent || button.value || '');
+        if (button.tagName.toLowerCase() === 'input') {
+          button.value = 'Working...';
+        } else {
+          button.textContent = 'Working...';
+        }
+      }
+      button.disabled = true;
+      button.classList.add('wolfbbs-submit-busy');
+    });
+  }, true);
 
   const primer = primerForPath(location.pathname);
   if (primer) {
@@ -2356,17 +2814,35 @@ setTimeout(function(){ term.focus(); }, 0);
 	connectHost := a.siteHost()
 	sshPort := parseInt(strings.TrimSpace(os.Getenv("WOLFBBS_SSH_PORT")), 2222)
 	telnetPort := parseInt(strings.TrimSpace(os.Getenv("WOLFBBS_TELNET_PORT")), 2323)
+	ircPort := parseInt(strings.TrimSpace(os.Getenv("WOLFBBS_IRC_PORT")), 6667)
+	sshCommand := `ssh ` + connectHost + ` -p ` + strconv.Itoa(sshPort)
+	telnetCommand := `telnet ` + connectHost + ` ` + strconv.Itoa(telnetPort)
+	ircCommand := `irc://` + connectHost + `:` + strconv.Itoa(ircPort) + `/%23lobby`
 
 	page := `<html><body>
 <h1>` + htmlEscape(a.siteDisplayName()) + ` Connect</h1>
 <p>Terminal-first remains the primary UX.</p>
 ` + motdBlock + `
 ` + announcementBlock + `
-<ul>
-<li>SSH (recommended): <code>ssh ` + htmlEscape(connectHost) + ` -p ` + strconv.Itoa(sshPort) + `</code></li>
-<li>Telnet (optional): <code>telnet ` + htmlEscape(connectHost) + ` ` + strconv.Itoa(telnetPort) + `</code></li>
-<li>WebSocket login endpoint: <code>` + htmlEscape(wsURL) + `</code></li>
-</ul>
+<section class="wolfbbs-kpi-grid">
+<article class="wolfbbs-kpi-card"><strong>SSH</strong><span>primary caller path</span></article>
+<article class="wolfbbs-kpi-card"><strong>Web</strong><span>browser terminal + setup</span></article>
+<article class="wolfbbs-kpi-card"><strong>IRC</strong><span>live lobby access</span></article>
+</section>
+<section class="wolfbbs-grid">
+<article class="wolfbbs-card"><h2>Clipboard-Friendly Commands</h2><ul class="wolfbbs-list-clean">
+<li><strong>SSH (recommended)</strong><br><code>` + htmlEscape(sshCommand) + `</code> <button type="button" class="wolfbbs-form-secondary" data-copy-text="` + htmlEscape(sshCommand) + `">Copy</button></li>
+<li><strong>Telnet (optional)</strong><br><code>` + htmlEscape(telnetCommand) + `</code> <button type="button" class="wolfbbs-form-secondary" data-copy-text="` + htmlEscape(telnetCommand) + `">Copy</button></li>
+<li><strong>IRC lobby</strong><br><code>` + htmlEscape(ircCommand) + `</code> <button type="button" class="wolfbbs-form-secondary" data-copy-text="` + htmlEscape(ircCommand) + `">Copy</button></li>
+<li><strong>WebSocket login endpoint</strong><br><code>` + htmlEscape(wsURL) + `</code> <button type="button" class="wolfbbs-form-secondary" data-copy-text="` + htmlEscape(wsURL) + `">Copy</button></li>
+</ul></article>
+<article class="wolfbbs-card"><h2>Connection Sanity</h2><ul class="wolfbbs-list-clean">
+<li><strong>Host:</strong> ` + htmlEscape(connectHost) + `</li>
+<li><strong>SSH port:</strong> ` + strconv.Itoa(sshPort) + `</li>
+<li><strong>Telnet port:</strong> ` + strconv.Itoa(telnetPort) + `</li>
+<li><strong>Web terminal:</strong> reconnects automatically if the browser tab comes back into focus.</li>
+</ul></article>
+</section>
 <h2>Choose your client</h2>
 <table border="1">
 <tr><th>Surface</th><th>Best for</th><th>Why pick it</th></tr>
@@ -2374,6 +2850,11 @@ setTimeout(function(){ term.focus(); }, 0);
 <tr><td>Web terminal</td><td>browser users</td><td>No terminal client required; good for quick access and testing.</td></tr>
 <tr><td>IRC</td><td>chat regulars</td><td>Same live chat layer as the web UI, but in an IRC client.</td></tr>
 </table>
+<section class="wolfbbs-helper-grid">
+<article class="wolfbbs-helper-card"><strong>Use SSH if you care about the full experience</strong><p>SSH is still the highest-fidelity path for ANSI menus, doors, and the classic board flow.</p></article>
+<article class="wolfbbs-helper-card"><strong>Use the web terminal for zero-install access</strong><p>This is the fastest way to test logins, menus, and redraw behavior from a browser.</p></article>
+<article class="wolfbbs-helper-card"><strong>Use IRC if chat is your entry point</strong><p>The lobby is the same live conversation layer seen in the web chat surface.</p></article>
+</section>
 <h2>First call checklist</h2>
 <ol>
 <li>Connect with SSH or the web terminal.</li>
@@ -2381,6 +2862,12 @@ setTimeout(function(){ term.focus(); }, 0);
 <li>Open boards, chat, and doors once so the main surfaces are familiar.</li>
 <li>If you are just exploring, use the guided tour first.</li>
 </ol>
+<h2>If the web terminal looks stuck</h2>
+<ul>
+<li>Click inside the terminal to restore focus.</li>
+<li>Switch tabs and come back; the browser terminal will reconnect automatically.</li>
+<li>Use SSH if you want the most reliable full-screen ANSI behavior.</li>
+</ul>
 <p><a href="/login">Sign in with account</a> | <a href="/help">help</a></p>
 ` + tourLink + `
 ` + termBlock + `
@@ -3445,7 +3932,19 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 			}
 			modeOptionRows.WriteString(`<option value="` + htmlEscape(row) + `"` + selected + `>` + htmlEscape(label) + `</option>`)
 		}
-		confFilterBlock := `<form method="GET" action="/boards" class="wolfbbs-inline-form"><label>Search <input name="q" value="` + htmlEscape(boardQuery) + `" placeholder="board, description, subject"></label><label>Conference <select name="conference">` + confOptions.String() + `</select></label><label>Mode <select name="mode">` + modeOptionRows.String() + `</select></label><button type="submit">Filter</button></form>`
+		filterItems := make([]string, 0, 3)
+		if boardQuery != "" {
+			filterItems = append(filterItems, `search "`+boardQuery+`"`)
+		}
+		if conferenceFilter != "" {
+			filterItems = append(filterItems, "conference "+conferenceFilter)
+		}
+		if boardMode != "" && boardMode != "all" {
+			filterItems = append(filterItems, "mode "+boardMode)
+		}
+		filterSummary := renderActiveFilterPanel("Active Board Filters", "/boards", filterItems)
+		confFilterBlock := `<form method="GET" action="/boards" class="wolfbbs-inline-form" data-filter-form="boards" data-filter-reset="/boards"><label>Search <input name="q" value="` + htmlEscape(boardQuery) + `" placeholder="board, description, subject" data-filter-label="search"></label><label>Conference <select name="conference" data-filter-label="conference">` + confOptions.String() + `</select></label><label>Mode <select name="mode" data-filter-label="mode">` + modeOptionRows.String() + `</select></label><button type="submit">Filter</button></form>`
+		scanHelperBlock := `<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Unread scan</strong><p>Use mode=unread to work through the boards that changed since your last call.</p></article><article class="wolfbbs-helper-card"><strong>Personal follow-up</strong><p>Use mine and mentions to stay on top of your own threads and direct references.</p></article><article class="wolfbbs-helper-card"><strong>Conference narrowing</strong><p>Use the conference filter when the board list is broad and you need to triage a single area fast.</p></article></section>`
 		discoverActionCard := `<a class="wolfbbs-action-card" href="/discover"><strong>Discover</strong><span>Catch up since last call</span></a>`
 		if !a.discover {
 			discoverActionCard = `<article class="wolfbbs-action-card"><strong>Discover</strong><span>Disabled by current feature flags</span></article>`
@@ -3482,11 +3981,13 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 %s
 %s
 %s
+%s
+%s
 <p><strong>Tip:</strong> Select a board to read, then open a message ID to reply/report. Use search, conference, and mode filters to work your unread and mention queues.</p>
 <h1>Message Boards</h1>
 <table border="1">
 <tr><th>ID</th><th>Board</th><th>Conf</th><th>Topics</th><th>New</th><th>Mine</th><th>Mentions</th><th>Last</th><th>Last subject</th></tr>%s</table>
-</body></html>`, user.Handle, discoverLink, messageBlock, motdBlock, announcementBlock, quickJumpBlock, confFilterBlock, dashboardBlock, emptyBoardHelper, rows.String())
+</body></html>`, user.Handle, discoverLink, messageBlock, motdBlock, announcementBlock, quickJumpBlock, confFilterBlock, filterSummary, dashboardBlock, scanHelperBlock, emptyBoardHelper, rows.String())
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(page))
 		return
@@ -3519,6 +4020,7 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 		if err == nil && msg.BoardID == boardID {
 			_ = a.msgRepo.SetPointer(user.ID, boardID, msg.ID, time.Now().UTC())
 			view.WriteString(`<h2>Reader</h2>`)
+			view.WriteString(`<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Reading thread #` + strconv.FormatInt(msg.ID, 10) + `</strong><p>Use reply to continue the thread or report to send it into the moderation queue.</p></article><article class="wolfbbs-helper-card"><strong>Reply target</strong><p>Replies will quote the current post so the thread keeps context.</p></article><article class="wolfbbs-helper-card"><strong>Moderation path</strong><p>Report is for abuse, spam, or content that needs sysop attention.</p></article></section>`)
 			view.WriteString(`<p><strong>Subject:</strong> ` + htmlEscape(msg.Subject) + `<br>`)
 			view.WriteString(`<strong>From:</strong> ` + htmlEscape(handleByID[msg.AuthorID]) + `<br>`)
 			if msg.ParentID > 0 {
@@ -3531,7 +4033,7 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 			view.WriteString(`<label>Reason: <input name="reason" size="48" placeholder="spam, abuse, off-topic"></label> <button type="submit">Report Post</button></form>`)
 			if a.canWriteBoard(user, board) {
 				view.WriteString(`<h3>Reply</h3>`)
-				view.WriteString(`<form method="POST" action="/boards"><input type="hidden" name="board_id" value="` + strconv.FormatInt(boardID, 10) + `"><input type="hidden" name="parent_id" value="` + strconv.FormatInt(msg.ID, 10) + `">` + csrf)
+				view.WriteString(`<form method="POST" action="/boards" data-draft-key="board-` + strconv.FormatInt(boardID, 10) + `-reply-` + strconv.FormatInt(msg.ID, 10) + `"><input type="hidden" name="board_id" value="` + strconv.FormatInt(boardID, 10) + `"><input type="hidden" name="parent_id" value="` + strconv.FormatInt(msg.ID, 10) + `">` + csrf)
 				view.WriteString(`<label>Subject: <input name="subject" value="Re: ` + htmlEscape(msg.Subject) + `" size="60"></label><br>`)
 				view.WriteString(`<label>Body:<br><textarea name="body" rows="10" cols="80">` + htmlEscape(quoteBody(msg.Body)) + `</textarea></label><br>`)
 				view.WriteString(`<button type="submit">Post Reply</button></form>`)
@@ -3559,6 +4061,7 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 		discoverLink = ` | <a href="/discover">discover</a>`
 	}
 	messageBlock := pageMessageBlock(r)
+	boardHelperBlock := `<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Board scan</strong><p>Rows marked N are newer than your current read pointer for this board.</p></article><article class="wolfbbs-helper-card"><strong>Posting flow</strong><p>Drafts in the compose boxes are saved locally in this browser while you type.</p></article><article class="wolfbbs-helper-card"><strong>When to use mail instead</strong><p>Use private mail for direct follow-up that does not belong in a public thread.</p></article></section>`
 	motdBlock := ""
 	if strings.TrimSpace(a.motd) != "" {
 		motdBlock = `<p><strong>MOTD:</strong> ` + htmlEscape(a.motd) + `</p>`
@@ -3572,10 +4075,10 @@ func (a *webApp) handleBoards(w http.ResponseWriter, r *http.Request) {
 		messageBlock +
 		`<p><strong>Reader keys:</strong> open subject to read, use Reply form, and Report for abuse/moderation queue.</p>` +
 		`<p><strong>Conference:</strong> ` + htmlEscape(defaultConferenceValue(board.Conference)) + `</p>` +
-		motdBlock + announcementBlock +
+		motdBlock + announcementBlock + boardHelperBlock +
 		`<table border="1"><tr><th>ID</th><th>New</th><th>Subject</th><th>Author</th><th>When</th></tr>` + rows.String() + `</table>`
 	if a.canWriteBoard(user, board) {
-		page += `<h3>New Post</h3><form method="POST" action="/boards"><input type="hidden" name="board_id" value="` + strconv.FormatInt(boardID, 10) + `">` + csrf +
+		page += `<h3>New Post</h3><form method="POST" action="/boards" data-draft-key="board-` + strconv.FormatInt(boardID, 10) + `-post"><input type="hidden" name="board_id" value="` + strconv.FormatInt(boardID, 10) + `">` + csrf +
 			`<label>Subject: <input name="subject" size="60"></label><br><label>Body:<br><textarea name="body" rows="10" cols="80"></textarea></label><br><button type="submit">Post</button></form>`
 	} else {
 		page += `<p><em>Posting is disabled by board ACS policy.</em></p>`
@@ -3696,7 +4199,8 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 		replyBody := quoteBody(item.Body)
 		replyBlock := ``
 		if a.canSendMail(user) && replyTo != "" {
-			replyBlock = `<h2>Quick Reply</h2><form method="POST" action="/mail">` + a.csrfHiddenInput(r) +
+			replyBlock = `<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Reply in context</strong><p>Quick Reply carries the quoted body forward so you can answer without losing the thread.</p></article><article class="wolfbbs-helper-card"><strong>Use mail for direct follow-up</strong><p>Keep public discussion on boards and use mail when the conversation should stay private.</p></article></section>` +
+				`<h2>Quick Reply</h2><form method="POST" action="/mail" data-draft-key="mail-reply-` + strconv.FormatInt(item.ID, 10) + `">` + a.csrfHiddenInput(r) +
 				`<label>To <input name="to" size="40" value="` + htmlEscape(replyTo) + `"></label><br>` +
 				`<label>Subject <input name="subject" size="60" value="` + htmlEscape(replySubject) + `"></label><br>` +
 				`<label>Body<br><textarea name="body" rows="10" cols="80">` + htmlEscape(replyBody) + `</textarea></label><br><button type="submit">Send Reply</button></form>`
@@ -3808,13 +4312,26 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 		}
 		templateOptionRows.WriteString(`<option value="` + htmlEscape(row) + `"` + selected + `>` + htmlEscape(label) + `</option>`)
 	}
+	filterItems := make([]string, 0, 3)
+	if boxFilter != "" && boxFilter != "all" {
+		filterItems = append(filterItems, "box "+boxFilter)
+	}
+	if searchQuery != "" {
+		filterItems = append(filterItems, `search "`+searchQuery+`"`)
+	}
+	if templateName != "" && templateName != "none" {
+		filterItems = append(filterItems, "template "+templateName)
+	}
+	filterSummary := renderActiveFilterPanel("Active Mail Filters", "/mail", filterItems)
+	mailHelperBlock := `<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Triage inbox first</strong><p>Use unread to work through new mail before browsing your outbox history.</p></article><article class="wolfbbs-helper-card"><strong>Templates speed the first pass</strong><p>Use a template to load a starter subject/body, then edit it into a real message.</p></article><article class="wolfbbs-helper-card"><strong>Drafts are local</strong><p>Compose and reply boxes save locally in this browser while you type.</p></article></section>`
 	page := `<html><body><h1>Private Mail</h1><p><a href="/boards">boards</a> | <a href="/bulletins">bulletins</a> | <a href="/directory">directory</a> | <a href="/finder">finder</a> | <a href="/feedback">feedback</a> | <a href="/chat">chat</a> | <a href="/status">status</a> | <a href="/config">config</a>` + discoverLink + ` | <a href="/help">help</a> | <a href="/logout">logout</a></p>` +
 		messageBlock +
 		`<section class="wolfbbs-kpi-grid"><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(inbox)) + `</strong><span>inbox</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(unreadCount) + `</strong><span>unread</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(outbox)) + `</strong><span>outbox</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(a.recentCorrespondents(user, inbox, outbox, 10))) + `</strong><span>recent correspondents</span></article></section>` +
-		`<form method="GET" action="/mail" class="wolfbbs-inline-form"><label>Box <select name="box">` + boxOptionRows.String() + `</select></label><label>Search <input name="q" value="` + htmlEscape(searchQuery) + `" placeholder="subject, body, handle"></label><button type="submit">Filter</button></form>` +
-		`<form method="GET" action="/mail" class="wolfbbs-inline-form"><label>Template <select name="template">` + templateOptionRows.String() + `</select></label><label>To <input name="to" value="` + htmlEscape(prefillTo) + `" placeholder="optional recipient"></label><button type="submit">Load Template</button></form>` +
+		mailHelperBlock + filterSummary +
+		`<form method="GET" action="/mail" class="wolfbbs-inline-form" data-filter-form="mail" data-filter-reset="/mail"><label>Box <select name="box" data-filter-label="box">` + boxOptionRows.String() + `</select></label><label>Search <input name="q" value="` + htmlEscape(searchQuery) + `" placeholder="subject, body, handle" data-filter-label="search"></label><button type="submit">Filter</button></form>` +
+		`<form method="GET" action="/mail" class="wolfbbs-inline-form" data-filter-form="mail-template" data-filter-reset="/mail"><label>Template <select name="template" data-filter-label="template">` + templateOptionRows.String() + `</select></label><label>To <input name="to" value="` + htmlEscape(prefillTo) + `" placeholder="optional recipient" data-filter-label="to"></label><button type="submit">Load Template</button></form>` +
 		`<p><strong>Tip:</strong> Use handle for local mail, email address for external relay (if enabled by policy).</p>` +
-		`<h2>Compose</h2><form method="POST" action="/mail">` + csrf +
+		`<h2>Compose</h2><form method="POST" action="/mail" data-draft-key="mail-compose">` + csrf +
 		`<label>To (handle or email): <input name="to" size="40" value="` + htmlEscape(prefillTo) + `"></label><br>` +
 		`<label>Subject: <input name="subject" size="60" value="` + htmlEscape(prefillSubject) + `"></label><br>` +
 		`<label>Body:<br><textarea name="body" rows="10" cols="80">` + htmlEscape(prefillBody) + `</textarea></label><br><button type="submit">Send</button></form>` +
@@ -4868,10 +5385,13 @@ func (a *webApp) handleStatusCenter(w http.ResponseWriter, r *http.Request) {
 	for _, row := range snapshot.Recommendations {
 		recoRows.WriteString(`<li>` + htmlEscape(row) + `</li>`)
 	}
+	statusHelperBlock := `<section class="wolfbbs-kpi-grid"><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(snapshot.Summary.Pass) + `</strong><span>checks passing</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(snapshot.Summary.Warn) + `</strong><span>warnings to review</span></article><article class="wolfbbs-kpi-card"><strong>` + snapshot.GeneratedAt.Local().Format("15:04") + `</strong><span>snapshot time</span></article></section>` +
+		`<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Use this as the fast answer</strong><p>Status Center is the quickest way to verify whether the board looks healthy from the caller side.</p></article><article class="wolfbbs-helper-card"><strong>Warnings first, polish second</strong><p>Fix runtime and launch warnings here before spending time on lower-value visual polish.</p></article><article class="wolfbbs-helper-card"><strong>Escalate to sysop tools when needed</strong><p>Open Launch Center or System when you need operator detail behind a warning.</p></article></section>`
 	page := `<html><body><h1>Status Center</h1>` +
 		`<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/radar">radar</a> | <a href="/clubhouse">clubhouse</a> | <a href="/doors">doors</a> | <a href="/config">config</a> | <a href="/settings">settings</a> | <a href="/help">help</a> | <a href="/logout">logout</a>` + adminLink + `</p>` +
 		`<p><strong>Summary:</strong> ` + strconv.Itoa(snapshot.Summary.Pass) + `/` + strconv.Itoa(snapshot.Summary.Total) + ` PASS, ` + strconv.Itoa(snapshot.Summary.Warn) + ` WARN | generated ` + snapshot.GeneratedAt.Local().Format("2006-01-02 15:04:05") + `</p>` +
 		`<p><a href="/statusz">Machine-readable status JSON (/statusz)</a> | <a href="/radar">Caller Radar</a> | <a href="/clubhouse">Clubhouse</a></p>` +
+		statusHelperBlock +
 		launchBlock +
 		`<h2>Checks</h2><table border="1"><tr><th>Function</th><th>State</th><th>Details</th></tr>` + rows.String() + `</table>` +
 		`<h2>Recommendations</h2><ul>` + recoRows.String() + `</ul></body></html>`
@@ -5001,6 +5521,7 @@ func (a *webApp) handleAdmin(w http.ResponseWriter, r *http.Request) {
 	if adminActions.Len() == 0 {
 		adminActions.WriteString(`<li>No launch blockers detected. Walk the caller path once more, then announce the board.</li>`)
 	}
+	adminActionGrid := `<section class="wolfbbs-action-grid"><a class="wolfbbs-action-card" href="/admin/launch"><strong>Launch Center</strong><span>go-live verdict, next-best actions, operator commands</span></a><a class="wolfbbs-action-card" href="/admin/setup"><strong>Setup Wizard</strong><span>identity, safety, bootstrap, launch checklist</span></a><a class="wolfbbs-action-card" href="/admin/users"><strong>User Ops</strong><span>create callers, role changes, bans, resets</span></a><a class="wolfbbs-action-card" href="/admin/system"><strong>System</strong><span>runtime health, service state, deeper operator detail</span></a></section>`
 	page := `<html><body><h1>Sysop Control Panel</h1><p>Logged in as ` + user.Handle + `</p>` +
 		`<p><a href="/admin/users">Users</a> | <a href="/admin/boards">Boards</a> | <a href="/admin/mail">Mail</a> | ` +
 		`<a href="/admin/files">Files</a> | <a href="/admin/gateways">Gateways</a> | <a href="/admin/chat">Chat</a> | ` +
@@ -5009,6 +5530,7 @@ func (a *webApp) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		`<h2>Launch Digest</h2>` +
 		`<p><strong>Verdict:</strong> ` + htmlEscape(launchVerdictText(readiness)) + ` | ` + strconv.Itoa(readiness.Summary.Pass) + `/` + strconv.Itoa(readiness.Summary.Total) + ` launch checks PASS | ` + strconv.Itoa(statusSnapshot.Summary.Warn) + ` runtime warnings | ` + strconv.Itoa(errorCount) + ` runtime errors logged</p>` +
 		`<p><a href="/admin/launch">Open Launch Center</a> | <a href="/admin/setup">Finish setup</a> | <a href="/status">Caller status center</a></p>` +
+		adminActionGrid +
 		`<ul>` + adminActions.String() + `</ul>` +
 		`<ul><li>Users: list/search, disable, ban, reset passwords</li>` +
 		`<li>Boards: create, edit, delete, permissions</li>` +
@@ -5054,9 +5576,11 @@ func (a *webApp) handleAdminLaunch(w http.ResponseWriter, r *http.Request) {
 	if launchActionRows.Len() == 0 {
 		launchActionRows.WriteString(`<li>No immediate issues detected. Validate the real caller path and publish the board.</li>`)
 	}
+	launchHelperBlock := `<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Use Launch Center as home base</strong><p>This page is the operator control room when the board is almost ready but not obviously done.</p></article><article class="wolfbbs-helper-card"><strong>Walk real caller paths</strong><p>Do not treat green config alone as done; validate boards, chat, doors, and mail like a normal user would.</p></article><article class="wolfbbs-helper-card"><strong>Keep commands close</strong><p>The operator commands below are copyable so recovery and upgrades do not require hunting through docs.</p></article></section>`
 	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Launch Center</title></head><body><h1>Launch Center</h1>` +
 		`<p><a href="/admin">back</a> | <a href="/admin/setup">setup</a> | <a href="/admin/config">config</a> | <a href="/admin/system">system</a> | <a href="/status">status</a> | <a href="/help">help</a></p>` +
 		`<p>Use this page as the sysop home base for first-run, pre-launch review, and support triage.</p>` +
+		launchHelperBlock +
 		`<h2>Launch Summary</h2>` +
 		`<p><strong>Verdict:</strong> ` + htmlEscape(launchVerdictText(readiness)) + ` | ` + strconv.Itoa(readiness.Summary.Pass) + `/` + strconv.Itoa(readiness.Summary.Total) + ` launch checks PASS | runtime ` + strconv.Itoa(runtime.Summary.Warn) + ` WARN</p>` +
 		`<p><a href="/admin/setup">Setup Wizard</a> | <a href="/admin/users">Create Caller</a> | <a href="/boards">Walk Boards</a> | <a href="/chat">Walk Chat</a> | <a href="/doors">Walk Doors</a></p>` +
@@ -5241,7 +5765,7 @@ func (a *webApp) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
 	csrf := a.csrfHiddenInput(r)
 	noticeBlock := ""
 	if setupNotice != "" {
-		noticeBlock = `<p><strong>` + htmlEscape(setupNotice) + `</strong></p>`
+		noticeBlock = renderPageBanner("notice", setupNotice)
 	}
 	wizardHint := map[string]string{
 		"1": "Step 1 of 4: set site identity, MOTD, and announcement text.",
@@ -5273,12 +5797,14 @@ func (a *webApp) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
 		`<li><strong>Read-only mode</strong> is for maintenance, not normal launch.</li>` +
 		`<li><strong>Guest tour</strong>, discover, and quick jump are experience choices, not hard requirements.</li>` +
 		`</ul>`
+	setupHelperBlock := `<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Work top to bottom</strong><p>Identity and safety first, then experience flags, then bootstrap actions, then real-user validation.</p></article><article class="wolfbbs-helper-card"><strong>Create one real caller</strong><p>Do not stop at sysop-only setup. Use /admin/users to create a non-sysop account and test the normal path.</p></article><article class="wolfbbs-helper-card"><strong>Bootstrap is not launch</strong><p>Seeding boards and mailbot is necessary, but the board is only ready after the real surfaces behave correctly.</p></article></section>`
 	page := `<html><body><h1>Setup & Install</h1><p><a href="/admin">back</a> | <a href="/admin/launch">launch</a> | <a href="/admin/system">system</a> | <a href="/help">help</a></p>` +
 		`<p>Use this screen to verify base services and bootstrap sysop dependencies after install/upgrade.</p>` +
 		`<p>UI-first setup: keep installer flags minimal; set board identity and runtime policy here.</p>` +
 		`<h2>Setup Wizard</h2>` +
 		`<p>` + htmlEscape(wizardHint) + `</p>` +
 		progress +
+		setupHelperBlock +
 		`<p><strong>Tip:</strong> use the step links above, then save once after each section change.</p>` +
 		readinessBlock +
 		launchChecklist +
@@ -5327,7 +5853,7 @@ func (a *webApp) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
 		`<li>Installer docs: <code>docs/INSTALL.md</code></li>` +
 		`<li>Health: <a href="/healthz">/healthz</a> and <a href="/readyz">/readyz</a></li>` +
 		`<li>Metrics: <a href="/metrics">/metrics</a></li>` +
-		`<li>Sysop CLI: <code>go run ./cmd/oputil status</code></li>` +
+		`<li>Sysop CLI: <code>go run ./cmd/oputil status</code> <button type="button" class="wolfbbs-form-secondary" data-copy-text="go run ./cmd/oputil status">Copy</button></li>` +
 		`</ul></body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -5743,15 +6269,23 @@ func (a *webApp) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 			</select><button type="submit">Set role</button></form>`, u.Handle, csrf, selectedIf(rbac.NormalizeRole(u.Role) == rbac.RoleUser), selectedIf(rbac.NormalizeRole(u.Role) == rbac.RoleModerator), selectedIf(rbac.NormalizeRole(u.Role) == rbac.RoleSysop)))
 		rows.WriteString(`</td></tr>`)
 	}
+	filterSummary := renderActiveFilterPanel("Active User Filters", "/admin/users", []string{func() string {
+		if filter == "" {
+			return ""
+		}
+		return `search "` + filter + `"`
+	}()})
+	helperBlock := `<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Create callers fast</strong><p>If you leave password blank, WolfBBS generates one so you can hand off access quickly.</p></article><article class="wolfbbs-helper-card"><strong>Be deliberate with bans and resets</strong><p>User actions below now require confirmation to reduce accidental admin mistakes.</p></article><article class="wolfbbs-helper-card"><strong>Validate with a real account</strong><p>After creating a user, sign in with it and walk boards, chat, doors, and mail.</p></article></section>`
 
 	page := `<html><body><h1>Sysop Users</h1><p><a href="/admin">back</a> | <a href="/admin/audit">audit</a> | <a href="/help">help</a></p>` +
+		helperBlock + filterSummary +
 		`<h2>Create User</h2><form method="POST">` + csrf +
 		`<input type="hidden" name="action" value="create">` +
 		`<label>Handle <input name="handle"></label> ` +
 		`<label>Password <input name="password"></label> ` +
 		`<label>Role <select name="role"><option value="user">User</option><option value="moderator">Moderator</option><option value="sysop">Sysop</option></select></label> ` +
 		`<button type="submit">Create</button></form>` +
-		`<form method="GET"><label>Search: <input name="q" value="` + filter + `"></label><button type="submit">filter</button></form>` +
+		`<form method="GET" data-filter-form="admin-users" data-filter-reset="/admin/users"><label>Search: <input name="q" value="` + filter + `" data-filter-label="search"></label><button type="submit">filter</button></form>` +
 		`<table border="1"><tr><th>Handle</th><th>Status</th><th>Role</th><th>Verified</th><th>Last Login</th><th>Actions</th></tr>` + rows.String() + `</table>` +
 		`</body></html>`
 	w.WriteHeader(http.StatusOK)
@@ -8537,6 +9071,44 @@ func htmlEscape(value string) string {
 	return value
 }
 
+func renderPageBanner(kind, text string) string {
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	if kind != "error" {
+		kind = "notice"
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	title := "Notice"
+	if kind == "error" {
+		title = "Error"
+	}
+	return `<section class="wolfbbs-banner" data-wolfbbs-flash="1" data-kind="` + htmlEscape(kind) + `"><div><strong>` + title + `:</strong><p>` + htmlEscape(text) + `</p></div></section>`
+}
+
+func renderActiveFilterPanel(title, resetPath string, items []string) string {
+	filtered := make([]string, 0, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			filtered = append(filtered, item)
+		}
+	}
+	if len(filtered) == 0 {
+		return ""
+	}
+	chips := strings.Builder{}
+	for _, item := range filtered {
+		chips.WriteString(`<span class="wolfbbs-chip">` + htmlEscape(item) + `</span>`)
+	}
+	resetLink := ``
+	if strings.TrimSpace(resetPath) != "" {
+		resetLink = ` <a href="` + htmlEscape(resetPath) + `">Clear filters</a>`
+	}
+	return `<section class="wolfbbs-card wolfbbs-filter-summary"><h2>` + htmlEscape(title) + `</h2><div class="wolfbbs-chip-row">` + chips.String() + `</div><p class="wolfbbs-muted">These filters are currently narrowing the page.` + resetLink + `</p></section>`
+}
+
 func pageMessageBlock(r *http.Request) string {
 	if r == nil || r.URL == nil {
 		return ""
@@ -8545,10 +9117,10 @@ func pageMessageBlock(r *http.Request) string {
 	errText := strings.TrimSpace(r.URL.Query().Get("error"))
 	out := strings.Builder{}
 	if notice != "" {
-		out.WriteString(`<p><strong>Notice:</strong> ` + htmlEscape(notice) + `</p>`)
+		out.WriteString(renderPageBanner("notice", notice))
 	}
 	if errText != "" {
-		out.WriteString(`<p><strong>Error:</strong> ` + htmlEscape(errText) + `</p>`)
+		out.WriteString(renderPageBanner("error", errText))
 	}
 	return out.String()
 }
