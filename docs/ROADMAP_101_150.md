@@ -38,97 +38,97 @@ Status: shipped in v1.1.16.
 
 108. Activity heatmap for callers.
 Value: makes habits and quiet periods visible.
-Status: planned.
+Status: shipped in v1.1.17.
 
 109. Per-caller notification export.
 Value: improves portability and trust.
-Status: planned.
+Status: shipped in v1.1.17.
 
 110. Attention rule presets for guests, callers, moderators, and sysops.
 Value: reduces setup friction.
-Status: planned.
+Status: shipped in v1.1.17.
 
 ## Theme 12: Boards, moderation, and curation
 111. Moderator macros for report resolution.
 Value: speeds repetitive actions while preserving consistency.
-Status: planned.
+Status: shipped in v1.1.17.
 
 112. Thread lifecycle states: active, slow, archived, frozen.
 Value: makes discussion management more intentional.
-Status: planned.
+Status: shipped in v1.1.17.
 
 113. Board welcome kits with seed prompts and starter threads.
 Value: improves new-board launches.
-Status: planned.
+Status: shipped in v1.1.17.
 
 114. Staff-only board notes and internal escalations.
 Value: separates public moderation from internal coordination.
-Status: planned.
+Status: shipped in v1.1.17.
 
 115. Board-level expert lists and topic stewards.
 Value: helps callers find the right human faster.
-Status: planned.
+Status: shipped in v1.1.17.
 
 116. Structured poll and vote threads.
 Value: adds lightweight participation without full door logic.
-Status: planned.
+Status: shipped in v1.1.17.
 
 117. Message revision history.
 Value: improves trust around edits and moderation.
-Status: planned.
+Status: shipped in v1.1.17.
 
 118. Cross-board “best of week” editorial lane.
 Value: raises content quality and discoverability.
-Status: planned.
+Status: implemented in current tree.
 
 119. Board digest packs by conference.
 Value: supports focused reading on large systems.
-Status: planned.
+Status: implemented in current tree.
 
 120. Import bridge for legacy message archives.
 Value: helps existing sysops migrate in.
-Status: planned.
+Status: implemented in current tree.
 
 ## Theme 13: Mail, profiles, and relationships
 121. Shared moderator inbox with assignment state.
 Value: improves support follow-through.
-Status: planned.
+Status: implemented in current tree.
 
 122. Profile status line and bio card.
 Value: gives callers more identity than just a handle.
-Status: planned.
+Status: implemented in current tree.
 
 123. Verified contact preferences.
 Value: clarifies when mail, page, or chat is appropriate.
-Status: planned.
+Status: implemented in current tree.
 
 124. Per-contact aliases and nicknames.
 Value: improves personal organization.
-Status: planned.
+Status: implemented in current tree.
 
 125. Mail merge for targeted sysop outreach.
 Value: supports onboarding and ops at scale.
-Status: planned.
+Status: implemented in current tree.
 
 126. Relationship history timeline on caller profiles.
 Value: helps staff understand repeat interactions.
-Status: planned.
+Status: implemented in current tree.
 
 127. Shared incident timeline on staff-visible profiles.
 Value: strengthens moderation continuity.
-Status: planned.
+Status: implemented in current tree.
 
 128. Caller groups and circles.
 Value: creates durable social structure beyond one-off favorites.
-Status: planned.
+Status: implemented in current tree.
 
 129. Presence-aware RSVP and invitation flows.
 Value: joins relationships to events cleanly.
-Status: planned.
+Status: implemented in current tree.
 
 130. Profile export and privacy controls.
 Value: improves user trust and compliance posture.
-Status: planned.
+Status: implemented in current tree.
 
 ## Theme 14: Files, downloads, and offline depth
 131. File request fulfillment queue with ownership.

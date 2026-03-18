@@ -64,30 +64,47 @@ def start_bbs_server(db_path: Path, port: int, log_path: Path) -> subprocess.Pop
         "-db",
         f"sqlite://{db_path}",
     ]
-    log_f = log_path.open("a", encoding="utf-8")
-    proc = subprocess.Popen(
-        cmd,
-        cwd=str(ROOT),
-        env=env,
-        stdout=log_f,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    wait_for_port(port, proc)
-    return proc
+    last_exc: Exception | None = None
+    for attempt in range(1, 4):
+        log_f = log_path.open("a", encoding="utf-8")
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(ROOT),
+            env=env,
+            stdout=log_f,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        setattr(proc, "_wolfbbs_log_file", log_f)
+        try:
+            wait_for_port(port, proc, timeout_sec=120.0)
+            return proc
+        except Exception as exc:
+            last_exc = exc
+            stop_process(proc)
+            if attempt == 3:
+                raise
+            time.sleep(1.0)
+    raise RuntimeError(f"unreachable startup failure: {last_exc}")
 
 
 def stop_process(proc: subprocess.Popen[str] | None) -> None:
     if proc is None:
         return
-    if proc.poll() is not None:
-        return
-    proc.terminate()
     try:
-        proc.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait(timeout=5)
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+    finally:
+        log_f = getattr(proc, "_wolfbbs_log_file", None)
+        if log_f is not None:
+            log_f.close()
+            setattr(proc, "_wolfbbs_log_file", None)
+        time.sleep(0.5)
 
 
 def run_oputil_set_role(db_path: Path, handle: str, role: str) -> None:

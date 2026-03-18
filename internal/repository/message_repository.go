@@ -14,6 +14,7 @@ type MessageRepository interface {
 	CreateMessage(msg *domain.Message) error
 	GetMessage(id int64) (*domain.Message, error)
 	ListByBoard(boardID int64) ([]domain.Message, error)
+	UpdateMessage(msg *domain.Message) error
 	DeleteMessage(id int64) error
 	MoveThread(threadID, toBoardID int64) error
 	SetThreadLocked(threadID int64, locked bool) error
@@ -125,6 +126,23 @@ func (r *InMemoryMessageRepository) ListByBoard(boardID int64) ([]domain.Message
 		return out[i].ThreadID < out[j].ThreadID
 	})
 	return out, nil
+}
+
+func (r *InMemoryMessageRepository) UpdateMessage(msg *domain.Message) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if msg == nil || msg.ID <= 0 {
+		return errors.New("message is required")
+	}
+	current, ok := r.byID[msg.ID]
+	if !ok {
+		return ErrNotFound
+	}
+	current.Subject = strings.TrimSpace(msg.Subject)
+	current.Body = msg.Body
+	r.byID[msg.ID] = current
+	*msg = current
+	return nil
 }
 
 func (r *InMemoryMessageRepository) DeleteMessage(id int64) error {

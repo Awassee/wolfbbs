@@ -638,6 +638,24 @@ ORDER BY thread_id ASC, created_at ASC, id ASC`, boardID)
 	return out, rows.Err()
 }
 
+func (r *SQLiteMessageRepository) UpdateMessage(msg *domain.Message) error {
+	if msg == nil || msg.ID <= 0 {
+		return errors.New("message is required")
+	}
+	res, err := r.db.ExecContext(context.Background(), `
+UPDATE messages
+SET subject = ?, body = ?
+WHERE id = ?`, strings.TrimSpace(msg.Subject), msg.Body, msg.ID)
+	if err != nil {
+		return err
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (r *SQLiteMessageRepository) DeleteMessage(id int64) error {
 	if id <= 0 {
 		return errors.New("message id is required")

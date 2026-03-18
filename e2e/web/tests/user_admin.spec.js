@@ -366,6 +366,35 @@ test("user web journey supports keyboard navigation and status/config visibility
   await page.check('input[name="ansi_enabled"]');
   await page.getByRole("button", { name: "Save Preferences" }).click();
   await expect(page.locator("body")).toContainText("ANSI: true");
+  await page.fill('input[name="status_line"]', "night ops after dark");
+  await page.fill('textarea[name="bio"]', "Collects ANSI packs and runs late door sessions.");
+  await page.check('input[name="contact_mail"]');
+  await page.check('input[name="contact_chat"]');
+  await page.getByRole("button", { name: "Save Profile Card" }).click();
+  await expect(page.locator("body")).toContainText("Profile card preferences saved");
+  await page.goto(`/directory?handle=${USER_HANDLE}`);
+  await expect(page.locator("body")).toContainText("night ops after dark");
+  await expect(page.locator("body")).toContainText("Collects ANSI packs and runs late door sessions.");
+  await page.goto("/circles");
+  await expect(page.locator("h1")).toContainText("Caller Circles");
+  await page.fill('input[name="name"]', "Night Crew");
+  await page.fill('textarea[name="members"]', ADMIN_HANDLE);
+  await page.fill('input[name="note"]', "people to ping before tournaments");
+  await page.getByRole("button", { name: "Save Circle" }).click();
+  await expect(page.locator("body")).toContainText("Circle saved");
+  await expect(page.locator("body")).toContainText("Night Crew");
+  await page.goto(`/directory?handle=${ADMIN_HANDLE}`);
+  await page.fill('input[name="alias"]', "Boss");
+  await page.getByRole("button", { name: "Save Alias" }).click();
+  await expect(page.locator("body")).toContainText("Alias updated");
+  await expect(page.locator("body")).toContainText("Boss");
+  const exportResp = await page.request.get("/profile/export");
+  expect(exportResp.ok()).toBeTruthy();
+  const exportJson = await exportResp.json();
+  expect(exportJson.handle).toBe(USER_HANDLE);
+  expect(exportJson.profile_card.status_line).toBe("night ops after dark");
+  expect(exportJson.contact_aliases[ADMIN_HANDLE.toLowerCase()]).toBe("Boss");
+  expect(exportJson.caller_circles.some((row) => row.name === "Night Crew")).toBeTruthy();
   await page.goto("/logout");
   await login(page, USER_HANDLE, USER_PASSWORD);
   await expect(page).toHaveURL(/\/today$/);
@@ -505,6 +534,12 @@ test("admin journey enforces RBAC and exposes sysop pages", async ({ browser }) 
     await expect(adminPage.locator("body")).toContainText("true");
     csrf = await csrfFrom(adminPage);
     await postForm(adminPage, "/admin/mail", { csrf_token: csrf, handle: qaHandle, action: "enable_outbound" });
+    await adminPage.goto("/admin/mail");
+    await adminPage.fill('textarea[name="handles"]', qaHandle);
+    await adminPage.fill('input[name="subject"]', `Merge ${runID}`);
+    await adminPage.fill('textarea[name="body"]', "Hello {{handle}}, this is a targeted rollout note.");
+    await adminPage.getByRole("button", { name: "Send Merge" }).click();
+    await expect(adminPage.locator("body")).toContainText("Mail merge delivered to 1 caller");
   } else {
     await expect(adminPage.locator("h1")).toContainText("Mail Controls");
   }
@@ -610,6 +645,10 @@ test("admin journey enforces RBAC and exposes sysop pages", async ({ browser }) 
   await adminPage.goto("/events");
   await expect(adminPage.locator("body")).toContainText(updatedEventTitle);
   await expect(adminPage.locator("body")).not.toContainText(qaEventTitle);
+  const eventCard = adminPage.locator("article", { hasText: updatedEventTitle }).first();
+  await eventCard.locator('select[name="status"]').selectOption("going");
+  await eventCard.getByRole("button", { name: "Save" }).click();
+  await expect(adminPage.locator("body")).toContainText("RSVP saved");
   await adminPage.goto("/admin/events");
   csrf = await csrfFrom(adminPage);
   await postForm(adminPage, "/admin/events", {

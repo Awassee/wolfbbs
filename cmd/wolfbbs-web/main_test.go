@@ -1652,6 +1652,502 @@ func TestAdminBoardsModerationActions(t *testing.T) {
 	}
 }
 
+func TestAdminBoardsMacrosAndThreadLifecycle(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	boardRepo := repository.NewInMemoryBoardRepository()
+	msgRepo := repository.NewInMemoryMessageRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
+	authSvc := auth.NewService(userRepo)
+	sysop, _ := authSvc.Register("sysop", "password123")
+	poster, _ := authSvc.Register("poster", "password123")
+	reporter, _ := authSvc.Register("reporter", "password123")
+	if err := authSvc.SetRole("sysop", roleAdmin); err != nil {
+		t.Fatalf("set sysop role: %v", err)
+	}
+	source := &domain.Board{Name: "General", Conference: "Public", ReadACS: "role=user", WriteACS: "role=user", CreatedBy: sysop.ID}
+	target := &domain.Board{Name: "Ops", Conference: "Ops", ReadACS: "role=user", WriteACS: "role=user", CreatedBy: sysop.ID}
+	if err := boardRepo.Create(source); err != nil {
+		t.Fatalf("create source board: %v", err)
+	}
+	if err := boardRepo.Create(target); err != nil {
+		t.Fatalf("create target board: %v", err)
+	}
+	spamMsg := &domain.Message{BoardID: source.ID, AuthorID: poster.ID, Subject: "Spam Thread", Body: "junk"}
+	if err := msgRepo.CreateMessage(spamMsg); err != nil {
+		t.Fatalf("create spam msg: %v", err)
+	}
+	if err := msgRepo.CreateReport(&domain.MessageReport{MessageID: spamMsg.ID, ReporterID: reporter.ID, Reason: "spam"}); err != nil {
+		t.Fatalf("create spam report: %v", err)
+	}
+	frozenMsg := &domain.Message{BoardID: source.ID, AuthorID: poster.ID, Subject: "Heated Thread", Body: "body"}
+	if err := msgRepo.CreateMessage(frozenMsg); err != nil {
+		t.Fatalf("create frozen msg: %v", err)
+	}
+	if err := msgRepo.CreateReport(&domain.MessageReport{MessageID: frozenMsg.ID, ReporterID: reporter.ID, Reason: "abuse"}); err != nil {
+		t.Fatalf("create abuse report: %v", err)
+	}
+	app := &webApp{
+		authSvc:   authSvc,
+		userRepo:  userRepo,
+		boardRepo: boardRepo,
+		msgRepo:   msgRepo,
+		adminRepo: adminRepo,
+		sessions:  map[string]sessionState{},
+	}
+	adminSID, ok := app.createSession("sysop")
+	if !ok {
+		t.Fatal("admin session creation failed")
+	}
+	adminCSRF := app.sessions[adminSID].csrf
+
+	reports, err := msgRepo.ListReports(20, "open")
+	if err != nil || len(reports) != 2 {
+		t.Fatalf("list reports: len=%d err=%v", len(reports), err)
+	}
+	spamReportID := reports[0].ID
+	abuseReportID := reports[1].ID
+	if reports[0].MessageID != spamMsg.ID {
+		spamReportID, abuseReportID = abuseReportID, spamReportID
+	}
+
+	form := url.Values{
+		"csrf_token":  {adminCSRF},
+		"action":      {"resolve_report_macro"},
+		"report_id":   {strconv.FormatInt(spamReportID, 10)},
+		"macro":       {"spam_delete"},
+		"redirect_to": {"/admin/boards?manage_board=" + strconv.FormatInt(source.ID, 10)},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/boards", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: adminSID})
+	rr := httptest.NewRecorder()
+	app.handleAdminBoards(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("spam macro status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if _, err := msgRepo.GetMessage(spamMsg.ID); err == nil {
+		t.Fatal("expected spam macro to delete message")
+	}
+
+	form = url.Values{
+		"csrf_token":  {adminCSRF},
+		"action":      {"resolve_report_macro"},
+		"report_id":   {strconv.FormatInt(abuseReportID, 10)},
+		"macro":       {"abuse_lock"},
+		"redirect_to": {"/admin/boards?manage_board=" + strconv.FormatInt(source.ID, 10)},
+	}
+	req = httptest.NewRequest(http.MethodPost, "/admin/boards", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: adminSID})
+	rr = httptest.NewRecorder()
+	app.handleAdminBoards(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("abuse macro status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if state := app.threadLifecycleStateFor(frozenMsg.ThreadID); state != threadLifecycleFrozen {
+		t.Fatalf("thread state = %s, want frozen", state)
+	}
+
+	posterSID, ok := app.createSession("poster")
+	if !ok {
+		t.Fatal("poster session creation failed")
+	}
+	req = httptest.NewRequest(http.MethodGet, "/boards?board="+strconv.FormatInt(source.ID, 10)+"&id="+strconv.FormatInt(frozenMsg.ID, 10), nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: posterSID})
+	rr = httptest.NewRecorder()
+	app.handleBoards(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("frozen reader status = %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, needle := range []string{"Frozen thread: read-only", "Editing is disabled because this thread is frozen.", "Replying is disabled because this thread is frozen."} {
+		if !strings.Contains(body, needle) {
+			t.Fatalf("expected %q in frozen reader: %s", needle, body)
+		}
+	}
+
+	form = url.Values{
+		"csrf_token":   {adminCSRF},
+		"action":       {"set_thread_state"},
+		"thread_id":    {strconv.FormatInt(frozenMsg.ThreadID, 10)},
+		"thread_state": {"archived"},
+		"redirect_to":  {"/admin/boards?manage_board=" + strconv.FormatInt(source.ID, 10)},
+	}
+	req = httptest.NewRequest(http.MethodPost, "/admin/boards", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: adminSID})
+	rr = httptest.NewRecorder()
+	app.handleAdminBoards(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("set archived state status = %d", rr.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/boards?board="+strconv.FormatInt(source.ID, 10), nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: posterSID})
+	rr = httptest.NewRecorder()
+	app.handleBoards(rr, req)
+	if strings.Contains(rr.Body.String(), "Heated Thread") {
+		t.Fatalf("expected archived thread hidden from default board view: %s", rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/boards?board="+strconv.FormatInt(source.ID, 10)+"&show_archived=1", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: posterSID})
+	rr = httptest.NewRecorder()
+	app.handleBoards(rr, req)
+	if !strings.Contains(rr.Body.String(), "Heated Thread") {
+		t.Fatalf("expected archived thread visible when requested: %s", rr.Body.String())
+	}
+}
+
+func TestBoardsWelcomeKitStewardsStaffNotesAndEscalation(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	boardRepo := repository.NewInMemoryBoardRepository()
+	msgRepo := repository.NewInMemoryMessageRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
+	authSvc := auth.NewService(userRepo)
+	sysop, _ := authSvc.Register("sysop", "password123")
+	moderator, _ := authSvc.Register("mod", "password123")
+	caller, _ := authSvc.Register("caller", "password123")
+	if err := authSvc.SetRole("sysop", roleAdmin); err != nil {
+		t.Fatalf("set sysop role: %v", err)
+	}
+	if err := authSvc.SetRole("mod", roleModerator); err != nil {
+		t.Fatalf("set mod role: %v", err)
+	}
+	board := &domain.Board{Name: "LaunchPad", Conference: "Public", CreatedBy: sysop.ID}
+	if err := boardRepo.Create(board); err != nil {
+		t.Fatalf("create board: %v", err)
+	}
+	app := &webApp{
+		authSvc:   authSvc,
+		userRepo:  userRepo,
+		boardRepo: boardRepo,
+		msgRepo:   msgRepo,
+		adminRepo: adminRepo,
+		sessions:  map[string]sessionState{},
+	}
+	sysopSID, ok := app.createSession("sysop")
+	if !ok {
+		t.Fatal("sysop session creation failed")
+	}
+	sysopCSRF := app.sessions[sysopSID].csrf
+
+	form := url.Values{
+		"csrf_token":      {sysopCSRF},
+		"action":          {"save_board_welcome"},
+		"board_id":        {strconv.FormatInt(board.ID, 10)},
+		"redirect_to":     {"/admin/boards?manage_board=" + strconv.FormatInt(board.ID, 10)},
+		"intro":           {"Start here if you are new to this conference."},
+		"seed_prompts":    {"Introduce yourself\nWhat should this board become?"},
+		"starter_threads": {"Classic thread kickoff\nLaunch checklist"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/boards", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sysopSID})
+	rr := httptest.NewRecorder()
+	app.handleAdminBoards(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("save welcome kit status = %d", rr.Code)
+	}
+
+	form = url.Values{
+		"csrf_token":  {sysopCSRF},
+		"action":      {"save_board_stewards"},
+		"board_id":    {strconv.FormatInt(board.ID, 10)},
+		"redirect_to": {"/admin/boards?manage_board=" + strconv.FormatInt(board.ID, 10)},
+		"stewards":    {"sysop | onboarding | first-callers\nmod | archives | keeps classics tidy"},
+	}
+	req = httptest.NewRequest(http.MethodPost, "/admin/boards", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sysopSID})
+	rr = httptest.NewRecorder()
+	app.handleAdminBoards(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("save stewards status = %d", rr.Code)
+	}
+
+	form = url.Values{
+		"csrf_token":  {sysopCSRF},
+		"action":      {"save_board_staff_note"},
+		"board_id":    {strconv.FormatInt(board.ID, 10)},
+		"redirect_to": {"/admin/boards?manage_board=" + strconv.FormatInt(board.ID, 10)},
+		"staff_note":  {"Needs a steady moderator eye during launch."},
+		"escalate":    {"1"},
+	}
+	req = httptest.NewRequest(http.MethodPost, "/admin/boards", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sysopSID})
+	rr = httptest.NewRecorder()
+	app.handleAdminBoards(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("save staff note status = %d", rr.Code)
+	}
+
+	callerSID, ok := app.createSession(caller.Handle)
+	if !ok {
+		t.Fatal("caller session creation failed")
+	}
+	req = httptest.NewRequest(http.MethodGet, "/boards?board="+strconv.FormatInt(board.ID, 10), nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleBoards(rr, req)
+	body := rr.Body.String()
+	for _, needle := range []string{"Board Welcome Kit", "Start here if you are new to this conference.", "Introduce yourself", "Topic Stewards", "first-callers"} {
+		if !strings.Contains(body, needle) {
+			t.Fatalf("expected %q in caller board view: %s", needle, body)
+		}
+	}
+	if strings.Contains(body, "Needs a steady moderator eye during launch.") {
+		t.Fatalf("caller should not see staff note: %s", body)
+	}
+
+	modSID, ok := app.createSession(moderator.Handle)
+	if !ok {
+		t.Fatal("mod session creation failed")
+	}
+	req = httptest.NewRequest(http.MethodGet, "/boards?board="+strconv.FormatInt(board.ID, 10), nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: modSID})
+	rr = httptest.NewRecorder()
+	app.handleBoards(rr, req)
+	if !strings.Contains(rr.Body.String(), "Needs a steady moderator eye during launch.") {
+		t.Fatalf("moderator should see staff note: %s", rr.Body.String())
+	}
+	escalations := app.loadStaffEscalations()
+	if len(escalations) != 1 || !strings.Contains(escalations[0].Handle, "board:LaunchPad") {
+		t.Fatalf("expected board escalation, got %#v", escalations)
+	}
+}
+
+func TestBoardsPollVotingAndRevisionHistory(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	boardRepo := repository.NewInMemoryBoardRepository()
+	msgRepo := repository.NewInMemoryMessageRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
+	authSvc := auth.NewService(userRepo)
+	caller, _ := authSvc.Register("caller", "password123")
+	board := &domain.Board{Name: "Votes", Conference: "Public", ReadACS: "role=user", WriteACS: "role=user", CreatedBy: caller.ID}
+	if err := boardRepo.Create(board); err != nil {
+		t.Fatalf("create board: %v", err)
+	}
+	app := &webApp{
+		authSvc:   authSvc,
+		userRepo:  userRepo,
+		boardRepo: boardRepo,
+		msgRepo:   msgRepo,
+		adminRepo: adminRepo,
+		sessions:  map[string]sessionState{},
+	}
+	sid, ok := app.createSession(caller.Handle)
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+	csrf := app.sessions[sid].csrf
+
+	form := url.Values{
+		"csrf_token":    {csrf},
+		"action":        {"create_poll"},
+		"board_id":      {strconv.FormatInt(board.ID, 10)},
+		"subject":       {"Tournament Vote"},
+		"poll_question": {"What should we run on Friday night?"},
+		"poll_context":  {"Pick the strongest return hook."},
+		"poll_options":  {"Trivia\nTradeWars\nLORD"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/boards", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.handleBoards(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("create poll status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	msgs, err := msgRepo.ListByBoard(board.ID)
+	if err != nil || len(msgs) != 1 {
+		t.Fatalf("list board messages: len=%d err=%v", len(msgs), err)
+	}
+	root := msgs[0]
+
+	req = httptest.NewRequest(http.MethodGet, "/boards?board="+strconv.FormatInt(board.ID, 10)+"&id="+strconv.FormatInt(root.ID, 10), nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleBoards(rr, req)
+	if !strings.Contains(rr.Body.String(), "What should we run on Friday night?") {
+		t.Fatalf("reader missing poll question: %s", rr.Body.String())
+	}
+
+	form = url.Values{
+		"csrf_token":   {csrf},
+		"action":       {"vote_poll"},
+		"board_id":     {strconv.FormatInt(board.ID, 10)},
+		"thread_id":    {strconv.FormatInt(root.ThreadID, 10)},
+		"option_index": {"1"},
+	}
+	req = httptest.NewRequest(http.MethodPost, "/boards", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleBoards(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("vote poll status = %d", rr.Code)
+	}
+
+	form = url.Values{
+		"csrf_token": {csrf},
+		"action":     {"edit_post"},
+		"board_id":   {strconv.FormatInt(board.ID, 10)},
+		"message_id": {strconv.FormatInt(root.ID, 10)},
+		"subject":    {"Tournament Vote Updated"},
+		"body":       {"Updated context for the vote."},
+	}
+	req = httptest.NewRequest(http.MethodPost, "/boards", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleBoards(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("edit post status = %d", rr.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/boards?board="+strconv.FormatInt(board.ID, 10)+"&id="+strconv.FormatInt(root.ID, 10), nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleBoards(rr, req)
+	body := rr.Body.String()
+	for _, needle := range []string{"your vote", "Revision History", "Tournament Vote", "Tournament Vote Updated"} {
+		if !strings.Contains(body, needle) {
+			t.Fatalf("expected %q in poll reader: %s", needle, body)
+		}
+	}
+}
+
+func TestBulletinsBestOfWeekAndDigestConferencePacks(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	boardRepo := repository.NewInMemoryBoardRepository()
+	msgRepo := repository.NewInMemoryMessageRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
+	mailRepo := repository.NewInMemoryPrivateMailRepository()
+	authSvc := auth.NewService(userRepo)
+	caller, _ := authSvc.Register("caller", "password123")
+	friend, _ := authSvc.Register("friend", "password123")
+	boardA := &domain.Board{Name: "General Chat", Conference: "General", ReadACS: "role=user", WriteACS: "role=user", CreatedBy: caller.ID}
+	boardB := &domain.Board{Name: "Ops Notes", Conference: "Ops", ReadACS: "role=user", WriteACS: "role=user", CreatedBy: caller.ID}
+	if err := boardRepo.Create(boardA); err != nil {
+		t.Fatalf("create boardA: %v", err)
+	}
+	if err := boardRepo.Create(boardB); err != nil {
+		t.Fatalf("create boardB: %v", err)
+	}
+	msgA := &domain.Message{BoardID: boardA.ID, AuthorID: friend.ID, Subject: "Best Thread", Body: "kickoff"}
+	if err := msgRepo.CreateMessage(msgA); err != nil {
+		t.Fatalf("create msgA: %v", err)
+	}
+	if err := msgRepo.CreateMessage(&domain.Message{BoardID: boardA.ID, AuthorID: caller.ID, ParentID: msgA.ID, Subject: "Re: Best Thread", Body: "reply"}); err != nil {
+		t.Fatalf("create reply: %v", err)
+	}
+	msgB := &domain.Message{BoardID: boardB.ID, AuthorID: friend.ID, Subject: "Ops Digest", Body: "ops body"}
+	if err := msgRepo.CreateMessage(msgB); err != nil {
+		t.Fatalf("create msgB: %v", err)
+	}
+	app := &webApp{
+		authSvc:   authSvc,
+		userRepo:  userRepo,
+		boardRepo: boardRepo,
+		msgRepo:   msgRepo,
+		mailRepo:  mailRepo,
+		adminRepo: adminRepo,
+		sessions:  map[string]sessionState{},
+	}
+	app.setBoardSubscription(caller.Handle, boardA.ID, boardSubscriptionDigest)
+	app.setBoardSubscription(caller.Handle, boardB.ID, boardSubscriptionDigest)
+	app.persistBestOfWeekEntries([]bestOfWeekEntry{{MessageID: msgA.ID, Note: "editor's pick", AddedBy: "sysop", AddedAt: time.Now().UTC()}})
+
+	sid, ok := app.createSession(caller.Handle)
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+	req := httptest.NewRequest(http.MethodGet, "/bulletins", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.handleBulletins(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("bulletins status = %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, needle := range []string{"Best of Week", "Best Thread", "editor's pick"} {
+		if !strings.Contains(body, needle) {
+			t.Fatalf("expected %q in bulletins: %s", needle, body)
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/digest", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleDigest(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("digest status = %d", rr.Code)
+	}
+	body = rr.Body.String()
+	for _, needle := range []string{"Conference Packs", "General", "Ops", "General Chat", "Ops Notes"} {
+		if !strings.Contains(body, needle) {
+			t.Fatalf("expected %q in digest: %s", needle, body)
+		}
+	}
+}
+
+func TestAdminBoardsImportLegacyArchive(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	boardRepo := repository.NewInMemoryBoardRepository()
+	msgRepo := repository.NewInMemoryMessageRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
+	authSvc := auth.NewService(userRepo)
+	sysop, _ := authSvc.Register("sysop", "password123")
+	if err := authSvc.SetRole("sysop", roleAdmin); err != nil {
+		t.Fatalf("set sysop role: %v", err)
+	}
+	board := &domain.Board{Name: "Imported", Conference: "General", ReadACS: "role=user", WriteACS: "role=user", CreatedBy: sysop.ID}
+	if err := boardRepo.Create(board); err != nil {
+		t.Fatalf("create board: %v", err)
+	}
+	app := &webApp{
+		authSvc:   authSvc,
+		userRepo:  userRepo,
+		boardRepo: boardRepo,
+		msgRepo:   msgRepo,
+		adminRepo: adminRepo,
+		sessions:  map[string]sessionState{},
+	}
+	sid, ok := app.createSession("sysop")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+	csrf := app.sessions[sid].csrf
+	archive := "Subject: Welcome Back\nFrom: oldsysop\nDate: 2025-04-01 20:15\n\nFirst imported body.\n---\nSubject: Another Thread\n\nSecond imported body."
+	form := url.Values{
+		"csrf_token":      {csrf},
+		"action":          {"import_legacy_archive"},
+		"import_board_id": {strconv.FormatInt(board.ID, 10)},
+		"redirect_to":     {"/admin/boards?manage_board=" + strconv.FormatInt(board.ID, 10)},
+		"archive_blob":    {archive},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/boards", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.handleAdminBoards(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("import archive status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	msgs, err := msgRepo.ListByBoard(board.ID)
+	if err != nil || len(msgs) != 2 {
+		t.Fatalf("imported messages: len=%d err=%v", len(msgs), err)
+	}
+	if !strings.Contains(msgs[0].Body, "Imported From: oldsysop") {
+		t.Fatalf("expected imported metadata in first message body: %s", msgs[0].Body)
+	}
+	if msgs[1].Subject != "Another Thread" {
+		t.Fatalf("unexpected second imported subject: %+v", msgs[1])
+	}
+}
+
 func TestChatHistoryAcrossTwoSessions(t *testing.T) {
 	userRepo := repository.NewInMemoryUserRepository()
 	boardRepo := repository.NewInMemoryBoardRepository()
@@ -5662,6 +6158,197 @@ func TestWeeklyDigestMailSendsOncePerWeek(t *testing.T) {
 	}
 }
 
+func TestSettingsApplyAttentionPreset(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	adminRepo := repository.NewInMemoryAdminRepository()
+	if _, err := authSvc.Register("caller", "password123"); err != nil {
+		t.Fatalf("register caller: %v", err)
+	}
+	app := &webApp{
+		authSvc:   authSvc,
+		adminRepo: adminRepo,
+		sessions:  map[string]sessionState{},
+	}
+	sid, ok := app.createSession("caller")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+	form := url.Values{
+		"csrf_token": {app.sessions[sid].csrf},
+		"action":     {"apply_attention_preset"},
+		"preset":     {"sysop"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/settings", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.handleSettings(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("apply attention preset status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	preset, ok := attentionPresetByName("sysop")
+	if !ok {
+		t.Fatal("expected sysop preset")
+	}
+	if got := app.loadDigestPreferences("caller"); got != normalizeDigestPreferences(preset.Pref) {
+		t.Fatalf("expected persisted preset %+v, got %+v", normalizeDigestPreferences(preset.Pref), got)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/settings", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleSettings(rr, req)
+	body := rr.Body.String()
+	for _, needle := range []string{"Attention Rule Presets", "Current rules match the Sysop preset.", "Export notification state JSON", "recommended for your role"} {
+		if !strings.Contains(body, needle) {
+			t.Fatalf("settings page missing %q: %s", needle, body)
+		}
+	}
+}
+
+func TestAttentionExportReturnsCallerNotificationState(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	adminRepo := repository.NewInMemoryAdminRepository()
+	if _, err := authSvc.Register("caller", "password123"); err != nil {
+		t.Fatalf("register caller: %v", err)
+	}
+	app := &webApp{
+		authSvc:   authSvc,
+		adminRepo: adminRepo,
+		sessions:  map[string]sessionState{},
+	}
+	pref := defaultDigestPreferences()
+	pref.Enabled = true
+	pref.WeeklyMail = true
+	pref.AttentionCadence = "daily"
+	app.persistDigestPreferences("caller", pref)
+	app.setBoardSubscription("caller", 42, boardSubscriptionDigest)
+	app.setBoardQuietHours("caller", 42, quietHoursWindow{Enabled: true, StartHour: 22, EndHour: 8})
+	app.markRouteSeen("caller", "/attention")
+	app.acknowledgeBulletin("caller", "wire-1")
+	app.dismissAttentionItem("caller", "reply|42|10|Needs follow-up")
+	app.markAttentionItemRead("caller", "board-pulse|42")
+	app.snoozeAttentionItem("caller", "page|friend", time.Now().UTC().Add(3*time.Hour))
+
+	sid, ok := app.createSession("caller")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+	req := httptest.NewRequest(http.MethodGet, "/attention/export", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.handleAttentionExport(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("attention export status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if got := rr.Result().Header.Get("Content-Type"); !strings.Contains(got, "application/json") {
+		t.Fatalf("expected json content type, got %q", got)
+	}
+	if got := rr.Result().Header.Get("Content-Disposition"); !strings.Contains(got, "wolfbbs-notifications-caller.json") {
+		t.Fatalf("unexpected content disposition: %q", got)
+	}
+	var payload attentionExportPayload
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode attention export: %v body=%s", err, rr.Body.String())
+	}
+	if payload.Handle != "caller" || payload.PresetRecommendation != "caller" {
+		t.Fatalf("unexpected export identity: %+v", payload)
+	}
+	if payload.DigestPreferences != normalizeDigestPreferences(pref) {
+		t.Fatalf("unexpected digest preferences in export: %+v", payload.DigestPreferences)
+	}
+	if got := payload.BoardSubscriptions["42"]; got != "digest" {
+		t.Fatalf("expected board subscription export, got %q", got)
+	}
+	if got := payload.BoardQuietHours["42"]; got != "22:00-08:00" {
+		t.Fatalf("expected quiet hours export, got %q", got)
+	}
+	if payload.RouteSeen["/attention"] == "" || payload.BulletinAcknowledgements["wire-1"] == "" {
+		t.Fatalf("expected route seen and bulletin ack exports, got %+v", payload)
+	}
+	if payload.Attention.Dismissed["reply|42|10|Needs follow-up"] == "" || payload.Attention.Read["board-pulse|42"] == "" || payload.Attention.Snoozed["page|friend"] == "" {
+		t.Fatalf("expected attention state export, got %+v", payload.Attention)
+	}
+}
+
+func TestTodayShowsCallerActivityHeatmap(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	boardRepo := repository.NewInMemoryBoardRepository()
+	msgRepo := repository.NewInMemoryMessageRepository()
+	mailRepo := repository.NewInMemoryPrivateMailRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
+	caller, err := authSvc.Register("caller", "password123")
+	if err != nil {
+		t.Fatalf("register caller: %v", err)
+	}
+	friend, err := authSvc.Register("friend", "password123")
+	if err != nil {
+		t.Fatalf("register friend: %v", err)
+	}
+	if err := boardRepo.Create(&domain.Board{Name: "General", Conference: "Public", CreatedBy: friend.ID}); err != nil {
+		t.Fatalf("create board: %v", err)
+	}
+	activityAt := time.Now().UTC().Add(-26 * time.Hour)
+	if err := msgRepo.CreateMessage(&domain.Message{
+		BoardID:   1,
+		AuthorID:  caller.ID,
+		Subject:   "Heatmap check",
+		Body:      "Testing activity rollup.",
+		CreatedAt: activityAt,
+	}); err != nil {
+		t.Fatalf("create message: %v", err)
+	}
+	if err := mailRepo.CreateMail(&domain.PrivateMail{
+		FromUserID: friend.ID,
+		ToUserID:   caller.ID,
+		Subject:    "Mail heat",
+		Body:       "Private follow-up",
+		CreatedAt:  activityAt.Add(10 * time.Minute),
+	}); err != nil {
+		t.Fatalf("create mail: %v", err)
+	}
+	if err := adminRepo.AddCallerHistory(&domain.CallerHistory{
+		SessionID:       "caller-history",
+		NodeID:          1,
+		Username:        caller.Handle,
+		Area:            "Boards",
+		RemoteAddr:      "198.51.100.4:2222",
+		LoginAt:         activityAt.Add(15 * time.Minute),
+		LogoutAt:        activityAt.Add(45 * time.Minute),
+		DurationSeconds: 1800,
+	}); err != nil {
+		t.Fatalf("add caller history: %v", err)
+	}
+	app := &webApp{
+		authSvc:   authSvc,
+		boardRepo: boardRepo,
+		msgRepo:   msgRepo,
+		mailRepo:  mailRepo,
+		adminRepo: adminRepo,
+		sessions:  map[string]sessionState{},
+	}
+	sid, ok := app.createSession("caller")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+	req := httptest.NewRequest(http.MethodGet, "/today", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.handleToday(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("today status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, needle := range []string{"Activity Heatmap", "Posts, private mail, and completed calls over the last 14 days.", "3 touch(es)", "hot"} {
+		if !strings.Contains(body, needle) {
+			t.Fatalf("today page missing %q: %s", needle, body)
+		}
+	}
+}
+
 func TestAdminOpsShowsAndResolvesPagesAndEscalations(t *testing.T) {
 	userRepo := repository.NewInMemoryUserRepository()
 	authSvc := auth.NewService(userRepo)
@@ -6302,4 +6989,433 @@ func TestActivityPubInboxRejectsUnsupportedActivity(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), "unsupported activity type") {
 		t.Fatalf("unexpected body: %s", rr.Body.String())
 	}
+}
+
+func TestFrozenPollThreadBlocksVotes(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	boardRepo := repository.NewInMemoryBoardRepository()
+	msgRepo := repository.NewInMemoryMessageRepository()
+	caller, err := authSvc.Register("caller", "password123")
+	if err != nil {
+		t.Fatalf("register caller: %v", err)
+	}
+	board := &domain.Board{Name: "General", Conference: "Public", CreatedBy: caller.ID}
+	if err := boardRepo.Create(board); err != nil {
+		t.Fatalf("create board: %v", err)
+	}
+	root := &domain.Message{BoardID: board.ID, AuthorID: caller.ID, Subject: "Poll", Body: "poll"}
+	if err := msgRepo.CreateMessage(root); err != nil {
+		t.Fatalf("create root: %v", err)
+	}
+	app := &webApp{
+		authSvc:   authSvc,
+		boardRepo: boardRepo,
+		msgRepo:   msgRepo,
+		adminRepo: repository.NewInMemoryAdminRepository(),
+		sessions:  map[string]sessionState{},
+	}
+	app.setThreadPoll(root.ThreadID, threadPoll{
+		Question: "Ship it?",
+		Options:  []string{"yes", "no"},
+	})
+	app.setThreadLifecycleState(root.ThreadID, threadLifecycleFrozen)
+	sid, ok := app.createSession("caller")
+	if !ok {
+		t.Fatal("create session failed")
+	}
+	form := url.Values{
+		"csrf_token":   {app.sessions[sid].csrf},
+		"action":       {"vote_poll"},
+		"board_id":     {strconv.FormatInt(board.ID, 10)},
+		"thread_id":    {strconv.FormatInt(root.ThreadID, 10)},
+		"option_index": {"0"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/boards", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.handleBoards(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("expected redirect, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("Location"); !strings.Contains(got, "Poll+voting+is+disabled") {
+		t.Fatalf("expected frozen poll error redirect, got %q", got)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/boards?board="+strconv.FormatInt(board.ID, 10)+"&id="+strconv.FormatInt(root.ID, 10), nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleBoards(rr, req)
+	if strings.Contains(rr.Body.String(), "Save Vote") {
+		t.Fatalf("expected vote form hidden for frozen poll: %s", rr.Body.String())
+	}
+}
+
+func TestDirectoryProfileCirclesAliasesAndIncidents(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	adminRepo := repository.NewInMemoryAdminRepository()
+	mailRepo := repository.NewInMemoryPrivateMailRepository()
+	caller, err := authSvc.Register("caller", "password123")
+	if err != nil {
+		t.Fatalf("register caller: %v", err)
+	}
+	friend, err := authSvc.Register("friend", "password123")
+	if err != nil {
+		t.Fatalf("register friend: %v", err)
+	}
+	if _, err := authSvc.Register("mod", "password123"); err != nil {
+		t.Fatalf("register mod: %v", err)
+	}
+	if err := authSvc.SetRole("mod", roleModerator); err != nil {
+		t.Fatalf("set mod role: %v", err)
+	}
+	app := &webApp{
+		authSvc:   authSvc,
+		adminRepo: adminRepo,
+		mailRepo:  mailRepo,
+		sessions:  map[string]sessionState{},
+	}
+	app.persistPublicProfileSettings("friend", publicProfileSettings{
+		StatusLine:     "door runner after midnight",
+		Bio:            "Likes tournaments and ANSI packs.",
+		ContactPrefs:   []string{"mail", "chat"},
+		ShowStatusLine: true,
+		ShowBio:        true,
+		ShowContact:    true,
+	})
+	if err := mailRepo.CreateMail(&domain.PrivateMail{FromUserID: caller.ID, ToUserID: friend.ID, Subject: "hello", Body: "one"}); err != nil {
+		t.Fatalf("create outbound mail: %v", err)
+	}
+	if err := mailRepo.CreateMail(&domain.PrivateMail{FromUserID: friend.ID, ToUserID: caller.ID, Subject: "reply", Body: "two"}); err != nil {
+		t.Fatalf("create inbound mail: %v", err)
+	}
+	app.queueStaffEscalation("mod", "friend", "Needs host follow-up.")
+
+	callerSID, ok := app.createSession("caller")
+	if !ok {
+		t.Fatal("caller session failed")
+	}
+	form := url.Values{
+		"csrf_token": {app.sessions[callerSID].csrf},
+		"action":     {"save_alias"},
+		"target":     {"friend"},
+		"alias":      {"Wingman"},
+		"return_to":  {"/directory?handle=friend"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/directory", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr := httptest.NewRecorder()
+	app.handleDirectory(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("save alias status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	form = url.Values{
+		"csrf_token": {app.sessions[callerSID].csrf},
+		"action":     {"save_circle"},
+		"name":       {"Door Crew"},
+		"members":    {"friend"},
+		"note":       {"night tournament regulars"},
+	}
+	req = httptest.NewRequest(http.MethodPost, "/circles", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleCircles(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("save circle status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/directory?handle=friend", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleDirectory(rr, req)
+	body := rr.Body.String()
+	for _, needle := range []string{"door runner after midnight", "Likes tournaments and ANSI packs.", "Prefers chat, mail", "Your alias:", "Wingman", "Door Crew", "Relationship Timeline", "mail to friend", "mail from friend"} {
+		if !strings.Contains(body, needle) {
+			t.Fatalf("expected %q in directory profile: %s", needle, body)
+		}
+	}
+
+	modSID, ok := app.createSession("mod")
+	if !ok {
+		t.Fatal("mod session failed")
+	}
+	req = httptest.NewRequest(http.MethodGet, "/directory?handle=friend", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: modSID})
+	rr = httptest.NewRecorder()
+	app.handleDirectory(rr, req)
+	if !strings.Contains(rr.Body.String(), "Incident Timeline") || !strings.Contains(rr.Body.String(), "Needs host follow-up.") {
+		t.Fatalf("expected incident timeline in moderator view: %s", rr.Body.String())
+	}
+}
+
+func TestProfileExportIncludesPrivacyAliasesAndCircles(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	adminRepo := repository.NewInMemoryAdminRepository()
+	if _, err := authSvc.Register("caller", "password123"); err != nil {
+		t.Fatalf("register caller: %v", err)
+	}
+	app := &webApp{
+		authSvc:   authSvc,
+		adminRepo: adminRepo,
+		sessions:  map[string]sessionState{},
+	}
+	app.persistPublicProfileSettings("caller", publicProfileSettings{
+		StatusLine:     "status line",
+		Bio:            "bio text",
+		ContactPrefs:   []string{"mail"},
+		ShowStatusLine: true,
+		ShowBio:        false,
+		ShowContact:    true,
+	})
+	app.persistContactAliases("caller", map[string]string{"friend": "Wingman"})
+	app.persistCallerCircles("caller", []callerCircle{{ID: "c1", Name: "Door Crew", Members: []string{"friend"}}})
+
+	sid, ok := app.createSession("caller")
+	if !ok {
+		t.Fatal("session failed")
+	}
+	req := httptest.NewRequest(http.MethodGet, "/profile/export", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.handleProfileExport(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("profile export status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode profile export: %v body=%s", err, rr.Body.String())
+	}
+	if payload["handle"] != "caller" {
+		t.Fatalf("unexpected export handle: %+v", payload)
+	}
+	card := payload["profile_card"].(map[string]interface{})
+	if card["status_line"] != "status line" {
+		t.Fatalf("unexpected profile card export: %+v", card)
+	}
+	aliases := payload["contact_aliases"].(map[string]interface{})
+	if aliases["friend"] != "Wingman" {
+		t.Fatalf("unexpected alias export: %+v", aliases)
+	}
+	circles := payload["caller_circles"].([]interface{})
+	if len(circles) != 1 {
+		t.Fatalf("expected one circle export, got %+v", circles)
+	}
+}
+
+func TestEventsRSVPAndDirectoryInviteFlow(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	adminRepo := repository.NewInMemoryAdminRepository()
+	mailRepo := repository.NewInMemoryPrivateMailRepository()
+	caller, err := authSvc.Register("caller", "password123")
+	if err != nil {
+		t.Fatalf("register caller: %v", err)
+	}
+	friend, err := authSvc.Register("friend", "password123")
+	if err != nil {
+		t.Fatalf("register friend: %v", err)
+	}
+	app := &webApp{
+		authSvc:   authSvc,
+		adminRepo: adminRepo,
+		mailRepo:  mailRepo,
+		sessions:  map[string]sessionState{},
+	}
+	app.persistCommunityEvents([]communityEvent{{
+		ID:        "evt-1",
+		SeriesID:  "evt-1",
+		Title:     "Tournament Night",
+		Category:  "tournament",
+		StartsAt:  time.Now().UTC().Add(2 * time.Hour),
+		Location:  "Door Cockpit",
+		Host:      "sysop",
+		Audience:  "all callers",
+		Link:      "/tournaments",
+		CreatedAt: time.Now().UTC(),
+	}})
+	now := time.Now().UTC()
+	if err := adminRepo.UpsertNodeSession(&domain.NodeSession{
+		SessionID:    "friend-live",
+		NodeID:       3,
+		Username:     "friend",
+		Area:         "chat",
+		RemoteAddr:   "198.51.100.20:2323",
+		LoginAt:      now.Add(-10 * time.Minute),
+		LastActivity: now.Add(-1 * time.Minute),
+		UpdatedAt:    now,
+	}); err != nil {
+		t.Fatalf("upsert session: %v", err)
+	}
+	occurrence := app.upcomingCommunityEvents(5, time.Now().UTC())[0]
+
+	sid, ok := app.createSession("caller")
+	if !ok {
+		t.Fatal("create session failed")
+	}
+	form := url.Values{
+		"csrf_token": {app.sessions[sid].csrf},
+		"action":     {"rsvp"},
+		"event_id":   {occurrence.ID},
+		"status":     {"going"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/events", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.handleEventsCalendar(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("events rsvp status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/events", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleEventsCalendar(rr, req)
+	if !strings.Contains(rr.Body.String(), "RSVPs: going 1") {
+		t.Fatalf("expected rsvp summary in events page: %s", rr.Body.String())
+	}
+
+	form = url.Values{
+		"csrf_token":  {app.sessions[sid].csrf},
+		"action":      {"send_event_invite"},
+		"target":      {"friend"},
+		"event_id":    {occurrence.ID},
+		"notify_live": {"1"},
+		"return_to":   {"/directory?handle=friend"},
+	}
+	req = httptest.NewRequest(http.MethodPost, "/directory", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleDirectory(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("directory invite status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	inbox, err := mailRepo.ListInbox(friend.ID, 10)
+	if err != nil || len(inbox) != 1 {
+		t.Fatalf("expected invite mail, got inbox=%+v err=%v", inbox, err)
+	}
+	if !strings.Contains(inbox[0].Subject, "Invitation: Tournament Night") {
+		t.Fatalf("unexpected invite subject: %+v", inbox[0])
+	}
+	if len(app.loadPageRequests()) != 1 {
+		t.Fatalf("expected live page notification after invite")
+	}
+	if got := app.loadEventRSVPs("friend")[occurrence.ID].Status; got != "maybe" {
+		t.Fatalf("expected invite to seed maybe RSVP, got %q", got)
+	}
+	_ = caller
+}
+
+func TestAdminMailSharedInboxAndMerge(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	adminRepo := repository.NewInMemoryAdminRepository()
+	mailRepo := repository.NewInMemoryPrivateMailRepository()
+	sysop, err := authSvc.Register("sysop", "password123")
+	if err != nil {
+		t.Fatalf("register sysop: %v", err)
+	}
+	mod, err := authSvc.Register("mod", "password123")
+	if err != nil {
+		t.Fatalf("register mod: %v", err)
+	}
+	caller1, err := authSvc.Register("caller1", "password123")
+	if err != nil {
+		t.Fatalf("register caller1: %v", err)
+	}
+	caller2, err := authSvc.Register("caller2", "password123")
+	if err != nil {
+		t.Fatalf("register caller2: %v", err)
+	}
+	if err := authSvc.SetRole("sysop", roleAdmin); err != nil {
+		t.Fatalf("set sysop role: %v", err)
+	}
+	if err := authSvc.SetRole("mod", roleModerator); err != nil {
+		t.Fatalf("set mod role: %v", err)
+	}
+	if err := authSvc.SetVerified("caller1", true); err != nil {
+		t.Fatalf("verify caller1: %v", err)
+	}
+	if err := mailRepo.CreateMail(&domain.PrivateMail{
+		FromUserID: caller1.ID,
+		ToUserID:   mod.ID,
+		Subject:    "[feedback/bug] Missing screen",
+		Body:       "Need help",
+	}); err != nil {
+		t.Fatalf("create shared mail: %v", err)
+	}
+	app := &webApp{
+		authSvc:   authSvc,
+		adminRepo: adminRepo,
+		mailRepo:  mailRepo,
+		sessions:  map[string]sessionState{},
+	}
+	sid, ok := app.createSession("sysop")
+	if !ok {
+		t.Fatal("create sysop session failed")
+	}
+	form := url.Values{
+		"csrf_token": {app.sessions[sid].csrf},
+		"action":     {"assign_shared"},
+		"mail_id":    {"1"},
+		"assignee":   {"mod"},
+		"status":     {"assigned"},
+		"note":       {"triage tonight"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/mail", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.handleAdminMail(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("assign shared mail status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if got := app.loadModeratorInboxAssignments()[1].Assignee; got != "mod" {
+		t.Fatalf("expected assignment persisted, got %+v", app.loadModeratorInboxAssignments())
+	}
+
+	form = url.Values{
+		"csrf_token":    {app.sessions[sid].csrf},
+		"action":        {"merge_send"},
+		"role":          {"user"},
+		"verified_only": {"1"},
+		"subject":       {"Launch note"},
+		"body":          {"Hello {{handle}}, welcome back."},
+	}
+	req = httptest.NewRequest(http.MethodPost, "/admin/mail", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleAdminMail(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("merge send status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	inbox1, _ := mailRepo.ListInbox(caller1.ID, 20)
+	inbox2, _ := mailRepo.ListInbox(caller2.ID, 20)
+	if len(inbox1) != 1 || !strings.Contains(inbox1[0].Body, "Hello caller1") {
+		t.Fatalf("expected merge mail for caller1, got %+v", inbox1)
+	}
+	if len(inbox2) != 0 {
+		t.Fatalf("expected caller2 excluded by verified filter, got %+v", inbox2)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/admin/mail", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleAdminMail(rr, req)
+	body := rr.Body.String()
+	for _, needle := range []string{"Shared Moderator Inbox", "triage tonight", "Mail Merge", "Missing screen"} {
+		if !strings.Contains(body, needle) {
+			t.Fatalf("expected %q in admin mail page: %s", needle, body)
+		}
+	}
+	_ = sysop
 }
