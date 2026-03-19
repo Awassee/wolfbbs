@@ -2950,8 +2950,6 @@ docker_cleanup_without_compose() {
   local network_ids=""
   local volume_ids=""
   local legacy_container=""
-  local legacy_network=""
-  local legacy_volume=""
 
   if ! command -v docker >/dev/null 2>&1; then
     log "Docker CLI not found; skipping compose-less cleanup."
@@ -2987,13 +2985,9 @@ docker_cleanup_without_compose() {
   for legacy_container in wolfbbs-bbs-1 wolfbbs-web-1 wolfbbs-irc-1 wolfbbs-mailin-1 wolfbbs-postgres-1; do
     run "$DOCKER_BIN rm -f '$legacy_container' >/dev/null 2>&1 || true"
   done
-  for legacy_network in wolfbbs_default; do
-    run "$DOCKER_BIN network rm '$legacy_network' >/dev/null 2>&1 || true"
-  done
+  run "$DOCKER_BIN network rm 'wolfbbs_default' >/dev/null 2>&1 || true"
   if [[ "$remove_volumes" == "true" ]]; then
-    for legacy_volume in wolfbbs_pgdata; do
-      run "$DOCKER_BIN volume rm -f '$legacy_volume' >/dev/null 2>&1 || true"
-    done
+    run "$DOCKER_BIN volume rm -f 'wolfbbs_pgdata' >/dev/null 2>&1 || true"
   fi
 }
 
@@ -3003,8 +2997,7 @@ remove_install_prefix() {
     return 0
   fi
 
-  resolved="$(cd "$PREFIX" 2>/dev/null && pwd || true)"
-  if [[ -z "$resolved" ]]; then
+  if ! resolved="$(cd "$PREFIX" 2>/dev/null && pwd)"; then
     resolved="$PREFIX"
   fi
 
@@ -3197,9 +3190,7 @@ debug_bundle_report() {
     echo "Compose file: ${compose_file:-not detected}"
     echo "Env file: ${ENV_FILE:-not found}"
     echo "Log file: ${LOG_FILE}"
-  } >"$out_file"
 
-  {
     echo
     echo "== Tool Versions =="
     echo "bash: $(bash --version 2>/dev/null | head -n 1 || echo unavailable)"
@@ -3225,18 +3216,14 @@ debug_bundle_report() {
     else
       echo "git: missing"
     fi
-  } >>"$out_file"
 
-  {
     echo
     echo "== Host Capacity =="
     df -h "$PREFIX" 2>/dev/null || df -h . 2>/dev/null || true
     if command -v docker >/dev/null 2>&1; then
       docker system df 2>/dev/null || true
     fi
-  } >>"$out_file"
 
-  {
     echo
     echo "== Runtime Probes =="
     if command -v curl >/dev/null 2>&1; then
@@ -3272,15 +3259,11 @@ debug_bundle_report() {
     else
       echo "WARN nc unavailable; TCP probes skipped"
     fi
-  } >>"$out_file"
 
-  {
     echo
     echo "== Port Audit =="
     port_audit 2>&1
-  } >>"$out_file"
 
-  {
     echo
     echo "== Redacted Env Snapshot =="
     if [[ -n "${ENV_FILE:-}" && -f "$ENV_FILE" ]]; then
@@ -3290,9 +3273,7 @@ debug_bundle_report() {
     else
       echo "No env file detected."
     fi
-  } >>"$out_file"
 
-  {
     echo
     echo "== Doctor Report =="
     if doctor_output="$(doctor_report 2>&1)"; then
@@ -3300,29 +3281,24 @@ debug_bundle_report() {
     else
       printf '%s\n' "$doctor_output"
     fi
-  } >>"$out_file"
 
-  cmd="$(compose_cmd)"
-  if [[ -n "$cmd" && -n "${compose_file:-}" && -f "${compose_file:-}" ]]; then
-    compose_base="$cmd -f \"$compose_file\""
-    if [[ -n "${ENV_FILE:-}" && -f "$ENV_FILE" ]]; then
-      compose_base="${compose_base} --env-file \"$ENV_FILE\""
-    fi
-    {
+    if [[ -n "$cmd" && -n "${compose_file:-}" && -f "${compose_file:-}" ]]; then
+      compose_base="$cmd -f \"$compose_file\""
+      if [[ -n "${ENV_FILE:-}" && -f "$ENV_FILE" ]]; then
+        compose_base="${compose_base} --env-file \"$ENV_FILE\""
+      fi
       echo
       echo "== Compose Status =="
       eval "$compose_base ps" 2>&1 || true
       echo
       echo "== Compose Logs (tail 200) =="
       eval "$compose_base logs --tail=200" 2>&1 || true
-    } >>"$out_file"
-  else
-    {
+    else
       echo
       echo "== Compose Status =="
       echo "Compose context not detected."
-    } >>"$out_file"
-  fi
+    fi
+  } >"$out_file"
 
   echo "Debug bundle written: ${out_file}"
   echo "Share this file when opening an install/runtime support issue."
