@@ -6,7 +6,8 @@
   "scripts": {
     "test": "playwright test",
     "test:headed": "playwright test --headed",
-    "install:browsers": "playwright install chromium"
+    "install:browsers": "playwright install chromium",
+    "screenshots": "WOLFBBS_CAPTURE_SCREENSHOTS=1 playwright test tests/docs_screenshots.spec.js"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.11.0",

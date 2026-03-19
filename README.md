@@ -4,6 +4,8 @@ WolfBBS is a self-hosted, SSH-first bulletin board system with a Wildcat-style A
 
 The canonical public repo is [Awassee/wolfbbs](https://github.com/Awassee/wolfbbs).
 
+![WolfBBS Getting Started in 60 seconds](docs/assets/screenshots/getting-started.gif)
+
 ## Why WolfBBS
 
 WolfBBS is built for operators who want the feel of a classic board without the usual setup pain.
@@ -48,6 +50,37 @@ curl -fsSL https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh |
 ```
 
 This path also works without a preinstalled `git` client.
+
+## Screenshots
+
+### Connect hub with built-in web terminal
+
+![WolfBBS Connect hub](docs/assets/screenshots/connect.png)
+
+### Boards and threaded discussion flow
+
+![WolfBBS Message Boards](docs/assets/screenshots/boards.png)
+
+### Shared live chat (web + IRC bridge)
+
+![WolfBBS Live Chat](docs/assets/screenshots/chat.png)
+
+### Door cockpit and score-first game discovery
+
+![WolfBBS Doors](docs/assets/screenshots/doors.png)
+
+### Daily briefing surface for regular callers
+
+![WolfBBS Today Brief](docs/assets/screenshots/today.png)
+
+### Sysop setup and runtime configuration center
+
+![WolfBBS Admin Setup](docs/assets/screenshots/admin-setup.png)
+![WolfBBS Admin Config](docs/assets/screenshots/admin-config.png)
+
+### Mobile-friendly connect experience
+
+![WolfBBS Connect (Mobile)](docs/assets/screenshots/connect-mobile.png)
 
 ## Choose Your Path
 
@@ -117,6 +150,8 @@ Default local endpoints:
 ```bash
 bash install.sh --status
 bash install.sh --doctor
+bash install.sh --port-audit
+bash install.sh --debug-bundle
 bash install.sh --repair
 bash install.sh --start
 bash install.sh --stop
@@ -136,18 +171,25 @@ export WOLFBBS_APP_UPGRADE_WORKDIR="/path/to/wolfbbs"
 
 Then in the SSH main menu press `/` and enter `/app upgrade`.
 
-## Product Guides
+## Documentation
+
+Full doc hub: [docs/README.md](docs/README.md)
 
 - [Start Here](docs/START_HERE.md): fastest route from install to a usable board
-- [Launch Checklist](docs/LAUNCH_CHECKLIST.md): go/no-go pass before inviting callers
+- [Quickstart](docs/QUICKSTART.md): fast path from download to first login
+- [Install Guide](docs/INSTALL.md): install modes, lifecycle commands, and packaging
+- [Product Guide](docs/PRODUCT_GUIDE.md): positioning, use cases, and operator workflow
+- [Showcase](docs/SHOWCASE.md): GitHub-facing feature highlights and screenshot tour
 - [Operator Playbook](docs/OPERATOR_PLAYBOOK.md): which operator surface to use, and when
-- [Quickstart](docs/QUICKSTART.md): fastest path from download to first login
-- [Install Guide](docs/INSTALL.md): install modes, flags, lifecycle, and packaging
 - [Troubleshooting](docs/TROUBLESHOOTING.md): symptom-driven fixes and recovery path
-- [Operations Guide](docs/OPERATIONS.md): daily operator tasks, recovery, and upgrades
-- [Product Guide](docs/PRODUCT_GUIDE.md): what WolfBBS includes and how to use it
-- [Datasheet](docs/DATASHEET.md): deployment summary, capabilities, ports, and operator facts
 - [Feature Reference](docs/feature-reference.md): route, binary, and surface inventory
+- [Acceptance Contract](docs/ACCEPTANCE_SPEC.md): MUST/SHOULD acceptance criteria
+
+Regenerate screenshot assets:
+
+```bash
+scripts/capture-doc-screenshots.sh
+```
 
 ## Core Product Areas
 
