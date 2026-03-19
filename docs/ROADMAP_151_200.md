@@ -10,64 +10,64 @@ This document extends the ordered backlog beyond `docs/ROADMAP_101_150.md`.
 ## Theme 16: Caller retention and return loops
 151. Daily streaks across boards, chat, and doors.
 Value: creates a simple reason to come back tomorrow.
-Status: planned.
+Status: shipped (`/streaks` route with caller streak board and cross-surface activity metrics).
 
 152. Personalized "next best action" cards.
 Value: shortens the gap between sign-in and useful activity.
-Status: planned.
+Status: shipped (`/next` route generates caller-specific action cards from unread + engagement state).
 
 153. Featured returning-caller spotlights.
 Value: rewards participation and makes the board feel inhabited.
-Status: planned.
+Status: shipped (`/spotlights` route highlights returning callers with streak/activity context).
 
 154. Seasonal missions with completion tracking.
 Value: adds medium-term goals beyond one session.
-Status: planned.
+Status: shipped (`/admin/missions` + `/missions` with mission definition, progress computation, and claim persistence).
 
 155. Returning caller digest preferences by weekday.
 Value: lets users shape heavier vs lighter attention by routine.
-Status: planned.
+Status: shipped (`/digest/preferences` with weekday item caps applied to digest generation).
 
 156. Smart re-entry to the last unfinished workflow.
 Value: preserves momentum between sessions.
-Status: planned.
+Status: shipped (`/resume` route prioritizes unfinished workflows and allows one-click home-route update).
 
 157. Door comeback prompts after streak breaks.
 Value: reconnects casual callers to sticky game loops.
-Status: planned.
+Status: shipped (`/doors/comeback` route shows streak-aware comeback prompts and recommended doors).
 
 158. New user mentorship pairing.
 Value: improves onboarding quality and retention.
-Status: planned.
+Status: shipped (`/admin/mentorship` + `/mentorship` routes support pair management and direct mentor check-ins).
 
 159. Profile milestone celebrations.
 Value: turns progress into visible social proof.
-Status: planned.
+Status: shipped (`/milestones` route computes milestone progress and persists celebration state).
 
 160. Time-of-day tailored landing states.
 Value: makes the product feel alive instead of static.
-Status: planned.
+Status: shipped (`/time-lane` route adapts lane guidance by time-of-day and sets home-route preferences).
 
 ## Theme 17: Moderation, trust, and operator workflow
 161. Moderator assignment queue for reports.
 Value: avoids duplicated handling and dropped reports.
-Status: planned.
+Status: shipped (`/admin/mod-center` assignment queue persists report owner/priority/status state).
 
 162. Report SLA timers and breach warnings.
 Value: gives staff a real follow-through metric.
-Status: planned.
+Status: shipped (`/admin/mod-center` computes SLA warning/breach states from report due windows).
 
 163. Caller risk summary on staff-visible profiles.
 Value: speeds support and moderation judgment.
-Status: planned.
+Status: shipped (`/directory` staff profile view now includes risk score/level/signals for the selected caller).
 
 164. Moderator canned responses with audit trails.
 Value: improves consistency and reduces response time.
-Status: planned.
+Status: shipped (`/admin/mod-center` stores reusable canned templates, sends them as mail, and records admin actions).
 
 165. Case threads for multi-step incidents.
 Value: groups related actions into one reviewable record.
-Status: planned.
+Status: shipped (`/admin/mod-center` creates, updates, and closes moderation case threads with timeline updates).
 
 166. Abuse trend dashboard by board, user, and channel.
 Value: helps sysops prioritize structural fixes.

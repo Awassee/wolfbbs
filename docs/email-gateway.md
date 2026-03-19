@@ -10,6 +10,9 @@
   - max message size
   - verified-account flag must be true before sending external recipients
   - global outbound disable toggle for incident response
+- Runtime source of truth:
+  - `/admin/gateways` values are applied at send time for outbound relay and reset-email delivery
+  - if SMTP password is left blank in admin form, the existing stored secret is retained
 - Audit log fields:
   - actor id, recipient count, subject, status, error, relay response, timestamp
 

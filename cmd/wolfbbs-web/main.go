@@ -40,6 +40,9 @@ import (
 	"wolfbbs/internal/ui"
 )
 
+// webBuildVersion is overridden in CI/release builds via -ldflags -X main.webBuildVersion=...
+var webBuildVersion = "v1.0.0"
+
 type boardRow struct {
 	ID      int
 	Title   string
@@ -579,6 +582,16 @@ type digestPreferences struct {
 	EventCadence     string `json:"event_cadence"`
 }
 
+type aiGatewaySettings struct {
+	Enabled      bool
+	BaseURL      string
+	Model        string
+	APIKey       string
+	SystemPrompt string
+	TimeoutSec   int
+	MaxTokens    int
+}
+
 type fileReviewItem struct {
 	FileID     int64     `json:"file_id"`
 	AreaID     int64     `json:"area_id"`
@@ -599,9 +612,12 @@ type launchCheckpoint struct {
 }
 
 type sessionState struct {
-	handle string
-	expire time.Time
-	csrf   string
+	handle     string
+	expire     time.Time
+	csrf       string
+	transport  string
+	secure     bool
+	authFactor int
 }
 
 const (
@@ -644,6 +660,13 @@ const (
 	sysSettingQuickJump              = "site.quick_jump_enable"
 	sysSettingClassicSearch          = "site.classic_search_enable"
 	sysSettingRequireVerifiedEmail   = "mail.require_verified"
+	sysSettingGatewayAIEnabled       = "gateway.ai.enabled"
+	sysSettingGatewayAIBaseURL       = "gateway.ai.base_url"
+	sysSettingGatewayAIModel         = "gateway.ai.model"
+	sysSettingGatewayAIAPIKey        = "gateway.ai.api_key"
+	sysSettingGatewayAISystemPrompt  = "gateway.ai.system_prompt"
+	sysSettingGatewayAITimeoutSec    = "gateway.ai.timeout_sec"
+	sysSettingGatewayAIMaxTokens     = "gateway.ai.max_tokens"
 	sysSettingMenuEnabled            = "menu.enabled"
 	sysSettingMenuFile               = "menu.file"
 	sysSettingLockedChannels         = "chat.locked_channels"
@@ -1037,10 +1060,17 @@ func main() {
 			}
 			app.oneLinerzMod.Add(handle, "posted: "+cleanOneLiner(subject, 96))
 		})
+		for _, eventName := range []string{"board.created", "board.updated", "board.deleted", "message.posted"} {
+			name := eventName
+			app.eventBus.Subscribe(name, func(ev events.Event) {
+				go app.dispatchWebhookEvent(name, ev.Fields)
+			})
+		}
 	}
 
 	http.HandleFunc("/", app.handleRoot)
 	http.HandleFunc("/start", app.handleStartCenter)
+	http.HandleFunc("/showcase", app.handleShowcase)
 	http.Handle("/first-call", app.authRequired(http.HandlerFunc(app.handleFirstCallSession)))
 	http.Handle("/today", app.authRequired(http.HandlerFunc(app.handleToday)))
 	http.Handle("/digest", app.authRequired(http.HandlerFunc(app.handleDigest)))
@@ -1062,6 +1092,16 @@ func main() {
 	http.Handle("/mail", app.authRequired(http.HandlerFunc(app.handleMail)))
 	http.Handle("/bookmarks", app.authRequired(http.HandlerFunc(app.handleBookmarks)))
 	http.Handle("/settings", app.authRequired(http.HandlerFunc(app.handleSettings)))
+	http.Handle("/digest/preferences", app.authRequired(http.HandlerFunc(app.handleDigestPreferences)))
+	http.Handle("/streaks", app.authRequired(http.HandlerFunc(app.handleStreaks)))
+	http.Handle("/next", app.authRequired(http.HandlerFunc(app.handleNextActions)))
+	http.Handle("/spotlights", app.authRequired(http.HandlerFunc(app.handleSpotlights)))
+	http.Handle("/missions", app.authRequired(http.HandlerFunc(app.handleMissions)))
+	http.Handle("/resume", app.authRequired(http.HandlerFunc(app.handleResumeCenter)))
+	http.Handle("/doors/comeback", app.authRequired(http.HandlerFunc(app.handleDoorComeback)))
+	http.Handle("/mentorship", app.authRequired(http.HandlerFunc(app.handleMentorship)))
+	http.Handle("/milestones", app.authRequired(http.HandlerFunc(app.handleMilestones)))
+	http.Handle("/time-lane", app.authRequired(http.HandlerFunc(app.handleTimeLane)))
 	http.Handle("/profile/export", app.authRequired(http.HandlerFunc(app.handleProfileExport)))
 	http.Handle("/circles", app.authRequired(http.HandlerFunc(app.handleCircles)))
 	http.Handle("/status", app.authRequired(http.HandlerFunc(app.handleStatusCenter)))
@@ -1090,6 +1130,14 @@ func main() {
 	http.Handle("/admin/doors", app.mustBeRole(roleAdmin, app.handleAdminDoors))
 	http.Handle("/admin/events", app.mustBeRole(roleAdmin, app.handleAdminEvents))
 	http.Handle("/admin/challenges", app.mustBeRole(roleAdmin, app.handleAdminChallenges))
+	http.Handle("/admin/missions", app.mustBeRole(roleAdmin, app.handleAdminMissions))
+	http.Handle("/admin/mentorship", app.mustBeRole(roleModerator, app.handleAdminMentorship))
+	http.Handle("/admin/mod-center", app.mustBeRole(roleModerator, app.handleAdminModCenter))
+	http.Handle("/admin/plugins", app.mustBeRole(roleAdmin, app.handleAdminPlugins))
+	http.Handle("/admin/plugins/starter", app.mustBeRole(roleAdmin, app.handleAdminPluginStarter))
+	http.Handle("/admin/themes", app.mustBeRole(roleAdmin, app.handleAdminThemes))
+	http.Handle("/admin/webhooks", app.mustBeRole(roleAdmin, app.handleAdminWebhooks))
+	http.Handle("/admin/analytics", app.mustBeRole(roleAdmin, app.handleAdminAnalytics))
 	http.Handle("/admin/release", app.mustBeRole(roleAdmin, app.handleAdminReleaseDashboard))
 	http.Handle("/admin/bulletins", app.mustBeRole(roleAdmin, app.handleAdminBulletins))
 	http.Handle("/admin/launch", app.mustBeRole(roleAdmin, app.handleAdminLaunch))
@@ -1103,6 +1151,7 @@ func main() {
 	http.Handle("/admin/node-state", app.mustBeRole(roleAdmin, app.handleAdminNodeState))
 	http.Handle("/admin/audit", app.mustBeRole(roleAdmin, app.handleAdminAudit))
 	http.Handle("/scores", app.authRequired(http.HandlerFunc(app.handleScores)))
+	http.Handle("/topx", app.authRequired(http.HandlerFunc(app.handleTopX)))
 	http.Handle("/chat", app.authRequired(http.HandlerFunc(app.handleChat)))
 	http.Handle("/chat/send", app.authRequired(http.HandlerFunc(app.handleChatSend)))
 	http.Handle("/chat/stream", app.authRequired(http.HandlerFunc(app.handleChatStream)))
@@ -1676,7 +1725,8 @@ func (a *webApp) sendWeeklyDigestMail(user *domain.User, pref digestPreferences,
 	if err != nil || fromUser == nil {
 		return fmt.Errorf("mailbot account unavailable")
 	}
-	digest, err := discovery.BuildSinceLastCall(a.boardRepo, a.msgRepo, a.mailRepo, user, pref.MaxItems)
+	maxItems := a.digestMaxItemsForUser(user.Handle, pref.MaxItems, now)
+	digest, err := discovery.BuildSinceLastCall(a.boardRepo, a.msgRepo, a.mailRepo, user, maxItems)
 	if err != nil {
 		return err
 	}
@@ -3165,10 +3215,10 @@ func (a *webApp) handleStartCenter(w http.ResponseWriter, r *http.Request) {
 	}
 	user, _ := a.currentUser(r)
 	pageTitle := a.siteDisplayName() + " Start Center"
-	nav := `<a href="/connect">connect</a> | <a href="/tour">tour</a> | <a href="/events">events</a> | <a href="/login">login</a> | <a href="/help">help</a>`
+	nav := `<a href="/connect">connect</a> | <a href="/tour">tour</a> | <a href="/showcase">showcase</a> | <a href="/events">events</a> | <a href="/login">login</a> | <a href="/help">help</a>`
 	intro := `<p>Start here when you want a clear next step instead of hunting through routes.</p>`
 	kpis := `<section class="wolfbbs-kpi-grid"><article class="wolfbbs-kpi-card"><strong>Guest</strong><span>tour, connect, evaluate</span></article><article class="wolfbbs-kpi-card"><strong>Caller</strong><span>boards, attention, doors</span></article><article class="wolfbbs-kpi-card"><strong>Sysop</strong><span>setup, ops, launch</span></article></section>`
-	laneGrid := `<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Just exploring</h2><div class="wolfbbs-action-grid"><a class="wolfbbs-action-card" href="/connect"><strong>Connect</strong><span>SSH, web terminal, IRC, and clipboard-ready commands</span></a><a class="wolfbbs-action-card" href="/tour"><strong>Guided Tour</strong><span>Read-only walkthrough of the product shape</span></a><a class="wolfbbs-action-card" href="/help"><strong>Help</strong><span>Route map and surface guide</span></a></div></article><article class="wolfbbs-card"><h2>What success looks like</h2><ul class="wolfbbs-list-clean"><li>Guests should understand what the board does in under five minutes.</li><li>Callers should know where to go next after the first login.</li><li>Sysops should know whether the board is truly launch-ready.</li></ul></article></section>`
+	laneGrid := `<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Just exploring</h2><div class="wolfbbs-action-grid"><a class="wolfbbs-action-card" href="/connect"><strong>Connect</strong><span>SSH, web terminal, IRC, and clipboard-ready commands</span></a><a class="wolfbbs-action-card" href="/tour"><strong>Guided Tour</strong><span>Read-only walkthrough of the product shape</span></a><a class="wolfbbs-action-card" href="/showcase"><strong>Showcase</strong><span>Feature map, launch path, and capability highlights</span></a><a class="wolfbbs-action-card" href="/help"><strong>Help</strong><span>Route map and surface guide</span></a></div></article><article class="wolfbbs-card"><h2>What success looks like</h2><ul class="wolfbbs-list-clean"><li>Guests should understand what the board does in under five minutes.</li><li>Callers should know where to go next after the first login.</li><li>Sysops should know whether the board is truly launch-ready.</li></ul></article></section>`
 	if user == nil {
 		page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>` + htmlEscape(pageTitle) + `</title></head><body><h1>` + htmlEscape(pageTitle) + `</h1><p>` + nav + `</p>` + intro + kpis + laneGrid + guestQuickStartChecklistHTML() + `<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Caller path</h2><ol><li>Open <a href="/connect">/connect</a> or <a href="/tour">/tour</a>.</li><li>Create or use an account and sign in.</li><li>Start with boards, chat, doors, and mail.</li></ol></article><article class="wolfbbs-card"><h2>Sysop path</h2><ol><li>Sign in as sysop.</li><li>Finish <a href="/admin/setup">/admin/setup</a>.</li><li>Use <a href="/admin/launch">/admin/launch</a> and <a href="/status">/status</a> before inviting callers.</li></ol></article></section></body></html>`
 		w.WriteHeader(http.StatusOK)
@@ -3177,9 +3227,9 @@ func (a *webApp) handleStartCenter(w http.ResponseWriter, r *http.Request) {
 	}
 
 	role := rbac.NormalizeRole(user.Role)
-	nav = `<a href="/boards">boards</a> | <a href="/attention">attention</a> | <a href="/mail">mail</a> | <a href="/doors">doors</a> | <a href="/radar">radar</a> | <a href="/help">help</a> | <a href="/logout">logout</a>`
+	nav = `<a href="/boards">boards</a> | <a href="/attention">attention</a> | <a href="/mail">mail</a> | <a href="/doors">doors</a> | <a href="/radar">radar</a> | <a href="/showcase">showcase</a> | <a href="/help">help</a> | <a href="/logout">logout</a>`
 	if a.hasRole(user, roleAdmin) {
-		nav = `<a href="/admin">admin</a> | <a href="/admin/setup">setup</a> | <a href="/admin/ops">ops</a> | <a href="/admin/events">events</a> | <a href="/admin/launch">launch</a> | <a href="/status">status</a> | <a href="/boards">boards</a> | <a href="/help">help</a> | <a href="/logout">logout</a>`
+		nav = `<a href="/admin">admin</a> | <a href="/admin/setup">setup</a> | <a href="/admin/ops">ops</a> | <a href="/admin/events">events</a> | <a href="/admin/launch">launch</a> | <a href="/status">status</a> | <a href="/boards">boards</a> | <a href="/showcase">showcase</a> | <a href="/help">help</a> | <a href="/logout">logout</a>`
 	}
 	hero := `<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Your next best move</h2><div class="wolfbbs-action-grid"><a class="wolfbbs-action-card" href="/today"><strong>Today Brief</strong><span>daily loop: queue, watched boards, events</span></a><a class="wolfbbs-action-card" href="/attention"><strong>Attention Center</strong><span>everything that needs follow-up in one screen</span></a><a class="wolfbbs-action-card" href="/boards"><strong>Boards</strong><span>long-form discussion and unread scan</span></a><a class="wolfbbs-action-card" href="/mail"><strong>Mail</strong><span>private follow-up and direct replies</span></a><a class="wolfbbs-action-card" href="/doors"><strong>Doors</strong><span>retention loop, scores, and favorite games</span></a><a class="wolfbbs-action-card" href="/events"><strong>Events</strong><span>calendar and return hooks</span></a></div></article><article class="wolfbbs-card"><h2>Role</h2><p><strong>` + htmlEscape(role) + `</strong></p><p>` + htmlEscape(user.Handle) + ` should be able to answer "what do I do next?" from this page alone.</p></article></section>`
 	if a.hasRole(user, roleAdmin) {
@@ -3197,7 +3247,7 @@ func (a *webApp) handleStartCenter(w http.ResponseWriter, r *http.Request) {
 	if doneCount < len(snapshot.Tasks) {
 		firstCallBlock = renderOnboardingChecklist("First Caller Session", snapshot.Tasks) + `<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Why this matters</h2><p>New caller friction is highest on the first login. Finish these four tasks once and the rest of the board starts to feel real instead of merely configured.</p><p><a href="/first-call">Open guided first caller session</a> | <a href="/settings">Choose home route</a></p></article></section>`
 	}
-	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>` + htmlEscape(pageTitle) + `</title></head><body><h1>` + htmlEscape(pageTitle) + `</h1><p>` + nav + `</p>` + intro + kpis + hero + firstCallBlock + `<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Use Today first</strong><p><a href="/today">/today</a> is the shortest daily caller loop once you are signed in.</p></article><article class="wolfbbs-helper-card"><strong>Use Discover for narrative catch-up</strong><p>When you want a broader digest instead of direct action items, open <a href="/discover">/discover</a>.</p></article><article class="wolfbbs-helper-card"><strong>Use SSH when you want the full board feel</strong><p><a href="/connect">/connect</a> remains the best starting point for the terminal-first experience.</p></article></section></body></html>`
+	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>` + htmlEscape(pageTitle) + `</title></head><body><h1>` + htmlEscape(pageTitle) + `</h1><p>` + nav + `</p>` + intro + kpis + hero + firstCallBlock + `<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Use Today first</strong><p><a href="/today">/today</a> is the shortest daily caller loop once you are signed in.</p></article><article class="wolfbbs-helper-card"><strong>Use Discover for narrative catch-up</strong><p>When you want a broader digest instead of direct action items, open <a href="/discover">/discover</a>.</p></article><article class="wolfbbs-helper-card"><strong>Use Showcase to orient quickly</strong><p><a href="/showcase">/showcase</a> maps core features into a practical first-run path.</p></article><article class="wolfbbs-helper-card"><strong>Use SSH when you want the full board feel</strong><p><a href="/connect">/connect</a> remains the best starting point for the terminal-first experience.</p></article></section></body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
 }
@@ -4237,7 +4287,8 @@ func (a *webApp) handleDigest(w http.ResponseWriter, r *http.Request) {
 		a.addAppError("digest.weekly_mail", err)
 	}
 	a.markRouteSeen(user.Handle, "/digest")
-	digest, err := discovery.BuildSinceLastCall(a.boardRepo, a.msgRepo, a.mailRepo, user, pref.MaxItems)
+	maxItems := a.digestMaxItemsForUser(user.Handle, pref.MaxItems, now)
+	digest, err := discovery.BuildSinceLastCall(a.boardRepo, a.msgRepo, a.mailRepo, user, maxItems)
 	if err != nil {
 		http.Error(w, "digest unavailable", http.StatusInternalServerError)
 		return
@@ -4354,6 +4405,7 @@ func (a *webApp) handleDigest(w http.ResponseWriter, r *http.Request) {
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(upcoming)) + `</strong><span>event reminders</span></article>
 <article class="wolfbbs-kpi-card"><strong>` + htmlEscape(pref.AttentionCadence) + ` / ` + htmlEscape(pref.BulletinCadence) + ` / ` + htmlEscape(pref.EventCadence) + `</strong><span>attention / bulletins / events</span></article>
 <article class="wolfbbs-kpi-card"><strong>` + boolToText(pref.WeeklyMail) + `</strong><span>weekly internal mail</span></article>
+<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(maxItems) + `</strong><span>weekday max items</span></article>
 </section>
 <section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Web digest is ` + htmlEscape(stateLabel) + `</strong><p>Use <a href="/settings">/settings</a> to choose whether this stays as an explicit opt-in surface.</p></article><article class="wolfbbs-helper-card"><strong>Use this for low-noise loops</strong><p>Attention Center is still the place for urgent replies and mentions. Digest is the calmer summary.</p></article><article class="wolfbbs-helper-card"><strong>Subscription tiers shape this page</strong><p>Digest-tier boards land here while watch-tier boards stay in <a href="/today">/today</a> and <a href="/attention">/attention</a>.</p></article><article class="wolfbbs-helper-card"><strong>Cadence is per route</strong><p>Attention, bulletins, and events can each be shown always, daily, weekly, or turned off from <a href="/settings">/settings</a>.</p></article></section>
 <section class="wolfbbs-grid">
@@ -4365,7 +4417,7 @@ func (a *webApp) handleDigest(w http.ResponseWriter, r *http.Request) {
 <article class="wolfbbs-card"><h2>Bulletin Wire</h2><ul class="wolfbbs-list-clean">` + bulletinRows.String() + `</ul><p><a href="/bulletins">Open Bulletin Center</a></p></article>
 </section>
 <section><h2>Conference Packs</h2><div class="wolfbbs-grid">` + conferencePacks.String() + `</div></section>
-<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Next Move</h2><ul><li><a href="/attention">Attention Center</a> if something here needs direct response.</li><li><a href="/boards?mode=digest">Digest-tier boards</a> for longer reads.</li><li><a href="/today">Today Brief</a> if you want the full daily loop.</li><li><a href="/settings">Settings</a> to change digest behavior.</li></ul></article></section>
+<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Next Move</h2><ul><li><a href="/attention">Attention Center</a> if something here needs direct response.</li><li><a href="/boards?mode=digest">Digest-tier boards</a> for longer reads.</li><li><a href="/today">Today Brief</a> if you want the full daily loop.</li><li><a href="/digest/preferences">Digest weekday preferences</a> to tune max items per day.</li><li><a href="/settings">Settings</a> for global digest behavior.</li></ul><p class="wolfbbs-muted">Current weekday item caps: ` + htmlEscape(a.digestWeeklyOverrideSummary(user.Handle, pref.MaxItems)) + `</p></article></section>
 </body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -4897,7 +4949,7 @@ func (a *webApp) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _ = fmt.Fprintf(w, "wolfbbs_sessions %d\n", sessionCount)
 	_, _ = fmt.Fprintf(w, "wolfbbs_chat_channels %d\n", channelCount)
-	_, _ = fmt.Fprintln(w, "wolfbbs_build_info{version=\"dev\"} 1")
+	_, _ = fmt.Fprintf(w, "wolfbbs_build_info{version=%q} 1\n", webBuildVersion)
 }
 
 func (a *webApp) handleActivityPubWebFinger(w http.ResponseWriter, r *http.Request) {
@@ -5193,38 +5245,77 @@ func (a *webApp) listMessagesByAuthor(userID int64) []domain.Message {
 
 const modernUIBootstrap = `<style id="wolfbbs-modern-ui">
 :root{
-  --bg:#f3f7fb;
-  --bg-alt:#e8eef7;
+  --bg:#f5f8fc;
+  --bg-alt:#eef4fb;
   --surface:#ffffff;
   --surface-2:#f8fbff;
-  --surface-3:#eef5ff;
-  --text:#0f1b2a;
-  --muted:#516173;
-  --line:#d9e3ef;
-  --accent:#0f4fa8;
-  --accent-strong:#09397a;
-  --ok:#157347;
+  --surface-3:#edf4ff;
+  --text:#122035;
+  --muted:#556579;
+  --line:#d3deec;
+  --line-strong:#b8c8de;
+  --accent:#0a5cc6;
+  --accent-strong:#07408a;
+  --accent-soft:#d8e7ff;
+  --teal:#0f9274;
+  --ok:#1f7a49;
   --warn:#9a6700;
-  --danger:#a81f2f;
-  --shadow:0 12px 26px rgba(15,27,42,.10);
-  --radius:14px;
+  --danger:#b12b3b;
+  --shadow-sm:0 6px 14px rgba(12,27,50,.08);
+  --shadow:0 14px 34px rgba(12,27,50,.12);
+  --shadow-lg:0 22px 58px rgba(10,23,44,.18);
+  --radius:16px;
+  --radius-sm:12px;
+  --radius-pill:999px;
 }
 *{box-sizing:border-box}
 html,body{height:100%}
 body{
-  margin:0;
-  padding:28px 24px 40px;
+  margin:0 auto;
+  width:min(1260px,calc(100% - 2.6rem));
+  padding:26px 0 80px;
   color:var(--text);
-  font:15px/1.45 "Avenir Next","Segoe UI","Helvetica Neue",sans-serif;
+  font:15px/1.5 "Manrope","Avenir Next","Segoe UI","Helvetica Neue",sans-serif;
   background:
-    radial-gradient(1200px 340px at 10% -18%, #d7e6fb 0%, transparent 62%),
-    radial-gradient(1100px 260px at 88% -15%, #dbe8f8 0%, transparent 62%),
+    radial-gradient(900px 340px at 6% -14%, rgba(10,92,198,.18) 0%, transparent 64%),
+    radial-gradient(740px 260px at 94% -10%, rgba(15,146,116,.14) 0%, transparent 62%),
+    radial-gradient(660px 230px at 50% -22%, rgba(255,183,82,.16) 0%, transparent 68%),
     linear-gradient(180deg,var(--bg),var(--bg-alt));
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
 }
-h1,h2,h3{margin:0 0 10px;font-weight:700;line-height:1.2}
-h1{font-size:1.7rem;letter-spacing:.01em}
-h2{font-size:1.2rem}
-h3{font-size:1.02rem}
+body::before{
+  content:"";
+  position:fixed;
+  inset:0;
+  pointer-events:none;
+  z-index:-1;
+  opacity:.32;
+  background:
+    linear-gradient(rgba(255,255,255,.55), rgba(255,255,255,.55)),
+    repeating-linear-gradient(90deg, rgba(11,58,126,.03) 0px, rgba(11,58,126,.03) 1px, transparent 1px, transparent 28px),
+    repeating-linear-gradient(0deg, rgba(11,58,126,.025) 0px, rgba(11,58,126,.025) 1px, transparent 1px, transparent 28px);
+}
+h1,h2,h3{
+  margin:0 0 11px;
+  line-height:1.18;
+  letter-spacing:.01em;
+  color:#0f2949;
+  font-family:"Sora","Avenir Next","Segoe UI","Helvetica Neue",sans-serif;
+}
+h1{
+  font-size:1.9rem;
+  font-weight:780;
+  letter-spacing:.012em;
+}
+h2{
+  font-size:1.24rem;
+  font-weight:720;
+}
+h3{
+  font-size:1.03rem;
+  font-weight:700;
+}
 p,ul,ol,table,form,section,article,pre{margin:0 0 14px}
 a{
   color:var(--accent);
@@ -5233,39 +5324,41 @@ a{
 }
 a:hover{color:var(--accent-strong);text-decoration:underline}
 body > h1:first-of-type{
-  margin-bottom:14px;
+  margin-bottom:10px;
+  letter-spacing:.016em;
 }
 body > p:first-of-type{
   color:var(--muted);
 }
-body > p:has(> a){
+p.wolfbbs-nav-row,body > p:has(> a){
   display:flex;
   flex-wrap:wrap;
   gap:8px;
   align-items:center;
-  padding:10px 12px;
-  background:var(--surface);
+  padding:11px 12px;
+  background:linear-gradient(180deg,rgba(255,255,255,.95),rgba(246,251,255,.94));
   border:1px solid var(--line);
-  border-radius:12px;
-  box-shadow:var(--shadow);
+  border-radius:var(--radius-sm);
+  box-shadow:var(--shadow-sm);
+  backdrop-filter:blur(5px);
 }
-body > p:has(> a) a{
+p.wolfbbs-nav-row a,body > p:has(> a) a{
   display:inline-flex;
   align-items:center;
   justify-content:center;
   min-height:32px;
-  padding:6px 12px;
-  border-radius:999px;
-  border:1px solid #c3d4ea;
-  background:#f5faff;
-  color:#0f3f83;
+  padding:6px 13px;
+  border-radius:var(--radius-pill);
+  border:1px solid #c7d9f1;
+  background:linear-gradient(180deg,#ffffff,#eff6ff);
+  color:#154681;
   font-weight:600;
-  font-size:.92rem;
-  text-transform:lowercase;
+  font-size:.9rem;
 }
-body > p:has(> a) a:hover{
-  background:#eaf3ff;
-  border-color:#9cbce4;
+p.wolfbbs-nav-row a:hover,body > p:has(> a) a:hover{
+  transform:translateY(-1px);
+  background:linear-gradient(180deg,#eff6ff,#e1ecff);
+  border-color:#98b8e3;
   text-decoration:none;
 }
 table{
@@ -5274,80 +5367,107 @@ table{
   border-spacing:0;
   background:var(--surface);
   border:1px solid var(--line);
-  border-radius:12px;
+  border-radius:var(--radius-sm);
   overflow:hidden;
-  box-shadow:var(--shadow);
+  box-shadow:var(--shadow-sm);
 }
 th,td{
   padding:10px 12px;
   text-align:left;
-  border-bottom:1px solid #e7eef7;
+  border-bottom:1px solid #e6eef8;
   vertical-align:top;
 }
 th{
-  background:#eef4fb;
-  color:#1e3551;
+  background:linear-gradient(180deg,#eff5fd,#e6effa);
+  color:#1f3a5b;
   font-weight:700;
   font-size:.87rem;
   text-transform:uppercase;
   letter-spacing:.04em;
 }
-tr:nth-child(even) td{background:#fbfdff}
+tr:nth-child(even) td{background:#f9fcff}
 tr:last-child td{border-bottom:0}
 form{
-  background:var(--surface);
+  background:linear-gradient(180deg,var(--surface),#fafdff);
   border:1px solid var(--line);
-  border-radius:12px;
-  padding:14px;
-  box-shadow:var(--shadow);
+  border-radius:var(--radius-sm);
+  padding:15px;
+  box-shadow:var(--shadow-sm);
+}
+table form{
+  margin:0;
+  padding:0;
+  background:none;
+  border:0;
+  border-radius:0;
+  box-shadow:none;
 }
 label{
   display:inline-flex;
   flex-direction:column;
   gap:6px;
-  margin:0 10px 10px 0;
+  margin:0 11px 10px 0;
   font-weight:600;
-  color:#2b4058;
+  color:#2a415e;
 }
 input[type=text],input[type=password],input[type=email],input[type=number],input[type=url],input[type=search],select,textarea{
   width:min(100%,520px);
-  min-height:38px;
-  border-radius:10px;
-  border:1px solid #bccde3;
+  min-height:40px;
+  border-radius:11px;
+  border:1px solid #bacedf;
   background:#fff;
   color:var(--text);
-  padding:8px 10px;
+  padding:9px 11px;
   font:inherit;
-  transition:border-color .16s ease, box-shadow .16s ease;
+  transition:border-color .18s ease, box-shadow .18s ease, background-color .18s ease;
+}
+input::placeholder,textarea::placeholder{
+  color:#7590ae;
 }
 textarea{min-height:110px;resize:vertical}
 input:focus,select:focus,textarea:focus{
   outline:0;
-  border-color:#3c7fd5;
-  box-shadow:0 0 0 3px rgba(60,127,213,.17);
+  border-color:#2f77d3;
+  background:#ffffff;
+  box-shadow:0 0 0 3px rgba(47,119,211,.17);
 }
 button,input[type=submit],input[type=button]{
-  border:0;
-  border-radius:10px;
-  min-height:36px;
-  padding:8px 14px;
+  border:1px solid transparent;
+  border-radius:11px;
+  min-height:38px;
+  padding:9px 15px;
   cursor:pointer;
-  font:600 .95rem/1 "Avenir Next","Segoe UI","Helvetica Neue",sans-serif;
+  font:700 .91rem/1 "Sora","Avenir Next","Segoe UI","Helvetica Neue",sans-serif;
   color:#fff;
-  background:linear-gradient(180deg,#2565c0,#0f4fa8);
+  background:linear-gradient(140deg,#0a66d6,#07469a 56%,#0f9274);
+  box-shadow:0 8px 18px rgba(9,71,154,.24);
+  transition:transform .16s ease, box-shadow .16s ease, filter .16s ease;
 }
 button:hover,input[type=submit]:hover,input[type=button]:hover{
-  background:linear-gradient(180deg,#1a56aa,#093f88);
+  transform:translateY(-1px);
+  box-shadow:0 12px 20px rgba(9,71,154,.29);
+  filter:saturate(1.05);
+}
+button:active,input[type=submit]:active,input[type=button]:active{
+  transform:translateY(0);
 }
 code,pre{
   font-family:"SFMono-Regular","Menlo","Consolas",monospace;
 }
 pre{
-  padding:10px 12px;
-  border:1px solid var(--line);
-  border-radius:10px;
-  background:#f7fbff;
+  padding:11px 13px;
+  border:1px solid #c7d7ec;
+  border-radius:11px;
+  background:linear-gradient(180deg,#fafdff,#f2f7ff);
   overflow:auto;
+}
+blockquote{
+  margin:0 0 12px;
+  padding:10px 13px;
+  border-left:4px solid #95b9e8;
+  border-radius:0 10px 10px 0;
+  background:linear-gradient(180deg,#f7fbff,#eff5ff);
+  color:#224265;
 }
 hr{
   border:0;
@@ -5359,23 +5479,29 @@ hr{
   display:grid;
   grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
   gap:12px;
-  margin:16px 0 18px;
+  margin:16px 0 20px;
 }
 .wolfbbs-kpi-card,.wolfbbs-card,.wolfbbs-action-card{
   background:var(--surface);
   border:1px solid var(--line);
-  border-radius:16px;
+  border-radius:var(--radius);
   box-shadow:var(--shadow);
 }
 .wolfbbs-kpi-card{
-  padding:16px 18px;
+  position:relative;
+  overflow:hidden;
+  padding:17px 18px;
   display:flex;
   flex-direction:column;
   gap:4px;
+  background:
+    radial-gradient(circle at 108% -28%, rgba(10,92,198,.17), transparent 56%),
+    linear-gradient(180deg,#ffffff,#f5faff);
 }
 .wolfbbs-kpi-card strong{
-  font-size:1.65rem;
+  font-size:1.72rem;
   line-height:1;
+  letter-spacing:.01em;
 }
 .wolfbbs-kpi-card span{
   color:var(--muted);
@@ -5384,8 +5510,8 @@ hr{
 .wolfbbs-grid{
   display:grid;
   grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
-  gap:14px;
-  margin:14px 0 18px;
+  gap:15px;
+  margin:15px 0 20px;
 }
 .wolfbbs-card-grid{
   display:grid;
@@ -5393,46 +5519,55 @@ hr{
   gap:12px;
 }
 .wolfbbs-card{
-  padding:16px 18px;
+  padding:17px 18px;
+  background:
+    radial-gradient(circle at 106% -30%, rgba(13,103,214,.07), transparent 56%),
+    linear-gradient(180deg,#ffffff,#f8fbff);
+}
+.wolfbbs-card > :last-child{
+  margin-bottom:0;
 }
 .wolfbbs-primer{
   position:relative;
   overflow:hidden;
-  padding:18px 20px;
-  margin:14px 0 18px;
+  padding:20px 21px;
+  margin:15px 0 20px;
   background:
-    radial-gradient(circle at top right, rgba(15,79,168,.16), transparent 34%),
-    linear-gradient(180deg,#fbfdff,#f2f7ff);
+    radial-gradient(circle at top right, rgba(10,92,198,.2), transparent 38%),
+    radial-gradient(circle at 82% 112%, rgba(15,146,116,.15), transparent 42%),
+    linear-gradient(180deg,#ffffff,#f1f7ff);
+  border:1px solid #bfd2eb;
+  box-shadow:var(--shadow-lg);
 }
 .wolfbbs-primer::after{
   content:"";
   position:absolute;
   inset:auto -30px -60px auto;
-  width:180px;
-  height:180px;
-  background:radial-gradient(circle, rgba(15,79,168,.12), transparent 70%);
+  width:210px;
+  height:210px;
+  background:radial-gradient(circle, rgba(15,146,116,.17), transparent 72%);
 }
 .wolfbbs-primer-eyebrow{
   display:inline-flex;
-  margin-bottom:8px;
-  color:#355f94;
-  font-size:.78rem;
+  margin-bottom:9px;
+  color:#0f5b9b;
+  font-size:.76rem;
   font-weight:800;
-  letter-spacing:.08em;
+  letter-spacing:.09em;
   text-transform:uppercase;
 }
 .wolfbbs-primer-title{
   display:block;
   margin-bottom:8px;
-  color:#17385e;
-  font-size:1.08rem;
+  color:#113c6a;
+  font-size:1.14rem;
 }
 .wolfbbs-primer p{
-  margin:0 0 10px;
-  color:#28415d;
+  margin:0 0 11px;
+  color:#23496f;
 }
 .wolfbbs-primer ul{
-  margin:10px 0 0 18px;
+  margin:11px 0 0 18px;
 }
 .wolfbbs-primer-actions{
   display:flex;
@@ -5443,17 +5578,18 @@ hr{
 .wolfbbs-primer-actions a{
   display:inline-flex;
   align-items:center;
-  min-height:32px;
-  padding:6px 12px;
-  border-radius:999px;
-  border:1px solid #c3d4ea;
-  background:#f5faff;
-  color:#0f3f83;
-  font-size:.9rem;
-  font-weight:700;
+  min-height:34px;
+  padding:7px 13px;
+  border-radius:var(--radius-pill);
+  border:1px solid #c0d3ec;
+  background:linear-gradient(180deg,#ffffff,#ebf4ff);
+  color:#124783;
+  font-size:.88rem;
+  font-weight:760;
 }
 .wolfbbs-primer-actions a:hover{
-  background:#eaf3ff;
+  background:linear-gradient(180deg,#edf6ff,#dfeeff);
+  transform:translateY(-1px);
   text-decoration:none;
 }
 .wolfbbs-action-grid{
@@ -5466,24 +5602,26 @@ hr{
   display:flex;
   flex-direction:column;
   gap:6px;
-  padding:14px 16px;
+  padding:15px 16px;
   color:var(--text);
   background:
-    radial-gradient(circle at top right, rgba(15,79,168,.10), transparent 42%),
-    linear-gradient(180deg,var(--surface),var(--surface-2));
+    radial-gradient(circle at top right, rgba(10,92,198,.14), transparent 44%),
+    linear-gradient(180deg,#ffffff,#f5faff);
+  transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease;
 }
 .wolfbbs-action-card:hover{
   text-decoration:none;
-  transform:translateY(-1px);
-  transition:transform .16s ease;
+  transform:translateY(-2px);
+  border-color:var(--line-strong);
+  box-shadow:var(--shadow-lg);
 }
 .wolfbbs-action-card strong{
-  color:#17385e;
-  font-size:1rem;
+  color:#103d6d;
+  font-size:.99rem;
 }
 .wolfbbs-action-card span{
   color:var(--muted);
-  font-size:.92rem;
+  font-size:.89rem;
 }
 .wolfbbs-chip-row{
   display:flex;
@@ -5494,13 +5632,13 @@ hr{
   display:inline-flex;
   align-items:center;
   min-height:24px;
-  padding:2px 9px;
-  border-radius:999px;
-  background:#eef4ff;
-  border:1px solid #c9daf3;
-  color:#244c83;
+  padding:2px 10px;
+  border-radius:var(--radius-pill);
+  background:linear-gradient(180deg,#f4f9ff,#e7f0ff);
+  border:1px solid #c4d7f0;
+  color:#224e85;
   font-size:.8rem;
-  font-weight:700;
+  font-weight:760;
 }
 .wolfbbs-inline-form{
   display:flex;
@@ -5521,25 +5659,25 @@ hr{
   display:inline-flex;
   align-items:center;
   min-height:30px;
-  padding:6px 11px;
-  border-radius:999px;
-  background:rgba(255,255,255,.72);
-  border:1px solid #cbdaee;
-  color:#21467c;
-  font-size:.85rem;
-  font-weight:700;
+  padding:6px 12px;
+  border-radius:var(--radius-pill);
+  background:linear-gradient(180deg,#ffffff,#edf5ff);
+  border:1px solid #c6d7ee;
+  color:#1e4a80;
+  font-size:.84rem;
+  font-weight:760;
 }
 .wolfbbs-section-nav a:hover,.wolfbbs-recent-rail a:hover{
   text-decoration:none;
-  background:#eef5ff;
+  background:linear-gradient(180deg,#edf6ff,#dfeeff);
 }
 .wolfbbs-inline-filter{
   margin:12px 0 10px;
-  padding:10px 12px;
-  background:rgba(255,255,255,.78);
+  padding:11px 13px;
+  background:linear-gradient(180deg,rgba(255,255,255,.94),rgba(246,251,255,.95));
   border:1px solid var(--line);
-  border-radius:12px;
-  box-shadow:var(--shadow);
+  border-radius:var(--radius-sm);
+  box-shadow:var(--shadow-sm);
 }
 .wolfbbs-banner{
   display:flex;
@@ -5548,10 +5686,10 @@ hr{
   gap:12px;
   margin:14px 0;
   padding:14px 16px;
-  border-radius:14px;
+  border-radius:var(--radius-sm);
   border:1px solid var(--line);
-  background:linear-gradient(180deg,#fbfdff,#f3f8ff);
-  box-shadow:var(--shadow);
+  background:linear-gradient(180deg,#fbfdff,#f1f7ff);
+  box-shadow:var(--shadow-sm);
 }
 .wolfbbs-banner strong{
   display:block;
@@ -5572,7 +5710,7 @@ hr{
   border:0;
   min-height:auto;
   padding:4px 8px;
-  border-radius:999px;
+  border-radius:var(--radius-pill);
   background:#e7eef8;
   color:#26486f;
   font-size:.8rem;
@@ -5600,7 +5738,7 @@ hr{
   gap:6px;
   min-height:28px;
   padding:4px 10px;
-  border-radius:999px;
+  border-radius:var(--radius-pill);
   border:1px solid #c6d8ef;
   background:#f6fbff;
   color:#244c83;
@@ -5612,7 +5750,7 @@ hr{
   align-items:center;
   min-height:28px;
   padding:4px 10px;
-  border-radius:999px;
+  border-radius:var(--radius-pill);
   border:1px solid #d3dce8;
   background:#fff;
   color:#37506c;
@@ -5640,7 +5778,7 @@ hr{
   align-items:center;
   min-height:26px;
   padding:3px 10px;
-  border-radius:999px;
+  border-radius:var(--radius-pill);
   background:#edf4ff;
   border:1px solid #c8daf1;
   color:#244c83;
@@ -5659,11 +5797,12 @@ hr{
 }
 .wolfbbs-form-secondary{
   border:1px solid #c8d7ea;
-  background:#f6fbff;
-  color:#23497d;
+  background:linear-gradient(180deg,#f9fcff,#eef5ff);
+  color:#1f4c84;
+  box-shadow:none;
 }
 .wolfbbs-form-secondary:hover{
-  background:#eaf3ff;
+  background:linear-gradient(180deg,#eef6ff,#e0edff);
 }
 .wolfbbs-compose-shell{
   display:flex;
@@ -5677,21 +5816,23 @@ hr{
   gap:8px;
   padding:10px 12px;
   border:1px solid #d2deef;
-  border-radius:12px;
-  background:#f6faff;
+  border-radius:var(--radius-sm);
+  background:linear-gradient(180deg,#f8fbff,#eef5ff);
 }
 .wolfbbs-compose-toolbar button{
   min-height:30px;
   padding:6px 10px;
-  border-radius:999px;
+  border-radius:var(--radius-pill);
   border:1px solid #c8d7ea;
   background:#fff;
-  color:#21467c;
+  color:#1f4a80;
   box-shadow:none;
   font-size:.82rem;
+  font-family:"Manrope","Avenir Next","Segoe UI","Helvetica Neue",sans-serif;
+  font-weight:700;
 }
 .wolfbbs-compose-toolbar button:hover{
-  background:#eef5ff;
+  background:linear-gradient(180deg,#eef6ff,#e2eeff);
 }
 .wolfbbs-compose-meta{
   margin-left:auto;
@@ -5742,9 +5883,9 @@ hr{
 .wolfbbs-compose-focus .wolfbbs-compose-shell{
   padding:12px;
   border:1px solid #c6d8ef;
-  border-radius:14px;
+  border-radius:var(--radius-sm);
   background:#ffffff;
-  box-shadow:0 18px 30px rgba(15,27,42,.12);
+  box-shadow:var(--shadow-lg);
 }
 body.wolfbbs-compose-fullscreen-open{
   overflow:hidden;
@@ -5756,9 +5897,9 @@ body.wolfbbs-compose-fullscreen-open{
   overflow:auto;
   padding:18px;
   border:1px solid #c6d8ef;
-  border-radius:18px;
+  border-radius:20px;
   background:rgba(255,255,255,.98);
-  box-shadow:0 24px 60px rgba(15,27,42,.22);
+  box-shadow:0 28px 72px rgba(10,23,44,.24);
 }
 .wolfbbs-compose-fullscreen textarea{
   min-height:58vh;
@@ -5766,7 +5907,7 @@ body.wolfbbs-compose-fullscreen-open{
 .wolfbbs-compose-fullscreen .wolfbbs-compose-shell{
   padding:14px;
   border:1px solid #c6d8ef;
-  border-radius:14px;
+  border-radius:var(--radius-sm);
   background:#ffffff;
 }
 .wolfbbs-handle-assist{
@@ -5775,7 +5916,7 @@ body.wolfbbs-compose-fullscreen-open{
   gap:8px;
   padding:10px 12px;
   border:1px solid #d6e1f0;
-  border-radius:12px;
+  border-radius:var(--radius-sm);
   background:#fffdfa;
 }
 .wolfbbs-handle-assist.active{
@@ -5784,16 +5925,18 @@ body.wolfbbs-compose-fullscreen-open{
 .wolfbbs-handle-assist button{
   min-height:30px;
   padding:6px 10px;
-  border-radius:999px;
+  border-radius:var(--radius-pill);
   border:1px solid #c8d7ea;
   background:#fff;
-  color:#21467c;
+  color:#1f4a80;
   box-shadow:none;
   font-size:.82rem;
+  font-family:"Manrope","Avenir Next","Segoe UI","Helvetica Neue",sans-serif;
+  font-weight:700;
 }
 .wolfbbs-handle-assist button:hover,
 .wolfbbs-handle-assist button.active{
-  background:#17385e;
+  background:#11457c;
   color:#fffdfa;
 }
 .wolfbbs-presence-list{
@@ -5803,8 +5946,9 @@ body.wolfbbs-compose-fullscreen-open{
 .wolfbbs-presence-card{
   padding:12px 14px;
   border:1px solid #d6e1f0;
-  border-radius:14px;
-  background:#fffdfa;
+  border-radius:var(--radius-sm);
+  background:linear-gradient(180deg,#ffffff,#f8fbff);
+  box-shadow:var(--shadow-sm);
 }
 .wolfbbs-presence-card strong{
   display:block;
@@ -5826,7 +5970,7 @@ body.wolfbbs-compose-fullscreen-open{
   border:1px solid #cad8eb;
   min-height:auto;
   padding:4px 9px;
-  border-radius:999px;
+  border-radius:var(--radius-pill);
   background:#fff;
   color:#26486f;
   box-shadow:none;
@@ -5860,7 +6004,7 @@ body.wolfbbs-compose-fullscreen-open{
 .wolfbbs-table-wrap{
   width:100%;
   overflow:auto;
-  border-radius:14px;
+  border-radius:var(--radius-sm);
 }
 .wolfbbs-table-wrap table{
   min-width:680px;
@@ -5871,7 +6015,7 @@ body.wolfbbs-compose-fullscreen-open{
   align-items:center;
   min-height:26px;
   padding:3px 10px;
-  border-radius:999px;
+  border-radius:var(--radius-pill);
   border:1px solid #c8daf1;
   background:#edf4ff;
   color:#244c83;
@@ -5902,7 +6046,7 @@ body.wolfbbs-compose-fullscreen-open{
 .wolfbbs-meta-list div{
   padding:12px 14px;
   border:1px solid #d8e4f1;
-  border-radius:12px;
+  border-radius:var(--radius-sm);
   background:#fbfdff;
 }
 .wolfbbs-meta-list dt{
@@ -5921,7 +6065,7 @@ body.wolfbbs-compose-fullscreen-open{
 .wolfbbs-chat-layout{
   display:grid;
   grid-template-columns:minmax(0,2.2fr) minmax(290px,1fr);
-  gap:14px;
+  gap:15px;
   margin:14px 0 18px;
 }
 .wolfbbs-chat-pane{
@@ -5931,24 +6075,46 @@ body.wolfbbs-compose-fullscreen-open{
   font-family:"SFMono-Regular","Menlo","Consolas",monospace;
   white-space:pre-wrap;
   word-break:break-word;
+  border-radius:var(--radius-sm);
+  border:1px solid #173d67;
+  background:
+    radial-gradient(circle at 86% -12%, rgba(85,156,236,.2), transparent 44%),
+    radial-gradient(circle at 12% 112%, rgba(18,137,108,.13), transparent 40%),
+    linear-gradient(180deg,#0f1f33,#091322);
+  box-shadow:0 16px 32px rgba(8,14,26,.33);
 }
 .wolfbbs-chat-line{
   padding:6px 0;
-  border-bottom:1px solid rgba(217,230,251,.12);
+  border-bottom:1px solid rgba(207,225,248,.16);
+  border-left:3px solid transparent;
+  padding-left:8px;
+  border-radius:9px;
 }
 .wolfbbs-chat-line:last-child{
   border-bottom:0;
 }
+.wolfbbs-chat-line-self{
+  border-left-color:#5ab2ff;
+  background:rgba(34,79,129,.26);
+}
+.wolfbbs-chat-line-system{
+  border-left-color:#86ddb0;
+  background:rgba(33,78,60,.3);
+}
+.wolfbbs-chat-line-mention{
+  border-left-color:#ffcf73;
+  background:rgba(103,77,26,.3);
+}
 .wolfbbs-chat-line strong{
-  color:#ffffff;
+  color:#f3f8ff;
 }
 .wolfbbs-chat-line-meta{
-  color:#9eb6d6;
+  color:#a9c5ea;
   font-size:.8rem;
   font-weight:700;
 }
 .wolfbbs-chat-line-body{
-  color:#d9e6fb;
+  color:#dce8fb;
 }
 .wolfbbs-channel-badges{
   display:flex;
@@ -5956,18 +6122,67 @@ body.wolfbbs-compose-fullscreen-open{
   gap:8px;
   margin:10px 0 0;
 }
+.wolfbbs-chat-toolbar-meta{
+  margin-left:auto;
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  color:#4a5f76;
+  font-size:.82rem;
+  font-weight:700;
+}
+.wolfbbs-chat-status-pill{
+  display:inline-flex;
+  align-items:center;
+  min-height:24px;
+  padding:3px 10px;
+  border-radius:var(--radius-pill);
+  border:1px solid #c8daf1;
+  background:#edf4ff;
+  color:#244c83;
+  text-transform:uppercase;
+  letter-spacing:.04em;
+  font-size:.72rem;
+}
+.wolfbbs-chat-status-pill[data-state="live"]{
+  background:#edf9f0;
+  border-color:#b9d5be;
+  color:#21623e;
+}
+.wolfbbs-chat-status-pill[data-state="ready"]{
+  background:#edf4ff;
+  border-color:#c8daf1;
+  color:#244c83;
+}
+.wolfbbs-chat-status-pill[data-state="warn"]{
+  background:#fff5df;
+  border-color:#f0d7a0;
+  color:#7b5400;
+}
+.wolfbbs-chat-status-pill[data-state="error"]{
+  background:#fff0f2;
+  border-color:#efc1c6;
+  color:#8b2331;
+}
+.wolfbbs-chat-status-pill[data-state="working"]{
+  background:#eef5ff;
+  border-color:#bfd4ec;
+  color:#2d4f7a;
+}
 .wolfbbs-channel-badges button{
   min-height:30px;
   padding:6px 10px;
-  border-radius:999px;
+  border-radius:var(--radius-pill);
   border:1px solid #c8d7ea;
   background:#fff;
-  color:#21467c;
+  color:#1f4a80;
   box-shadow:none;
   font-size:.82rem;
+  font-family:"Manrope","Avenir Next","Segoe UI","Helvetica Neue",sans-serif;
+  font-weight:700;
 }
 .wolfbbs-channel-badges button:hover{
-  background:#eef5ff;
+  background:linear-gradient(180deg,#edf6ff,#dfeeff);
 }
 .wolfbbs-split{
   display:grid;
@@ -5995,10 +6210,12 @@ body.wolfbbs-compose-fullscreen-open{
 }
 .wolfbbs-helper-card{
   padding:14px 16px;
-  border-radius:14px;
+  border-radius:var(--radius-sm);
   border:1px solid var(--line);
-  background:linear-gradient(180deg,#ffffff,#f5f9ff);
-  box-shadow:var(--shadow);
+  background:
+    radial-gradient(circle at 106% -24%, rgba(10,92,198,.11), transparent 46%),
+    linear-gradient(180deg,#ffffff,#f5f9ff);
+  box-shadow:var(--shadow-sm);
 }
 .wolfbbs-helper-card strong{
   display:block;
@@ -6014,15 +6231,15 @@ body.wolfbbs-compose-fullscreen-open{
   pointer-events:none;
 }
 #chat{
-  border:1px solid #173456 !important;
-  border-radius:12px;
-  background:#0d1726;
-  color:#d9e6fb;
-  box-shadow:0 8px 20px rgba(5,10,18,.32);
+  border:1px solid #173d67 !important;
+  border-radius:var(--radius-sm);
+  color:#dce8fb;
+  box-shadow:0 16px 32px rgba(8,14,26,.33);
 }
 #chatStatus{
-  color:#254f87 !important;
-  font-weight:600;
+  color:#22568f !important;
+  font-weight:680;
+  margin:10px 0;
 }
 #mod{
   margin-top:12px;
@@ -6036,16 +6253,17 @@ body.wolfbbs-compose-fullscreen-open{
   right:20px;
   bottom:18px;
   z-index:40;
-  min-height:42px;
-  padding:10px 14px;
-  border-radius:999px;
-  border:1px solid rgba(255,255,255,.25);
-  box-shadow:0 18px 34px rgba(9,57,122,.18);
+  min-height:44px;
+  padding:10px 15px;
+  border-radius:var(--radius-pill);
+  border:1px solid rgba(255,255,255,.42);
+  background:linear-gradient(130deg,#0a66d6,#07469a 58%,#0f9274) !important;
+  box-shadow:0 18px 36px rgba(9,57,122,.26);
 }
 #wolfbbsPaletteOverlay{
   position:fixed;
   inset:0;
-  background:rgba(10,18,30,.42);
+  background:rgba(8,17,30,.52);
   display:none;
   z-index:60;
   padding:24px 16px;
@@ -6054,15 +6272,15 @@ body.wolfbbs-compose-fullscreen-open{
 #wolfbbsPalette{
   max-width:760px;
   margin:0 auto;
-  background:var(--surface);
+  background:linear-gradient(180deg,#ffffff,#f4f9ff);
   border:1px solid var(--line);
-  border-radius:18px;
-  box-shadow:0 22px 48px rgba(15,27,42,.22);
+  border-radius:20px;
+  box-shadow:0 28px 68px rgba(8,19,36,.34);
   overflow:hidden;
 }
 #wolfbbsPaletteHeader{
   padding:14px;
-  background:linear-gradient(180deg,#f7fbff,#edf4fc);
+  background:linear-gradient(180deg,#f8fcff,#ebf3ff);
   border-bottom:1px solid var(--line);
 }
 #wolfbbsPaletteList{
@@ -6075,20 +6293,2500 @@ body.wolfbbs-compose-fullscreen-open{
   justify-content:space-between;
   gap:12px;
   padding:11px 12px;
-  border-radius:12px;
+  border-radius:var(--radius-sm);
   color:var(--text);
 }
 .wolfbbs-palette-item:hover{
-  background:#eef5ff;
+  background:linear-gradient(180deg,#eef6ff,#e0edff);
   text-decoration:none;
 }
 .wolfbbs-palette-meta{
   color:var(--muted);
   font-size:.82rem;
 }
+input[type=checkbox],input[type=radio]{
+  accent-color:var(--accent);
+}
+.wolfbbs-chat-sidebar{
+  align-self:start;
+}
+body > h1{
+  font-size:clamp(1.7rem,2.45vw,2.35rem);
+  background:linear-gradient(120deg,#0b3f88 0%,#0a63ca 56%,#0f9274 100%);
+  -webkit-background-clip:text;
+  background-clip:text;
+  color:transparent;
+  -webkit-text-fill-color:transparent;
+}
+body p,
+body li{
+  color:#27435f;
+}
+table,
+form,
+.wolfbbs-card,
+.wolfbbs-helper-card,
+.wolfbbs-kpi-card,
+.wolfbbs-action-card{
+  backdrop-filter:blur(3px);
+}
+.wolfbbs-card{
+  border-top:3px solid rgba(10,92,198,.34);
+}
+.wolfbbs-kpi-card{
+  border-top:3px solid rgba(15,146,116,.52);
+}
+.wolfbbs-helper-card{
+  border-top:3px solid rgba(232,157,34,.45);
+}
+p.wolfbbs-nav-row a,body > p:has(> a) a{
+  box-shadow:0 4px 10px rgba(10,54,112,.09);
+}
+p.wolfbbs-nav-row a:hover,body > p:has(> a) a:hover{
+  box-shadow:0 8px 16px rgba(10,66,138,.17);
+}
+button,input[type=submit],input[type=button]{
+  letter-spacing:.01em;
+}
+.wolfbbs-action-card{
+  border-top:3px solid rgba(10,92,198,.38);
+}
+.wolfbbs-action-card strong{
+  letter-spacing:.01em;
+}
+.wolfbbs-meta-list div{
+  border-left:3px solid rgba(10,92,198,.3);
+}
+.wolfbbs-chat-pane{
+  border-top:3px solid rgba(86,177,255,.65);
+}
+#wolfbbsCommandButton{
+  border:1px solid rgba(255,255,255,.55);
+}
+body{
+  position:relative;
+  overflow-x:hidden;
+}
+body::after{
+  content:"";
+  position:fixed;
+  z-index:-1;
+  pointer-events:none;
+  inset:auto auto -130px -120px;
+  width:360px;
+  height:360px;
+  opacity:.22;
+  background:
+    radial-gradient(circle at 34% 34%, rgba(10,92,198,.55), rgba(10,92,198,0) 72%),
+    radial-gradient(circle at 70% 68%, rgba(15,146,116,.58), rgba(15,146,116,0) 74%);
+  filter:blur(8px);
+}
+body > h1:first-of-type{
+  position:relative;
+  display:inline-block;
+  padding-right:14px;
+}
+body > h1:first-of-type::after{
+  content:"";
+  display:block;
+  width:66%;
+  height:4px;
+  margin-top:10px;
+  border-radius:999px;
+  background:linear-gradient(90deg, rgba(10,92,198,.72), rgba(15,146,116,.86));
+  box-shadow:0 6px 16px rgba(13,92,186,.28);
+}
+body[data-route^="/admin"] > h1{
+  background:linear-gradient(120deg,#15543f 0%,#0a63ca 44%,#09396e 100%);
+  -webkit-background-clip:text;
+  background-clip:text;
+  color:transparent;
+  -webkit-text-fill-color:transparent;
+}
+p.wolfbbs-nav-row,body > p:has(> a){
+  position:relative;
+  overflow:hidden;
+  border-color:#bfd0e8;
+  box-shadow:0 10px 18px rgba(9,53,113,.09);
+}
+p.wolfbbs-nav-row::before,body > p:has(> a)::before{
+  content:"";
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(10,92,198,.14), transparent 45%),
+    linear-gradient(100deg, rgba(15,146,116,.08), rgba(10,92,198,0) 42%);
+}
+p.wolfbbs-nav-row a,body > p:has(> a) a{
+  position:relative;
+  isolation:isolate;
+  transition:transform .16s ease, box-shadow .2s ease, border-color .2s ease, color .2s ease, background .2s ease;
+}
+p.wolfbbs-nav-row a.wolfbbs-nav-active,
+body > p:has(> a) a.wolfbbs-nav-active{
+  border-color:#0f5cbf;
+  background:linear-gradient(180deg,#1670df,#0a4faa 62%,#0f9274);
+  color:#f8fbff;
+  box-shadow:0 12px 24px rgba(10,74,152,.3);
+}
+p.wolfbbs-nav-row a.wolfbbs-nav-active:hover,
+body > p:has(> a) a.wolfbbs-nav-active:hover{
+  filter:brightness(1.03);
+}
+form{
+  position:relative;
+  overflow:hidden;
+}
+form::before{
+  content:"";
+  position:absolute;
+  pointer-events:none;
+  inset:0;
+  background:radial-gradient(circle at 100% 0%, rgba(10,92,198,.08), transparent 42%);
+}
+form > *{
+  position:relative;
+  z-index:1;
+}
+input[type=text],input[type=password],input[type=email],input[type=number],input[type=url],input[type=search],select,textarea{
+  border-color:#b2c7e0;
+  background:linear-gradient(180deg,#ffffff,#f9fcff);
+}
+select{
+  appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23315579' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"), linear-gradient(180deg,#ffffff,#f9fcff);
+  background-repeat:no-repeat, no-repeat;
+  background-position:right 10px center, center;
+  background-size:14px 14px, auto;
+  padding-right:34px;
+}
+textarea{
+  line-height:1.45;
+}
+button,input[type=submit],input[type=button]{
+  position:relative;
+  overflow:hidden;
+}
+button::after,input[type=submit]::after,input[type=button]::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  background:linear-gradient(110deg, rgba(255,255,255,.2), rgba(255,255,255,0) 44%);
+}
+.wolfbbs-kpi-card strong{
+  display:inline-block;
+  background:linear-gradient(108deg,#0f355f,#0a63ca 58%,#0f9274);
+  -webkit-background-clip:text;
+  background-clip:text;
+  color:transparent;
+  -webkit-text-fill-color:transparent;
+}
+table,
+form,
+.wolfbbs-card,
+.wolfbbs-helper-card,
+.wolfbbs-kpi-card,
+.wolfbbs-action-card,
+.wolfbbs-banner{
+  transition:transform .2s ease, box-shadow .2s ease, border-color .2s ease;
+}
+.wolfbbs-card:hover,
+.wolfbbs-helper-card:hover,
+.wolfbbs-action-card:hover,
+.wolfbbs-kpi-card:hover{
+  transform:translateY(-2px);
+  box-shadow:0 20px 34px rgba(11,34,66,.16);
+}
+.wolfbbs-chat-pane{
+  background:
+    radial-gradient(circle at 86% -12%, rgba(111,179,255,.2), transparent 44%),
+    radial-gradient(circle at 12% 112%, rgba(40,188,148,.2), transparent 42%),
+    linear-gradient(180deg,#101d31,#091120);
+}
+.wolfbbs-chat-line{
+  transition:background .16s ease, border-color .16s ease;
+}
+.wolfbbs-chat-line:hover{
+  background:rgba(49,89,136,.22);
+}
+#wolfbbsPalette{
+  border-color:#b8cae4;
+}
+#wolfbbsPaletteHeader{
+  position:sticky;
+  top:0;
+  z-index:2;
+}
+*::-webkit-scrollbar{
+  width:10px;
+  height:10px;
+}
+*::-webkit-scrollbar-track{
+  background:rgba(160,183,210,.22);
+}
+*::-webkit-scrollbar-thumb{
+  border-radius:999px;
+  border:2px solid rgba(245,249,255,.75);
+  background:linear-gradient(180deg,#87b0e7,#5e8fcc);
+}
+*::-webkit-scrollbar-thumb:hover{
+  background:linear-gradient(180deg,#739fdd,#4d7fbd);
+}
+/* UX pass: cleaner structure and less generated-feeling chrome */
+body{
+  width:min(1180px,calc(100% - 2rem));
+  padding:18px 0 90px;
+  background:
+    radial-gradient(900px 320px at 8% -14%, rgba(10,92,198,.11), transparent 66%),
+    radial-gradient(860px 260px at 96% -14%, rgba(15,146,116,.08), transparent 64%),
+    linear-gradient(180deg,#f6f9fc,#edf3fa);
+}
+body::before{
+  opacity:.18;
+}
+body::after{
+  display:none;
+}
+body > h1{
+  background:none;
+  color:#12314f;
+  -webkit-text-fill-color:currentColor;
+}
+body > h1:first-of-type{
+  display:block;
+  padding-right:0;
+  margin-bottom:6px;
+}
+body > h1:first-of-type::after{
+  display:none;
+}
+body p,
+body li{
+  color:#2b445f;
+}
+p.wolfbbs-nav-row,body > p:has(> a){
+  position:sticky;
+  top:10px;
+  z-index:34;
+  backdrop-filter:saturate(140%) blur(8px);
+  background:rgba(255,255,255,.88);
+  border-color:#c4d3e5;
+  box-shadow:0 8px 20px rgba(11,45,91,.11);
+}
+p.wolfbbs-nav-row::before,body > p:has(> a)::before{
+  background:linear-gradient(90deg, rgba(10,92,198,.06), rgba(15,146,116,.05));
+}
+p.wolfbbs-nav-row a,body > p:has(> a) a{
+  border-color:#c8d5e4;
+  background:#f8fbff;
+  color:#21496f;
+  box-shadow:none;
+}
+p.wolfbbs-nav-row a:hover,body > p:has(> a) a:hover{
+  background:#eef4fb;
+  box-shadow:none;
+}
+p.wolfbbs-nav-row a.wolfbbs-nav-active,
+body > p:has(> a) a.wolfbbs-nav-active{
+  background:#0f4f93;
+  border-color:#0f4f93;
+  color:#f4f9ff;
+  box-shadow:0 8px 16px rgba(9,61,118,.22);
+}
+.wolfbbs-page-hero{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:14px;
+  margin:0 0 10px;
+  padding:12px 14px;
+  border:1px solid #cbd7e6;
+  border-radius:12px;
+  background:linear-gradient(180deg,#ffffff,#f7fbff);
+  box-shadow:0 8px 18px rgba(13,41,74,.08);
+}
+.wolfbbs-page-hero-main{
+  min-width:0;
+}
+.wolfbbs-page-hero-main p{
+  margin:4px 0 0;
+  color:#425f7b;
+}
+.wolfbbs-page-hero-meta{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  justify-content:flex-end;
+}
+.wolfbbs-hero-chip{
+  display:inline-flex;
+  align-items:center;
+  min-height:26px;
+  padding:3px 10px;
+  border-radius:999px;
+  border:1px solid #c8d6e7;
+  background:#f3f8ff;
+  color:#1d456b;
+  font-size:.76rem;
+  font-weight:760;
+  text-transform:uppercase;
+  letter-spacing:.05em;
+}
+.wolfbbs-hero-chip[data-kind="admin"]{
+  background:#eaf6ef;
+  border-color:#bddac8;
+  color:#1f6144;
+}
+.wolfbbs-hero-chip[data-kind="caller"]{
+  background:#eef4ff;
+  border-color:#c5d5ec;
+  color:#244f80;
+}
+.wolfbbs-hero-chip[data-kind="guest"]{
+  background:#fff6e8;
+  border-color:#efd4ac;
+  color:#7d5206;
+}
+.wolfbbs-main{
+  display:flex;
+  flex-direction:column;
+  gap:15px;
+  margin-top:14px;
+}
+.wolfbbs-main > section,
+.wolfbbs-main > article{
+  scroll-margin-top:120px;
+}
+.wolfbbs-main .wolfbbs-grid,
+.wolfbbs-main .wolfbbs-stack,
+.wolfbbs-main .wolfbbs-chat-layout,
+.wolfbbs-main .wolfbbs-split{
+  margin:0;
+}
+.wolfbbs-main section + section{
+  margin-top:2px;
+}
+.wolfbbs-main > section > h2:first-child,
+.wolfbbs-main > article > h2:first-child{
+  position:relative;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  padding-bottom:7px;
+  margin-bottom:11px;
+  border-bottom:1px solid #d6e2ef;
+  color:#163b60;
+}
+.wolfbbs-main > section > h2:first-child::before,
+.wolfbbs-main > article > h2:first-child::before{
+  content:"";
+  width:8px;
+  height:8px;
+  border-radius:50%;
+  background:linear-gradient(180deg,#0f64cb,#0f9274);
+  box-shadow:0 0 0 4px rgba(15,100,203,.1);
+}
+.wolfbbs-dashboard{
+  display:grid;
+  grid-template-columns:minmax(0,1.8fr) minmax(0,1.2fr) minmax(0,1fr);
+  gap:12px;
+  margin:0 0 2px;
+}
+.wolfbbs-dashboard-card{
+  position:relative;
+  overflow:hidden;
+  padding:13px 14px;
+  border:1px solid #cad8e8;
+  border-radius:13px;
+  background:
+    radial-gradient(circle at 110% -20%, rgba(15,100,203,.12), transparent 42%),
+    linear-gradient(180deg,#ffffff,#f6faff);
+  box-shadow:0 8px 18px rgba(8,38,76,.09);
+}
+.wolfbbs-dashboard-card h3{
+  margin:0 0 4px;
+  font-size:1.01rem;
+  color:#143b63;
+}
+.wolfbbs-dashboard-sub{
+  margin:0 0 10px;
+  color:#496786;
+  font-size:.84rem;
+}
+.wolfbbs-chart-shell{
+  position:relative;
+  height:170px;
+  margin:0 0 10px;
+  border:1px solid #d7e3f0;
+  border-radius:11px;
+  background:
+    linear-gradient(180deg,rgba(250,253,255,.95),rgba(243,249,255,.95));
+}
+.wolfbbs-chart-canvas{
+  width:100%;
+  height:100%;
+  display:block;
+}
+.wolfbbs-chart-legend{
+  display:flex;
+  flex-wrap:wrap;
+  gap:7px;
+}
+.wolfbbs-chart-legend span{
+  display:inline-flex;
+  align-items:center;
+  min-height:24px;
+  padding:2px 9px;
+  border-radius:999px;
+  border:1px solid #c9d7e8;
+  background:#f2f8ff;
+  color:#234c76;
+  font-size:.78rem;
+  font-weight:700;
+}
+.wolfbbs-dash-metrics{
+  display:grid;
+  grid-template-columns:1fr;
+  gap:8px;
+}
+.wolfbbs-dash-metric{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:8px;
+  padding:8px 10px;
+  border:1px solid #d5e1ef;
+  border-radius:10px;
+  background:#fbfdff;
+}
+.wolfbbs-dash-metric label{
+  margin:0;
+  display:block;
+  color:#4a6580;
+  font-size:.79rem;
+  font-weight:700;
+}
+.wolfbbs-dash-metric strong{
+  color:#143d65;
+  font-size:1rem;
+}
+.wolfbbs-dash-mini{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:7px;
+}
+.wolfbbs-dash-chip{
+  min-height:56px;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  padding:8px 10px;
+  border-radius:10px;
+  border:1px solid #cfdeed;
+  background:#f5faff;
+}
+.wolfbbs-dash-chip strong{
+  color:#143d66;
+  font-size:1.04rem;
+  line-height:1.05;
+}
+.wolfbbs-dash-chip span{
+  color:#56728d;
+  font-size:.77rem;
+  text-transform:uppercase;
+  letter-spacing:.05em;
+}
+.wolfbbs-guide-strip{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  gap:10px 14px;
+  align-items:start;
+  margin:8px 0 12px;
+  padding:12px 14px;
+  border:1px solid #c9d7e8;
+  border-left:4px solid #0f5ba8;
+  border-radius:12px;
+  background:linear-gradient(180deg,#ffffff,#f5f9ff);
+}
+.wolfbbs-guide-strip strong{
+  display:block;
+  margin-bottom:3px;
+  color:#143c63;
+}
+.wolfbbs-guide-strip p{
+  margin:0;
+  color:#3f5e7b;
+}
+.wolfbbs-guide-actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  justify-content:flex-end;
+}
+.wolfbbs-guide-actions a{
+  display:inline-flex;
+  align-items:center;
+  min-height:30px;
+  padding:6px 11px;
+  border-radius:999px;
+  border:1px solid #c6d5e6;
+  background:#f8fbff;
+  color:#214d7a;
+  font-size:.83rem;
+  font-weight:720;
+}
+.wolfbbs-guide-actions a:hover{
+  background:#edf4fc;
+  text-decoration:none;
+}
+.wolfbbs-guide-details{
+  grid-column:1 / -1;
+}
+.wolfbbs-guide-details summary{
+  cursor:pointer;
+  color:#3a5773;
+  font-size:.84rem;
+  font-weight:640;
+}
+.wolfbbs-guide-details ul{
+  margin:8px 0 0 18px;
+}
+.wolfbbs-guide-details li{
+  color:#4a6580;
+}
+.wolfbbs-section-nav{
+  position:sticky;
+  top:60px;
+  z-index:30;
+  margin:8px 0 12px;
+  padding:8px 10px;
+  background:rgba(248,252,255,.93);
+  border:1px solid #ccd9e8;
+  border-radius:11px;
+  box-shadow:0 6px 14px rgba(9,46,94,.08);
+  overflow:auto hidden;
+  white-space:nowrap;
+}
+.wolfbbs-section-nav a{
+  background:#f7fbff;
+}
+.wolfbbs-card,
+.wolfbbs-helper-card,
+.wolfbbs-kpi-card,
+.wolfbbs-action-card,
+form,
+table{
+  border-color:#d0dcea;
+  box-shadow:0 7px 14px rgba(9,39,79,.08);
+}
+.wolfbbs-card:hover,
+.wolfbbs-helper-card:hover,
+.wolfbbs-action-card:hover,
+.wolfbbs-kpi-card:hover{
+  transform:none;
+  box-shadow:0 10px 20px rgba(9,39,79,.1);
+}
+.wolfbbs-card{
+  border-top:2px solid rgba(18,79,138,.2);
+  background:#ffffff;
+}
+.wolfbbs-action-card{
+  border-top:2px solid rgba(18,79,138,.28);
+  background:#ffffff;
+}
+.wolfbbs-helper-card{
+  border-top:2px solid rgba(141,98,22,.34);
+}
+.wolfbbs-kpi-card{
+  border-top:2px solid rgba(28,129,90,.38);
+}
+#wolfbbsCommandButton{
+  min-height:40px;
+  padding:8px 13px;
+  font-size:.86rem;
+}
+:root{
+  --font-scale:1;
+}
+body{
+  font-size:calc(15px * var(--font-scale));
+}
+body[data-theme-mode="contrast"]{
+  --bg:#ffffff;
+  --bg-alt:#f5f7fa;
+  --surface:#ffffff;
+  --surface-2:#fbfdff;
+  --surface-3:#f2f6fb;
+  --text:#0d1520;
+  --muted:#25384f;
+  --line:#b5c5da;
+  --line-strong:#7e9dc0;
+  --accent:#0a4d9c;
+  --accent-strong:#083973;
+  --accent-soft:#d8e7ff;
+  --shadow-sm:0 6px 14px rgba(12,27,50,.11);
+  --shadow:0 12px 30px rgba(12,27,50,.16);
+  --shadow-lg:0 18px 40px rgba(10,23,44,.2);
+}
+body[data-theme-mode="night"]{
+  --bg:#0b1523;
+  --bg-alt:#101d2e;
+  --surface:#132339;
+  --surface-2:#162a42;
+  --surface-3:#1a3049;
+  --text:#e7f1ff;
+  --muted:#a9bfd9;
+  --line:#2a3f58;
+  --line-strong:#3f638b;
+  --accent:#5aa7ff;
+  --accent-strong:#7bb8ff;
+  --accent-soft:#23405f;
+  --shadow-sm:0 8px 16px rgba(0,0,0,.26);
+  --shadow:0 14px 34px rgba(0,0,0,.34);
+  --shadow-lg:0 26px 60px rgba(0,0,0,.42);
+}
+body[data-theme-mode="night"] p,
+body[data-theme-mode="night"] li{
+  color:#c8d9ef;
+}
+body[data-theme-mode="night"] h1,
+body[data-theme-mode="night"] h2,
+body[data-theme-mode="night"] h3{
+  color:#edf5ff;
+}
+body[data-theme-mode="night"] p.wolfbbs-nav-row,
+body[data-theme-mode="night"] body > p:has(> a),
+body[data-theme-mode="night"] .wolfbbs-page-hero,
+body[data-theme-mode="night"] .wolfbbs-guide-strip,
+body[data-theme-mode="night"] .wolfbbs-section-nav{
+  background:rgba(20,35,55,.95);
+}
+body[data-theme-mode="night"] input[type=text],
+body[data-theme-mode="night"] input[type=password],
+body[data-theme-mode="night"] input[type=email],
+body[data-theme-mode="night"] input[type=number],
+body[data-theme-mode="night"] input[type=url],
+body[data-theme-mode="night"] input[type=search],
+body[data-theme-mode="night"] select,
+body[data-theme-mode="night"] textarea{
+  background:linear-gradient(180deg,#162a42,#1b314d);
+  color:#e5efff;
+  border-color:#365175;
+}
+body[data-theme-mode="night"] table,
+body[data-theme-mode="night"] form,
+body[data-theme-mode="night"] .wolfbbs-card,
+body[data-theme-mode="night"] .wolfbbs-kpi-card,
+body[data-theme-mode="night"] .wolfbbs-action-card,
+body[data-theme-mode="night"] .wolfbbs-helper-card{
+  background:linear-gradient(180deg,#14263c,#182d46);
+}
+body[data-density="compact"]{
+  --radius:12px;
+  --radius-sm:9px;
+}
+body[data-density="compact"] .wolfbbs-main{
+  gap:11px;
+}
+body[data-density="compact"] .wolfbbs-card,
+body[data-density="compact"] .wolfbbs-helper-card,
+body[data-density="compact"] .wolfbbs-kpi-card,
+body[data-density="compact"] form{
+  padding:12px 13px;
+}
+body[data-density="compact"] .wolfbbs-grid{
+  gap:11px;
+}
+body[data-density="compact"] th,
+body[data-density="compact"] td{
+  padding:8px 9px;
+}
+.wolfbbs-skip-link{
+  position:fixed;
+  top:10px;
+  left:10px;
+  z-index:92;
+  padding:7px 11px;
+  border-radius:999px;
+  border:1px solid #b8cbe3;
+  background:#ffffff;
+  color:#0f3f76;
+  font-weight:760;
+  transform:translateY(-56px);
+  transition:transform .14s ease;
+}
+.wolfbbs-skip-link:focus{
+  transform:translateY(0);
+}
+#wolfbbsScrollProgress{
+  position:fixed;
+  top:0;
+  left:0;
+  width:100%;
+  height:4px;
+  z-index:80;
+  background:rgba(159,181,206,.2);
+}
+#wolfbbsScrollProgress span{
+  display:block;
+  width:0%;
+  height:100%;
+  background:linear-gradient(90deg,#0a66d6,#0f9274);
+  transition:width .08s linear;
+}
+.wolfbbs-breadcrumbs{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:6px;
+  margin:0 0 8px;
+  color:#425d79;
+  font-size:.82rem;
+  font-weight:660;
+}
+.wolfbbs-breadcrumbs a{
+  display:inline-flex;
+  align-items:center;
+  min-height:24px;
+  padding:2px 9px;
+  border-radius:999px;
+  border:1px solid #cad9ea;
+  background:#f7fbff;
+  color:#23507f;
+}
+.wolfbbs-breadcrumbs a:hover{
+  background:#edf4fc;
+  text-decoration:none;
+}
+.wolfbbs-breadcrumb-sep{
+  color:#7b91aa;
+}
+.wolfbbs-pref-controls{
+  display:flex;
+  flex-wrap:wrap;
+  gap:7px;
+  margin-left:auto;
+}
+.wolfbbs-pref-controls button{
+  min-height:26px;
+  padding:4px 10px;
+  border-radius:999px;
+  border:1px solid #c6d6e8;
+  background:#f7fbff;
+  color:#1f4a78;
+  box-shadow:none;
+  font-size:.78rem;
+  font-family:"Manrope","Avenir Next","Segoe UI","Helvetica Neue",sans-serif;
+  font-weight:760;
+}
+.wolfbbs-pref-controls button:hover{
+  background:#eaf2fb;
+}
+.wolfbbs-pref-controls button[data-control-priority="secondary"]{
+  opacity:.95;
+}
+body.wolfbbs-controls-compact .wolfbbs-pref-controls button[data-control-priority="secondary"]{
+  display:none;
+}
+.wolfbbs-favorites-rail{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  margin:8px 0 10px;
+  padding:8px 10px;
+  border:1px solid #ccdae9;
+  border-radius:11px;
+  background:#f9fcff;
+}
+.wolfbbs-favorites-rail strong{
+  color:#3e5c7a;
+  font-size:.78rem;
+  text-transform:uppercase;
+  letter-spacing:.05em;
+}
+.wolfbbs-favorites-rail a{
+  display:inline-flex;
+  align-items:center;
+  min-height:26px;
+  padding:4px 10px;
+  border-radius:999px;
+  border:1px solid #c6d7e9;
+  background:#ffffff;
+  color:#1f4a78;
+  font-size:.8rem;
+  font-weight:730;
+}
+.wolfbbs-section-collapsible{
+  position:relative;
+}
+.wolfbbs-section-toggle{
+  margin-left:auto;
+  min-height:26px;
+  padding:4px 10px;
+  border-radius:999px;
+  border:1px solid #c6d6e8;
+  background:#f7fbff;
+  color:#1f4a78;
+  box-shadow:none;
+  font-size:.78rem;
+  font-family:"Manrope","Avenir Next","Segoe UI","Helvetica Neue",sans-serif;
+  font-weight:760;
+}
+.wolfbbs-heading-link{
+  display:inline-flex;
+  align-items:center;
+  margin-left:6px;
+  min-height:24px;
+  padding:3px 8px;
+  border-radius:999px;
+  border:1px solid #cad7e8;
+  background:#f7fbff;
+  color:#315c87;
+  font-size:.72rem;
+  font-weight:700;
+}
+.wolfbbs-heading-link:hover{
+  background:#edf4fc;
+  text-decoration:none;
+}
+.wolfbbs-section-collapsible.is-collapsed .wolfbbs-section-body{
+  display:none;
+}
+.wolfbbs-table-toolbar{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:8px;
+  margin:0 0 8px;
+  padding:8px 10px;
+  border:1px solid #ccdae9;
+  border-radius:11px;
+  background:#f8fbff;
+}
+.wolfbbs-table-toolbar strong{
+  color:#365572;
+  font-size:.78rem;
+  text-transform:uppercase;
+  letter-spacing:.05em;
+}
+.wolfbbs-table-toolbar input[type=search]{
+  min-height:28px;
+  width:min(280px,100%);
+  padding:6px 9px;
+  border-radius:9px;
+  font-size:.84rem;
+}
+.wolfbbs-table-toolbar button{
+  min-height:28px;
+  padding:5px 10px;
+  border-radius:999px;
+  border:1px solid #c6d6e8;
+  background:#ffffff;
+  color:#1f4a78;
+  box-shadow:none;
+  font-size:.78rem;
+  font-family:"Manrope","Avenir Next","Segoe UI","Helvetica Neue",sans-serif;
+  font-weight:760;
+}
+.wolfbbs-table-toolbar button:hover{
+  background:#edf4fc;
+}
+.wolfbbs-table-count{
+  color:#496884;
+  font-size:.8rem;
+  font-weight:660;
+}
+.wolfbbs-table-sort{
+  display:inline-flex;
+  align-items:center;
+  gap:4px;
+  min-height:24px;
+  padding:0;
+  border:0;
+  background:none;
+  color:inherit;
+  box-shadow:none;
+  font:inherit;
+  text-transform:inherit;
+  letter-spacing:inherit;
+}
+.wolfbbs-table-sort:hover{
+  text-decoration:underline;
+}
+.wolfbbs-table-sort-indicator{
+  color:#6783a2;
+  font-size:.72rem;
+}
+.wolfbbs-row-active td{
+  background:#e8f2ff !important;
+}
+.wolfbbs-row-hit td{
+  background:#fff8ea;
+}
+.wolfbbs-empty-row td{
+  text-align:center;
+  color:#5a728b;
+  font-style:italic;
+}
+.wolfbbs-form-actions-sticky{
+  position:sticky;
+  bottom:10px;
+  z-index:20;
+  margin-top:10px;
+  padding:8px 10px;
+  border:1px solid #cad8e8;
+  border-radius:10px;
+  background:rgba(255,255,255,.95);
+  box-shadow:0 8px 18px rgba(9,41,81,.1);
+}
+.wolfbbs-form-actions-sticky button{
+  min-height:30px;
+}
+.wolfbbs-invalid{
+  border-color:#c44a5c !important;
+  box-shadow:0 0 0 3px rgba(185,54,73,.12) !important;
+}
+.wolfbbs-field-hint{
+  display:block;
+  margin:4px 0 0;
+  color:#7a4d00;
+  font-size:.77rem;
+  font-weight:650;
+}
+#wolfbbsBackToTop{
+  position:fixed;
+  right:18px;
+  bottom:66px;
+  z-index:39;
+  min-height:36px;
+  padding:7px 11px;
+  border-radius:999px;
+  border:1px solid #bed1e8;
+  background:#ffffff;
+  color:#1f4a78;
+  font-size:.8rem;
+  font-weight:760;
+  box-shadow:0 10px 18px rgba(9,41,81,.14);
+  display:none;
+}
+#wolfbbsBackToTop.show{
+  display:inline-flex;
+  align-items:center;
+}
+#wolfbbsToastRegion{
+  position:fixed;
+  top:14px;
+  right:14px;
+  z-index:96;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  pointer-events:none;
+}
+.wolfbbs-toast{
+  min-width:220px;
+  max-width:min(360px,80vw);
+  padding:8px 11px;
+  border-radius:10px;
+  border:1px solid #bfd2e8;
+  background:#f8fbff;
+  color:#1b426d;
+  box-shadow:0 10px 20px rgba(9,39,79,.16);
+  opacity:0;
+  transform:translateY(-4px);
+  transition:opacity .16s ease, transform .16s ease;
+}
+.wolfbbs-toast.show{
+  opacity:1;
+  transform:translateY(0);
+}
+.wolfbbs-toast[data-kind="error"]{
+  border-color:#e7b8bf;
+  background:#fff4f6;
+  color:#7f1f2d;
+}
+.wolfbbs-toast[data-kind="ok"]{
+  border-color:#bad9c5;
+  background:#f1fbf4;
+  color:#1f6242;
+}
+.wolfbbs-goal-coach{
+  display:grid;
+  gap:8px;
+  margin:8px 0 12px;
+  padding:11px 13px;
+  border:1px solid #c8d7e8;
+  border-left:4px solid #0f5ba8;
+  border-radius:12px;
+  background:#f9fcff;
+}
+.wolfbbs-goal-head{
+  display:flex;
+  flex-wrap:wrap;
+  justify-content:space-between;
+  gap:8px;
+  align-items:center;
+}
+.wolfbbs-goal-head strong{
+  color:#143d65;
+}
+.wolfbbs-goal-head span{
+  color:#45627f;
+  font-size:.82rem;
+  font-weight:670;
+}
+.wolfbbs-goal-list{
+  list-style:none;
+  padding:0;
+  margin:0;
+  display:grid;
+  gap:6px;
+}
+.wolfbbs-goal-list li{
+  display:flex;
+  align-items:flex-start;
+  gap:8px;
+  color:#34526f;
+  font-size:.88rem;
+}
+.wolfbbs-goal-list a{
+  margin-left:auto;
+  font-size:.8rem;
+}
+.wolfbbs-goal-actions{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+}
+.wolfbbs-goal-actions button{
+  min-height:28px;
+  padding:5px 10px;
+  border-radius:999px;
+  border:1px solid #c6d6e8;
+  background:#ffffff;
+  color:#1f4a78;
+  box-shadow:none;
+  font-size:.78rem;
+  font-family:"Manrope","Avenir Next","Segoe UI","Helvetica Neue",sans-serif;
+  font-weight:760;
+}
+.wolfbbs-scorecard{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:8px;
+  margin:8px 0 12px;
+  padding:9px 11px;
+  border:1px solid #c9d8e8;
+  border-radius:11px;
+  background:#f8fbff;
+}
+.wolfbbs-score-pill{
+  display:inline-flex;
+  align-items:center;
+  min-height:24px;
+  padding:2px 10px;
+  border-radius:999px;
+  border:1px solid #c8daf1;
+  background:#edf4ff;
+  color:#244c83;
+  font-size:.79rem;
+  font-weight:700;
+}
+.wolfbbs-score-pill[data-level="strong"]{
+  border-color:#bad9c5;
+  background:#f1fbf4;
+  color:#1f6242;
+}
+.wolfbbs-score-pill[data-level="warn"]{
+  border-color:#f0d7a0;
+  background:#fff5df;
+  color:#7b5400;
+}
+.wolfbbs-empty-actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:7px;
+  margin-top:7px;
+}
+.wolfbbs-empty-actions a{
+  display:inline-flex;
+  align-items:center;
+  min-height:26px;
+  padding:4px 10px;
+  border-radius:999px;
+  border:1px solid #c6d6e8;
+  background:#ffffff;
+  color:#1f4a78;
+  font-size:.79rem;
+  font-weight:740;
+}
+.wolfbbs-empty-actions a:hover{
+  background:#edf4fc;
+  text-decoration:none;
+}
+#wolfbbsNotesButton{
+  position:fixed;
+  left:20px;
+  bottom:18px;
+  z-index:40;
+  min-height:40px;
+  padding:8px 13px;
+  border-radius:999px;
+  border:1px solid #bed1e8;
+  background:#ffffff;
+  color:#1f4a78;
+  font-size:.82rem;
+  font-weight:760;
+  box-shadow:0 14px 22px rgba(9,41,81,.15);
+}
+#wolfbbsNotesOverlay{
+  position:fixed;
+  inset:0;
+  background:rgba(8,17,30,.52);
+  display:none;
+  z-index:65;
+  padding:22px 16px;
+}
+#wolfbbsNotesOverlay.active{
+  display:block;
+}
+#wolfbbsNotesPanel{
+  max-width:820px;
+  margin:0 auto;
+  background:linear-gradient(180deg,#ffffff,#f4f9ff);
+  border:1px solid var(--line);
+  border-radius:18px;
+  box-shadow:0 28px 68px rgba(8,19,36,.34);
+  overflow:hidden;
+}
+#wolfbbsNotesHeader{
+  padding:12px 14px;
+  background:linear-gradient(180deg,#f8fcff,#ebf3ff);
+  border-bottom:1px solid var(--line);
+  display:flex;
+  justify-content:space-between;
+  gap:10px;
+  align-items:center;
+}
+#wolfbbsNotesArea{
+  width:100%;
+  min-height:280px;
+  border:0;
+  border-top:1px solid #d3dfef;
+  border-radius:0;
+  padding:12px 13px;
+  background:#ffffff;
+  resize:vertical;
+}
+.wolfbbs-notes-actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  padding:10px 12px;
+}
+.wolfbbs-notes-actions button{
+  min-height:29px;
+  padding:6px 10px;
+  border-radius:999px;
+  border:1px solid #c6d6e8;
+  background:#ffffff;
+  color:#1f4a78;
+  box-shadow:none;
+  font-size:.78rem;
+  font-family:"Manrope","Avenir Next","Segoe UI","Helvetica Neue",sans-serif;
+  font-weight:760;
+}
+#wolfbbsMacroHelpOverlay{
+  position:fixed;
+  inset:0;
+  background:rgba(8,17,30,.45);
+  display:none;
+  z-index:62;
+  padding:22px 16px;
+}
+#wolfbbsMacroHelpOverlay.active{
+  display:block;
+}
+#wolfbbsMacroHelpPanel{
+  max-width:540px;
+  margin:0 auto;
+  background:#ffffff;
+  border:1px solid #c8d7e8;
+  border-radius:14px;
+  box-shadow:0 20px 40px rgba(8,19,36,.28);
+  padding:14px 15px;
+}
+#wolfbbsMacroHelpPanel ul{
+  margin:10px 0 0 18px;
+}
+#wolfbbsMacroHelpPanel li{
+  color:#3a5875;
+}
+.wolfbbs-template-strip{
+  display:flex;
+  flex-wrap:wrap;
+  gap:7px;
+  margin:8px 0 10px;
+}
+.wolfbbs-template-strip button{
+  min-height:26px;
+  padding:4px 10px;
+  border-radius:999px;
+  border:1px solid #c6d6e8;
+  background:#f8fbff;
+  color:#1f4a78;
+  box-shadow:none;
+  font-size:.78rem;
+  font-family:"Manrope","Avenir Next","Segoe UI","Helvetica Neue",sans-serif;
+  font-weight:760;
+}
+.wolfbbs-restore-banner{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:8px;
+  margin:0 0 10px;
+  padding:8px 10px;
+  border:1px solid #d8c89b;
+  border-radius:10px;
+  background:#fff8eb;
+  color:#6f4b0b;
+  font-size:.83rem;
+  font-weight:650;
+}
+.wolfbbs-focus-pill{
+  display:inline-flex;
+  align-items:center;
+  min-height:24px;
+  padding:3px 10px;
+  border-radius:999px;
+  border:1px solid #c8daf1;
+  background:#edf4ff;
+  color:#244c83;
+  font-size:.77rem;
+  font-weight:700;
+}
+.wolfbbs-focus-pill[data-state="running"]{
+  border-color:#bad9c5;
+  background:#f1fbf4;
+  color:#1f6242;
+}
+.wolfbbs-live-region{
+  position:absolute;
+  left:-9999px;
+  width:1px;
+  height:1px;
+  overflow:hidden;
+}
+body.wolfbbs-focus-ui .wolfbbs-guide-strip,
+body.wolfbbs-focus-ui .wolfbbs-recent-rail,
+body.wolfbbs-focus-ui .wolfbbs-favorites-rail,
+body.wolfbbs-focus-ui .wolfbbs-scorecard{
+  display:none !important;
+}
+.wolfbbs-hero-chip[data-kind="net-online"]{
+  background:#edf9f0;
+  border-color:#bad9c5;
+  color:#1f6242;
+}
+.wolfbbs-hero-chip[data-kind="net-offline"]{
+  background:#fff0f2;
+  border-color:#efc1c6;
+  color:#8b2331;
+}
+.wolfbbs-hero-chip[data-kind="latency"]{
+  background:#eef4ff;
+  border-color:#c5d5ec;
+  color:#244f80;
+}
+.wolfbbs-hero-chip[data-kind="telemetry"]{
+  background:#f7f2ff;
+  border-color:#d4c5ef;
+  color:#4d3781;
+}
+.wolfbbs-section-progress{
+  display:inline-flex;
+  align-items:center;
+  min-height:26px;
+  padding:3px 10px;
+  border-radius:999px;
+  border:1px solid #c6d6e8;
+  background:#f8fbff;
+  color:#385877;
+  font-size:.79rem;
+  font-weight:700;
+}
+.wolfbbs-column-toggle{
+  position:relative;
+}
+.wolfbbs-column-toggle-panel{
+  position:absolute;
+  top:34px;
+  left:0;
+  z-index:26;
+  min-width:210px;
+  max-height:260px;
+  overflow:auto;
+  padding:8px 9px;
+  border:1px solid #c8d7e8;
+  border-radius:10px;
+  background:#ffffff;
+  box-shadow:0 12px 24px rgba(9,39,79,.16);
+  display:none;
+}
+.wolfbbs-column-toggle-panel.active{
+  display:block;
+}
+.wolfbbs-column-toggle-panel label{
+  display:flex;
+  flex-direction:row;
+  align-items:center;
+  gap:8px;
+  margin:0 0 7px;
+  font-size:.81rem;
+  color:#34526f;
+}
+.wolfbbs-guide-minimized p,
+.wolfbbs-guide-minimized .wolfbbs-guide-actions,
+.wolfbbs-guide-minimized .wolfbbs-guide-details{
+  display:none;
+}
+.wolfbbs-text-counter{
+  display:block;
+  margin:4px 0 0;
+  color:#57708b;
+  font-size:.75rem;
+  font-weight:650;
+}
+#wolfbbsUXDiagButton{
+  position:fixed;
+  left:140px;
+  bottom:18px;
+  z-index:40;
+  min-height:40px;
+  padding:8px 13px;
+  border-radius:999px;
+  border:1px solid #bed1e8;
+  background:#ffffff;
+  color:#1f4a78;
+  font-size:.82rem;
+  font-weight:760;
+  box-shadow:0 14px 22px rgba(9,41,81,.15);
+}
+#wolfbbsShortcutOverlay{
+  position:fixed;
+  inset:0;
+  background:rgba(8,17,30,.45);
+  display:none;
+  z-index:63;
+  padding:22px 16px;
+}
+#wolfbbsShortcutOverlay.active{
+  display:block;
+}
+#wolfbbsShortcutPanel{
+  max-width:560px;
+  margin:0 auto;
+  background:#ffffff;
+  border:1px solid #c8d7e8;
+  border-radius:14px;
+  box-shadow:0 20px 40px rgba(8,19,36,.28);
+  padding:14px 15px;
+}
+#wolfbbsShortcutPanel ul{
+  margin:10px 0 0 18px;
+}
+#wolfbbsShortcutPanel li{
+  color:#3a5875;
+}
+.wolfbbs-palette-history{
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+  margin-top:8px;
+}
+.wolfbbs-palette-history button{
+  min-height:25px;
+  padding:4px 9px;
+  border-radius:999px;
+  border:1px solid #c6d6e8;
+  background:#ffffff;
+  color:#315b86;
+  box-shadow:none;
+  font-size:.76rem;
+  font-family:"Manrope","Avenir Next","Segoe UI","Helvetica Neue",sans-serif;
+  font-weight:700;
+}
+#wolfbbsToastCenterOverlay{
+  position:fixed;
+  inset:0;
+  background:rgba(8,17,30,.45);
+  display:none;
+  z-index:64;
+  padding:22px 16px;
+}
+#wolfbbsToastCenterOverlay.active{
+  display:block;
+}
+#wolfbbsToastCenterPanel{
+  max-width:620px;
+  margin:0 auto;
+  background:#ffffff;
+  border:1px solid #c8d7e8;
+  border-radius:14px;
+  box-shadow:0 20px 40px rgba(8,19,36,.28);
+  padding:14px 15px;
+}
+#wolfbbsToastCenterList{
+  max-height:320px;
+  overflow:auto;
+  margin-top:10px;
+}
+#wolfbbsToastCenterList li{
+  padding:8px 0;
+  border-bottom:1px solid #e6eef8;
+  color:#365472;
+  font-size:.86rem;
+}
+#wolfbbsToastCenterList li:last-child{
+  border-bottom:0;
+}
+.wolfbbs-revisit-banner{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  align-items:center;
+  margin:8px 0 11px;
+  padding:8px 10px;
+  border:1px solid #c8d7e8;
+  border-radius:10px;
+  background:#f8fbff;
+  color:#3a5876;
+  font-size:.82rem;
+  font-weight:650;
+}
+.wolfbbs-kpi-delta{
+  margin-left:6px;
+  font-size:.76rem;
+  font-weight:700;
+  color:#587392;
+}
+.wolfbbs-kpi-delta.up{
+  color:#1f6242;
+}
+.wolfbbs-kpi-delta.down{
+  color:#8b2331;
+}
+#wolfbbsWorkspaceOverlay{
+  position:fixed;
+  inset:0;
+  background:rgba(8,17,30,.45);
+  display:none;
+  z-index:66;
+  padding:22px 16px;
+}
+#wolfbbsWorkspaceOverlay.active{
+  display:block;
+}
+#wolfbbsWorkspacePanel{
+  max-width:700px;
+  margin:0 auto;
+  background:#ffffff;
+  border:1px solid #c8d7e8;
+  border-radius:14px;
+  box-shadow:0 20px 40px rgba(8,19,36,.28);
+  padding:14px 15px;
+}
+#wolfbbsWorkspaceList{
+  display:grid;
+  gap:8px;
+  margin-top:10px;
+}
+.wolfbbs-workspace-row{
+  padding:9px 10px;
+  border:1px solid #d4e0ef;
+  border-radius:10px;
+  background:#fbfdff;
+}
+.wolfbbs-workspace-row strong{
+  display:block;
+  color:#163c64;
+}
+.wolfbbs-workspace-row p{
+  margin:4px 0 0;
+  color:#4c6883;
+  font-size:.82rem;
+}
+.wolfbbs-workspace-row .wolfbbs-inline-actions{
+  margin-top:6px;
+}
+#wolfbbsSpotlightOverlay{
+  position:fixed;
+  inset:0;
+  background:rgba(8,17,30,.45);
+  display:none;
+  z-index:67;
+  padding:22px 16px;
+}
+#wolfbbsSpotlightOverlay.active{
+  display:block;
+}
+#wolfbbsSpotlightPanel{
+  max-width:620px;
+  margin:0 auto;
+  background:#ffffff;
+  border:1px solid #c8d7e8;
+  border-radius:14px;
+  box-shadow:0 20px 40px rgba(8,19,36,.28);
+  padding:14px 15px;
+}
+.wolfbbs-spotlight-hit{
+  background:linear-gradient(180deg,#fff6d8,#ffeeb5);
+  border-radius:4px;
+  padding:0 2px;
+}
+.wolfbbs-selected-row td{
+  background:#eaf5ff !important;
+}
+.wolfbbs-handoff-box{
+  margin:8px 0 12px;
+  padding:10px 12px;
+  border:1px solid #c9d8e8;
+  border-radius:10px;
+  background:#f8fbff;
+}
+.wolfbbs-handoff-box p{
+  margin:0;
+  color:#3a5876;
+  font-size:.83rem;
+}
+#wolfbbsDraftOverlay,#wolfbbsIncidentOverlay,#wolfbbsPlaybookOverlay,#wolfbbsReminderOverlay,#wolfbbsReleaseGateOverlay,#wolfbbsFeedbackOverlay{
+  position:fixed;
+  inset:0;
+  background:rgba(8,17,30,.45);
+  display:none;
+  z-index:69;
+  padding:22px 16px;
+}
+#wolfbbsDraftOverlay.active,#wolfbbsIncidentOverlay.active,#wolfbbsPlaybookOverlay.active,#wolfbbsReminderOverlay.active,#wolfbbsReleaseGateOverlay.active,#wolfbbsFeedbackOverlay.active{
+  display:block;
+}
+#wolfbbsDraftPanel,#wolfbbsIncidentPanel,#wolfbbsPlaybookPanel,#wolfbbsReminderPanel,#wolfbbsReleaseGatePanel,#wolfbbsFeedbackPanel{
+  max-width:760px;
+  margin:0 auto;
+  background:#ffffff;
+  border:1px solid #c8d7e8;
+  border-radius:14px;
+  box-shadow:0 20px 40px rgba(8,19,36,.28);
+  padding:14px 15px;
+}
+#wolfbbsDraftList,#wolfbbsIncidentList,#wolfbbsPlaybookList,#wolfbbsReminderList,#wolfbbsReleaseGateList{
+  display:grid;
+  gap:8px;
+  margin-top:10px;
+  max-height:360px;
+  overflow:auto;
+}
+.wolfbbs-incident-row,.wolfbbs-playbook-row,.wolfbbs-reminder-row,.wolfbbs-release-gate-row,.wolfbbs-draft-row{
+  padding:9px 10px;
+  border:1px solid #d4e0ef;
+  border-radius:10px;
+  background:#fbfdff;
+}
+.wolfbbs-reminder-row[data-due="true"]{
+  border-color:#f0ca85;
+  background:#fff8eb;
+}
+.wolfbbs-incident-badge{
+  display:inline-flex;
+  min-height:22px;
+  align-items:center;
+  padding:2px 8px;
+  border-radius:999px;
+  font-size:.74rem;
+  font-weight:720;
+}
+.wolfbbs-incident-badge[data-severity="high"]{
+  background:#fff1f2;
+  border:1px solid #efc1c6;
+  color:#8b2331;
+}
+.wolfbbs-incident-badge[data-severity="medium"]{
+  background:#fff8eb;
+  border:1px solid #ecd39a;
+  color:#7d5b10;
+}
+.wolfbbs-incident-badge[data-severity="low"]{
+  background:#edf9f0;
+  border:1px solid #bad9c5;
+  color:#1f6242;
+}
+#wolfbbsFeedbackButton{
+  position:fixed;
+  left:228px;
+  bottom:18px;
+  z-index:40;
+  min-height:40px;
+  padding:8px 13px;
+  border-radius:999px;
+  border:1px solid #bed1e8;
+  background:#ffffff;
+  color:#1f4a78;
+  font-size:.82rem;
+  font-weight:760;
+  box-shadow:0 14px 22px rgba(9,41,81,.15);
+}
+.wolfbbs-rating-row{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+}
+.wolfbbs-rating-row button[data-active="true"]{
+  background:#1f4a78;
+  border-color:#1f4a78;
+  color:#fff;
+}
+body[data-layout-mode="wide"]{
+  width:min(1480px,calc(100% - 2.2rem));
+}
+body[data-layout-mode="focus"]{
+  width:min(980px,calc(100% - 2rem));
+}
+body[data-accent-mode="teal"]{
+  --accent:#0f9274;
+  --accent-strong:#0a6a54;
+  --accent-soft:#d6f5ec;
+}
+body[data-accent-mode="amber"]{
+  --accent:#b36a00;
+  --accent-strong:#8f4f00;
+  --accent-soft:#ffe9c7;
+}
+body.wolfbbs-motion-reduced *,
+body.wolfbbs-motion-reduced *::before,
+body.wolfbbs-motion-reduced *::after{
+  animation:none !important;
+  transition:none !important;
+}
+#wolfbbsActionDock{
+  position:fixed;
+  right:18px;
+  bottom:18px;
+  z-index:45;
+  width:min(320px,calc(100vw - 1.6rem));
+  background:linear-gradient(180deg,#ffffff,#f2f7ff);
+  border:1px solid #c5d7ee;
+  border-radius:14px;
+  box-shadow:0 16px 26px rgba(9,41,81,.2);
+  overflow:hidden;
+}
+#wolfbbsActionDock[data-side="left"]{
+  right:auto;
+  left:18px;
+}
+.wolfbbs-action-dock-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  padding:10px 12px;
+  border-bottom:1px solid #d4e3f4;
+}
+.wolfbbs-action-dock-head strong{
+  font-size:.86rem;
+  letter-spacing:.02em;
+  text-transform:uppercase;
+  color:#234d7a;
+}
+.wolfbbs-action-dock-head button{
+  min-height:30px;
+  padding:5px 10px;
+  font-size:.78rem;
+}
+.wolfbbs-action-dock-search{
+  display:flex;
+  gap:6px;
+  margin:0 0 4px;
+}
+.wolfbbs-action-dock-search input[type=search]{
+  width:100%;
+  min-height:30px;
+  padding:5px 9px;
+  border-radius:8px;
+  border:1px solid #c7d9ef;
+  background:#fbfdff;
+  color:#1e4a80;
+  font-size:.81rem;
+}
+.wolfbbs-action-dock-body{
+  display:grid;
+  gap:9px;
+  padding:11px 12px 12px;
+  max-height:320px;
+  overflow:auto;
+}
+#wolfbbsActionDock[data-collapsed="true"] .wolfbbs-action-dock-body{
+  display:none;
+}
+.wolfbbs-action-dock-group{
+  display:grid;
+  gap:6px;
+}
+.wolfbbs-action-dock-group-title{
+  color:#4f6784;
+  font-size:.75rem;
+  font-weight:760;
+  text-transform:uppercase;
+  letter-spacing:.05em;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+}
+.wolfbbs-action-dock-group-title span{
+  font-size:.72rem;
+  color:#6d84a0;
+  font-weight:680;
+}
+.wolfbbs-action-dock-links{
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+}
+.wolfbbs-action-dock-links a{
+  display:inline-flex;
+  align-items:center;
+  min-height:30px;
+  padding:5px 10px;
+  border-radius:999px;
+  border:1px solid #c6d7ee;
+  background:#fff;
+  color:#1e4a80;
+  font-size:.82rem;
+  font-weight:640;
+}
+.wolfbbs-action-dock-links a:hover{
+  text-decoration:none;
+  background:#edf6ff;
+}
+.wolfbbs-session-chip{
+  font-variant-numeric:tabular-nums;
+}
+.wolfbbs-section-pin-rail{
+  display:flex;
+  flex-wrap:wrap;
+  gap:7px;
+  margin:0 0 14px;
+  padding:8px 10px;
+  border:1px dashed #c3d5eb;
+  border-radius:12px;
+  background:rgba(255,255,255,.7);
+}
+.wolfbbs-section-pin-rail a{
+  display:inline-flex;
+  align-items:center;
+  min-height:28px;
+  padding:4px 10px;
+  border-radius:999px;
+  border:1px solid #c0d5ee;
+  background:#fff;
+  color:#1d4d82;
+  font-size:.8rem;
+  font-weight:650;
+}
+.wolfbbs-section-pin-button,
+.wolfbbs-section-done-toggle{
+  margin-left:6px;
+  min-height:26px;
+  padding:2px 8px;
+  border-radius:999px;
+  border:1px solid #c4d7ee;
+  background:#fff;
+  color:#255182;
+  font-size:.74rem;
+  font-weight:700;
+}
+.wolfbbs-section-done-toggle[data-done="true"]{
+  background:#eaf8ef;
+  border-color:#b8dfc4;
+  color:#1e6a43;
+}
+h2.wolfbbs-section-done{
+  opacity:.85;
+}
+.wolfbbs-form-progress{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  margin:0 0 10px;
+  color:#48607d;
+  font-size:.82rem;
+}
+.wolfbbs-form-progress meter{
+  width:180px;
+  max-width:100%;
+  height:11px;
+}
+.wolfbbs-table-wrap.wolfbbs-sticky-head table thead th{
+  position:sticky;
+  top:0;
+  z-index:3;
+}
+.wolfbbs-table-wrap.wolfbbs-table-compact table th,
+.wolfbbs-table-wrap.wolfbbs-table-compact table td{
+  padding:6px 8px;
+}
+.wolfbbs-row-inspector{
+  margin-top:8px;
+  padding:9px 10px;
+  border:1px solid #d4e1f0;
+  border-radius:10px;
+  background:#fbfdff;
+  font-size:.84rem;
+}
+.wolfbbs-row-inspector dl{
+  display:grid;
+  grid-template-columns:minmax(84px,140px) 1fr;
+  gap:4px 8px;
+  margin:0;
+}
+.wolfbbs-row-inspector dt{
+  font-weight:700;
+  color:#38597b;
+}
+.wolfbbs-row-inspector dd{
+  margin:0;
+  color:#233f5f;
+}
+.wolfbbs-form-id{
+  display:block;
+  margin-top:8px;
+  color:#6d8098;
+  font-size:.74rem;
+}
+#wolfbbsBugButton{
+  position:fixed;
+  left:342px;
+  bottom:18px;
+  z-index:40;
+  min-height:40px;
+  padding:8px 13px;
+  border-radius:999px;
+  border:1px solid #bed1e8;
+  background:#ffffff;
+  color:#1f4a78;
+  font-size:.82rem;
+  font-weight:760;
+  box-shadow:0 14px 22px rgba(9,41,81,.15);
+}
+#wolfbbsBugOverlay{
+  position:fixed;
+  inset:0;
+  z-index:120;
+  display:none;
+  place-items:center;
+  background:rgba(8,16,28,.42);
+  padding:12px;
+}
+#wolfbbsBugOverlay.active{
+  display:grid;
+}
+#wolfbbsBugPanel{
+  width:min(760px,100%);
+  max-height:92vh;
+  overflow:auto;
+  background:#fff;
+  border-radius:14px;
+  border:1px solid #c4d8ef;
+  box-shadow:0 22px 36px rgba(9,41,81,.24);
+  padding:14px;
+}
+#wolfbbsBugPanel textarea{
+  width:100%;
+  min-height:180px;
+}
+#wolfbbsContextHelpOverlay{
+  position:fixed;
+  inset:0;
+  z-index:119;
+  display:none;
+  place-items:center;
+  background:rgba(8,16,28,.38);
+  padding:12px;
+}
+#wolfbbsContextHelpOverlay.active{
+  display:grid;
+}
+#wolfbbsContextHelpPanel{
+  width:min(680px,100%);
+  max-height:90vh;
+  overflow:auto;
+  background:#fff;
+  border:1px solid #c5d8ee;
+  border-radius:14px;
+  box-shadow:0 20px 34px rgba(9,41,81,.22);
+  padding:14px;
+}
+/* Nostalgia pass: preserve classic BBS feel while keeping modern usability. */
+:root{
+  --bg:#0a1018;
+  --bg-alt:#121b27;
+  --surface:#142233;
+  --surface-2:#1a2a3d;
+  --surface-3:#20354d;
+  --text:#ebead7;
+  --muted:#b8b79d;
+  --line:#35506b;
+  --line-strong:#4b6f91;
+  --accent:#86d4ff;
+  --accent-strong:#a4e2ff;
+  --accent-soft:#1f364f;
+  --teal:#6fdab8;
+  --ok:#8ae5a6;
+  --warn:#f2cd80;
+  --danger:#ff9aa4;
+  --shadow-sm:0 8px 16px rgba(0,0,0,.34);
+  --shadow:0 14px 30px rgba(0,0,0,.45);
+  --shadow-lg:0 24px 52px rgba(0,0,0,.58);
+}
+body{
+  width:min(1160px,calc(100% - 1.8rem));
+  padding:18px 0 92px;
+  color:var(--text);
+  font-family:"IBM Plex Mono","Cascadia Mono","SFMono-Regular","Menlo","Consolas","Liberation Mono",monospace;
+  background:
+    radial-gradient(960px 360px at 11% -18%, rgba(134,212,255,.14), transparent 66%),
+    radial-gradient(800px 280px at 89% -16%, rgba(111,218,184,.11), transparent 68%),
+    linear-gradient(180deg,var(--bg),var(--bg-alt));
+}
+body::before{
+  opacity:.34;
+  background:
+    linear-gradient(rgba(8,13,20,.24), rgba(8,13,20,.24)),
+    repeating-linear-gradient(0deg, rgba(158,198,236,.11) 0px, rgba(158,198,236,.11) 1px, transparent 1px, transparent 3px);
+}
+h1,h2,h3{
+  color:#d9f1ff;
+  font-family:"Aldrich","IBM Plex Mono","Cascadia Mono","SFMono-Regular","Menlo","Consolas","Liberation Mono",monospace;
+  letter-spacing:.045em;
+  text-transform:uppercase;
+}
+body > h1{
+  color:#9ee3ff;
+  text-shadow:0 0 16px rgba(134,212,255,.35);
+}
+body > h1:first-of-type::after{
+  display:block;
+  width:58%;
+  height:3px;
+  margin-top:8px;
+  border-radius:999px;
+  background:linear-gradient(90deg, rgba(134,212,255,.94), rgba(111,218,184,.84));
+  box-shadow:0 0 18px rgba(134,212,255,.35);
+}
+a{
+  color:#9fe4ff;
+}
+a:hover{
+  color:#c2ecff;
+}
+body p,
+body li{
+  color:#cbc9b2;
+}
+p.wolfbbs-nav-row,body > p:has(> a){
+  border-color:#3a5774;
+  background:linear-gradient(180deg,rgba(22,35,52,.96),rgba(19,31,47,.95));
+  box-shadow:0 10px 22px rgba(0,0,0,.4);
+}
+p.wolfbbs-nav-row::before,body > p:has(> a)::before{
+  background:linear-gradient(90deg, rgba(134,212,255,.08), rgba(111,218,184,.06));
+}
+p.wolfbbs-nav-row a,body > p:has(> a) a{
+  border-color:#47698a;
+  background:linear-gradient(180deg,#1c3147,#1a2b3d);
+  color:#d6f1ff;
+  text-shadow:0 0 10px rgba(134,212,255,.18);
+}
+p.wolfbbs-nav-row a:hover,body > p:has(> a) a:hover{
+  border-color:#628bb3;
+  background:linear-gradient(180deg,#24405c,#1f344b);
+}
+p.wolfbbs-nav-row a.wolfbbs-nav-active,
+body > p:has(> a) a.wolfbbs-nav-active{
+  border-color:#7bc5ee;
+  background:linear-gradient(180deg,#2d4f6f,#233d55);
+  color:#f0f9ff;
+  box-shadow:0 0 0 1px rgba(134,212,255,.38), 0 10px 20px rgba(0,0,0,.45);
+}
+table,
+form,
+.wolfbbs-card,
+.wolfbbs-helper-card,
+.wolfbbs-kpi-card,
+.wolfbbs-action-card,
+.wolfbbs-page-hero,
+.wolfbbs-guide-strip,
+.wolfbbs-section-nav{
+  border-color:#3b5875;
+  background:linear-gradient(180deg,rgba(22,35,52,.96),rgba(18,29,43,.96));
+  box-shadow:var(--shadow-sm);
+}
+th{
+  background:linear-gradient(180deg,rgba(38,59,82,.95),rgba(32,49,70,.95));
+  color:#cdeeff;
+}
+tr:nth-child(even) td{
+  background:rgba(18,29,43,.54);
+}
+td{
+  border-bottom-color:#314a64;
+}
+input[type=text],input[type=password],input[type=email],input[type=number],input[type=url],input[type=search],select,textarea{
+  border-color:#4b6f91;
+  background:linear-gradient(180deg,#1a2b3e,#162536);
+  color:#f3f3e8;
+}
+input::placeholder,
+textarea::placeholder{
+  color:#9fb7cc;
+}
+input:focus,select:focus,textarea:focus{
+  border-color:#8dd8ff;
+  box-shadow:0 0 0 3px rgba(134,212,255,.2);
+  background:linear-gradient(180deg,#203248,#1a2a3b);
+}
+button,input[type=submit],input[type=button],
+.wolfbbs-compose-toolbar button,
+.wolfbbs-handle-assist button,
+.wolfbbs-channel-badges button,
+.wolfbbs-pref-controls button{
+  border:1px solid #5f88ac;
+  color:#eef9ff;
+  font-family:inherit;
+  background:linear-gradient(180deg,#365876,#263f56);
+  box-shadow:0 6px 14px rgba(0,0,0,.35);
+}
+button:hover,input[type=submit]:hover,input[type=button]:hover,
+.wolfbbs-compose-toolbar button:hover,
+.wolfbbs-handle-assist button:hover,
+.wolfbbs-channel-badges button:hover,
+.wolfbbs-pref-controls button:hover{
+  background:linear-gradient(180deg,#3f6689,#2c4862);
+  border-color:#81abd2;
+}
+.wolfbbs-chip,
+.wolfbbs-form-status,
+.wolfbbs-status-pill,
+.wolfbbs-chat-status-pill,
+.wolfbbs-hero-chip,
+.wolfbbs-breadcrumbs a,
+.wolfbbs-chart-legend span{
+  border-color:#4f7394;
+  background:linear-gradient(180deg,#1f354c,#1a2d40);
+  color:#d7f2ff;
+}
+.wolfbbs-form-status.dirty,
+.wolfbbs-status-pill.warn,
+.wolfbbs-chat-status-pill[data-state="warn"],
+.wolfbbs-hero-chip[data-kind="guest"]{
+  border-color:#8b6b35;
+  background:linear-gradient(180deg,#4f3d21,#3f311c);
+  color:#f4dca6;
+}
+.wolfbbs-form-status.error,
+.wolfbbs-status-pill.danger,
+.wolfbbs-chat-status-pill[data-state="error"]{
+  border-color:#8f5160;
+  background:linear-gradient(180deg,#4a2430,#3a1d28);
+  color:#ffc9d0;
+}
+.wolfbbs-status-pill.ok,
+.wolfbbs-chat-status-pill[data-state="live"],
+.wolfbbs-hero-chip[data-kind="admin"]{
+  border-color:#4e8b72;
+  background:linear-gradient(180deg,#1f4134,#19352b);
+  color:#b7f4d9;
+}
+.wolfbbs-kpi-card strong{
+  color:#9fe5ff;
+  background:none;
+  -webkit-text-fill-color:currentColor;
+  text-shadow:0 0 14px rgba(134,212,255,.22);
+}
+.wolfbbs-card:hover,
+.wolfbbs-helper-card:hover,
+.wolfbbs-action-card:hover,
+.wolfbbs-kpi-card:hover{
+  box-shadow:var(--shadow);
+}
+.wolfbbs-chat-pane{
+  border-color:#4f779b;
+  border-top-color:#86d4ff;
+  background:
+    radial-gradient(circle at 84% -12%, rgba(134,212,255,.2), transparent 46%),
+    radial-gradient(circle at 16% 112%, rgba(111,218,184,.14), transparent 44%),
+    linear-gradient(180deg,#0b141f,#09111b);
+}
+.wolfbbs-chat-line{
+  border-bottom-color:rgba(156,190,224,.15);
+}
+.wolfbbs-chat-line-self{
+  border-left-color:#86d4ff;
+  background:rgba(58,98,136,.3);
+}
+.wolfbbs-chat-line-system{
+  border-left-color:#6fdab8;
+  background:rgba(42,85,69,.32);
+}
+.wolfbbs-chat-line-mention{
+  border-left-color:#f2cd80;
+  background:rgba(86,68,38,.33);
+}
+#chatStatus{
+  color:#9edfff !important;
+}
+#wolfbbsPalette,
+#wolfbbsContextHelpPanel{
+  border-color:#466888;
+  background:linear-gradient(180deg,#162435,#132131);
+}
+#wolfbbsPaletteHeader{
+  border-bottom-color:#3b5773;
+  background:linear-gradient(180deg,#203449,#1a2a3d);
+}
+*::-webkit-scrollbar-track{
+  background:rgba(30,49,68,.5);
+}
+*::-webkit-scrollbar-thumb{
+  border-color:rgba(16,24,34,.85);
+  background:linear-gradient(180deg,#5f87ae,#446689);
+}
+*::-webkit-scrollbar-thumb:hover{
+  background:linear-gradient(180deg,#6e98c4,#4f759a);
+}
+body[data-theme-mode="contrast"]{
+  --text:#f8f8ee;
+  --muted:#dad6bb;
+  --line:#5d7898;
+}
+body[data-theme-mode="contrast"] a{
+  color:#d7efff;
+}
+body[data-theme-mode="night"]{
+  --bg:#070d15;
+  --bg-alt:#101824;
+  --surface:#122033;
+  --surface-2:#17273a;
+  --surface-3:#1b3047;
+}
+.wolfbbs-ux20-compass{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  gap:10px 14px;
+  align-items:start;
+  margin:10px 0 12px;
+  padding:12px 14px;
+  border:1px solid #456888;
+  border-radius:12px;
+  background:linear-gradient(180deg,rgba(24,40,58,.95),rgba(18,30,43,.95));
+  box-shadow:0 10px 20px rgba(0,0,0,.32);
+}
+.wolfbbs-ux20-compass strong{
+  display:block;
+  color:#d8f0ff;
+  margin-bottom:4px;
+}
+.wolfbbs-ux20-compass p{
+  margin:0;
+  color:#bfc9b4;
+}
+.wolfbbs-ux20-path{
+  color:#9edfff;
+  font-size:.79rem;
+}
+.wolfbbs-ux20-action-row{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  margin-top:9px;
+}
+.wolfbbs-ux20-action-row a{
+  display:inline-flex;
+  align-items:center;
+  min-height:28px;
+  padding:4px 11px;
+  border-radius:999px;
+  border:1px solid #587da1;
+  background:linear-gradient(180deg,#29455f,#21364b);
+  color:#dbf3ff;
+  font-size:.82rem;
+  font-weight:700;
+}
+.wolfbbs-ux20-action-row a:hover{
+  text-decoration:none;
+  background:linear-gradient(180deg,#335471,#294359);
+}
+.wolfbbs-ux20-metrics{
+  display:flex;
+  flex-wrap:wrap;
+  gap:7px;
+  justify-content:flex-end;
+}
+.wolfbbs-ux20-metrics span{
+  display:inline-flex;
+  align-items:center;
+  min-height:24px;
+  padding:2px 9px;
+  border-radius:999px;
+  border:1px solid #52779a;
+  background:linear-gradient(180deg,#21384f,#1b2f42);
+  color:#ceebff;
+  font-size:.76rem;
+  font-weight:700;
+}
+#wolfbbsUX20PrimaryAction{
+  position:fixed;
+  right:164px;
+  bottom:18px;
+  z-index:43;
+  min-height:40px;
+  padding:8px 13px;
+  border-radius:999px;
+  border:1px solid #86ccef;
+  background:linear-gradient(180deg,#335878,#29455f);
+  color:#f2fbff;
+  box-shadow:0 12px 24px rgba(0,0,0,.38);
+}
+#wolfbbsUX20PrimaryAction:hover{
+  background:linear-gradient(180deg,#40698c,#325471);
+}
+.wolfbbs-ux20-next{
+  margin:10px 0 0;
+  padding:12px 14px;
+  border:1px solid #3f607f;
+  border-radius:12px;
+  background:linear-gradient(180deg,rgba(25,39,56,.95),rgba(18,30,43,.95));
+}
+.wolfbbs-ux20-next strong{
+  display:block;
+  margin-bottom:7px;
+  color:#d8f0ff;
+}
+.wolfbbs-ux20-next ul{
+  margin:0;
+  padding-left:18px;
+}
+.wolfbbs-ux20-next li{
+  color:#c8ccb0;
+}
+.wolfbbs-ux20-form-meter{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:8px;
+  margin:0 0 10px;
+  padding:8px 10px;
+  border:1px solid #466888;
+  border-radius:10px;
+  background:linear-gradient(180deg,#1f3349,#1b2d40);
+}
+.wolfbbs-ux20-form-meter span{
+  color:#d3ecff;
+  font-size:.8rem;
+  font-weight:700;
+}
+.wolfbbs-ux20-meter{
+  flex:1 1 160px;
+  min-width:160px;
+  height:8px;
+  border-radius:999px;
+  border:1px solid #4b7093;
+  background:#152638;
+  overflow:hidden;
+}
+.wolfbbs-ux20-meter b{
+  display:block;
+  width:0%;
+  height:100%;
+  background:linear-gradient(90deg,#77cbf3,#7ae0bd);
+}
+.wolfbbs-ux20-required{
+  margin-left:4px;
+  color:#f2cd80;
+  font-weight:800;
+}
+.wolfbbs-ux20-search-wrap{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+}
+.wolfbbs-ux20-search-wrap input[type=search]{
+  margin:0;
+}
+.wolfbbs-ux20-clear{
+  min-height:28px;
+  padding:4px 9px;
+  border-radius:999px;
+  border:1px solid #5e84a8;
+  background:linear-gradient(180deg,#2b4964,#233b52);
+  color:#def4ff;
+  box-shadow:none;
+}
+.wolfbbs-ux20-clear:hover{
+  background:linear-gradient(180deg,#355979,#2a465f);
+}
+.wolfbbs-ux20-section-filter{
+  min-width:200px;
+}
+.wolfbbs-ux20-section-meter{
+  display:inline-flex;
+  align-items:center;
+  min-height:24px;
+  padding:2px 9px;
+  border-radius:999px;
+  border:1px solid #567a9b;
+  background:linear-gradient(180deg,#1f354c,#1a2d40);
+  color:#d7f2ff;
+  font-size:.76rem;
+  font-weight:700;
+}
+.wolfbbs-ux20-toolbar-button{
+  min-height:28px;
+  padding:4px 9px;
+  border-radius:999px;
+  border:1px solid #5f88ac;
+  background:linear-gradient(180deg,#335674,#28445d);
+  color:#eaf7ff;
+  box-shadow:none;
+  font-size:.8rem;
+}
+table.wolfbbs-ux20-freeze-col th:first-child,
+table.wolfbbs-ux20-freeze-col td:first-child{
+  position:sticky;
+  left:0;
+  z-index:3;
+  background:linear-gradient(180deg,#243c55,#1c3044);
+}
+table.wolfbbs-ux20-freeze-col td:first-child{
+  z-index:2;
+}
+.wolfbbs-ux20-highlight{
+  background:rgba(87,141,194,.22);
+}
+.wolfbbs-hero-chip[data-kind="ux20"]{
+  border-color:#5583a7;
+  background:linear-gradient(180deg,#21384f,#1a2e42);
+  color:#d7f2ff;
+}
 @media (max-width: 820px){
-  body{padding:18px 14px 26px}
-  body > p:has(> a){padding:9px 10px}
+  .wolfbbs-ux20-compass{
+    grid-template-columns:1fr;
+  }
+  .wolfbbs-ux20-metrics{
+    justify-content:flex-start;
+  }
+  #wolfbbsUX20PrimaryAction{
+    right:10px;
+    left:10px;
+    bottom:58px;
+  }
+  .wolfbbs-pref-controls{
+    margin-left:0;
+  }
+  .wolfbbs-breadcrumbs{
+    margin-bottom:6px;
+  }
+  #wolfbbsBackToTop{
+    right:10px;
+    bottom:60px;
+  }
+  #wolfbbsNotesButton{
+    left:10px;
+    bottom:60px;
+  }
+  #wolfbbsUXDiagButton{
+    left:124px;
+    bottom:60px;
+  }
+  #wolfbbsFeedbackButton{
+    left:10px;
+    bottom:108px;
+  }
+  #wolfbbsBugButton{
+    left:124px;
+    bottom:108px;
+  }
+  #wolfbbsActionDock{
+    left:10px;
+    right:10px;
+    width:auto;
+    bottom:154px;
+  }
+  #wolfbbsActionDock[data-side="left"],
+  #wolfbbsActionDock[data-side="right"]{
+    left:10px;
+    right:10px;
+  }
+  p.wolfbbs-nav-row,body > p:has(> a){
+    position:static;
+  }
+  .wolfbbs-page-hero{
+    flex-direction:column;
+    gap:9px;
+  }
+  .wolfbbs-page-hero-meta{
+    justify-content:flex-start;
+  }
+  .wolfbbs-section-nav{
+    position:static;
+  }
+  .wolfbbs-guide-strip{
+    grid-template-columns:1fr;
+  }
+  .wolfbbs-guide-actions{
+    justify-content:flex-start;
+  }
+  .wolfbbs-dashboard{
+    grid-template-columns:1fr;
+  }
+  .wolfbbs-chart-shell{
+    height:152px;
+  }
+  .wolfbbs-dash-mini{
+    grid-template-columns:1fr 1fr;
+  }
+  body > h1:first-of-type::after{
+    width:56%;
+  }
+}
+@media (prefers-reduced-motion:no-preference){
+  .wolfbbs-card,
+  .wolfbbs-kpi-card,
+  .wolfbbs-action-card,
+  .wolfbbs-helper-card,
+  .wolfbbs-banner{
+    animation:wolfbbsRise .34s ease both;
+  }
+}
+@keyframes wolfbbsRise{
+  from{
+    opacity:0;
+    transform:translateY(6px);
+  }
+  to{
+    opacity:1;
+    transform:translateY(0);
+  }
+}
+@media (max-width: 820px){
+  body{
+    width:calc(100% - 1.2rem);
+    padding:16px 0 84px;
+  }
+  p.wolfbbs-nav-row,body > p:has(> a){padding:9px 10px}
   input[type=text],input[type=password],input[type=email],input[type=number],input[type=url],input[type=search],select,textarea{
     width:100%;
   }
@@ -6099,10 +8797,21 @@ body.wolfbbs-compose-fullscreen-open{
     grid-template-columns:1fr;
   }
   #wolfbbsCommandButton{
-    left:14px;
-    right:14px;
+    left:10px;
+    right:10px;
     bottom:14px;
     justify-content:center;
+  }
+}
+@media (max-width: 560px){
+  h1{font-size:1.56rem}
+  h2{font-size:1.12rem}
+  .wolfbbs-card,.wolfbbs-kpi-card{padding:14px 14px}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{
+    animation:none !important;
+    transition:none !important;
   }
 }
 </style>
@@ -6112,11 +8821,3810 @@ body.wolfbbs-compose-fullscreen-open{
     if (document.documentElement.dataset.wolfbbsModernUi === "1") return;
     document.documentElement.dataset.wolfbbsModernUi = "1";
 
-  const navRows = Array.from(document.querySelectorAll("p")).filter((p) => p.querySelectorAll("a").length >= 3 && p.textContent.includes("|"));
-  navRows.forEach((row) => row.classList.add("wolfbbs-nav-row"));
+  const uiPrefsKey = "wolfbbs:ui:prefs:v2";
+  const sectionStatePrefix = "wolfbbs:ui:section:";
+  const favoritesKey = "wolfbbs:ui:favorites:v1";
+  const tableViewPrefix = "wolfbbs:ui:tableview:";
+  const notesKey = "wolfbbs:ui:quick-notes:v1";
+  const focusKey = "wolfbbs:ui:focus-timer:v1";
+  const replayPrefix = "wolfbbs:ui:replay:";
+  const goalsPrefix = "wolfbbs:ui:goals:";
+  const telemetryKey = "wolfbbs:ui:telemetry:v1";
+  const paletteHistoryKey = "wolfbbs:ui:palette-history:v1";
+  const focusModeKey = "wolfbbs:ui:focus-mode:v1";
+  const guideStateKey = "wolfbbs:ui:guide-state:v1";
+  const toastHistoryKey = "wolfbbs:ui:toast-history:v1";
+  const undoStackKey = "wolfbbs:ui:undo-stack:v1";
+  const workspaceKey = "wolfbbs:ui:workspaces:v1";
+  const revisitKeyPrefix = "wolfbbs:ui:last-visit:";
+  const kpiSnapshotKeyPrefix = "wolfbbs:ui:kpi-snapshot:";
+  const spotlightKey = "wolfbbs:ui:spotlight:v1";
+  const checkpointKey = "wolfbbs:ui:checkpoints:v1";
+  const draftKeyPrefix = "wolfbbs:ui:draft:";
+  const incidentKey = "wolfbbs:ui:incidents:v1";
+  const playbookKeyPrefix = "wolfbbs:ui:playbook:";
+  const reminderKey = "wolfbbs:ui:reminders:v1";
+  const releaseGateKey = "wolfbbs:ui:release-gate:v1";
+  const feedbackKey = "wolfbbs:ui:feedback:v1";
+  const kpiWatchKeyPrefix = "wolfbbs:ui:kpi-watch:";
+  const routePinsKey = "wolfbbs:ui:route-pins:v1";
+  const sectionPinsKeyPrefix = "wolfbbs:ui:section-pins:";
+  const sectionDoneKeyPrefix = "wolfbbs:ui:section-done:";
+  const bugCaptureKey = "wolfbbs:ui:bug-capture:v1";
+  const sessionStartKey = "wolfbbs:ui:session-start:v1";
+  const sessionTrailKey = "wolfbbs:ui:session-trail:v1";
+  const actionDockStateKey = "wolfbbs:ui:action-dock:v1";
+  const syncChannelName = "wolfbbs-modern-ui-sync";
+  const syncTabID = "tab-" + Math.random().toString(36).slice(2, 10);
+  let wolfbbsSyncChannel = null;
+
+  function readJSON(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) return fallback;
+      const parsed = JSON.parse(raw);
+      return parsed === null ? fallback : parsed;
+    } catch (_) {
+      return fallback;
+    }
+  }
+
+  function writeJSON(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+      window.dispatchEvent(new CustomEvent("wolfbbs-storage-updated", { detail: { key: key } }));
+      if (wolfbbsSyncChannel) {
+        wolfbbsSyncChannel.postMessage({
+          type: "storage:update",
+          key: key,
+          at: new Date().toISOString(),
+          source: syncTabID
+        });
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+  }
+
+  function ensureToastRegion() {
+    let region = document.getElementById("wolfbbsToastRegion");
+    if (region) return region;
+    region = document.createElement("div");
+    region.id = "wolfbbsToastRegion";
+    document.body.appendChild(region);
+    return region;
+  }
+
+  function ensureLiveRegion() {
+    let region = document.getElementById("wolfbbsLiveRegion");
+    if (region) return region;
+    region = document.createElement("div");
+    region.id = "wolfbbsLiveRegion";
+    region.className = "wolfbbs-live-region";
+    region.setAttribute("role", "status");
+    region.setAttribute("aria-live", "polite");
+    region.setAttribute("aria-atomic", "true");
+    document.body.appendChild(region);
+    return region;
+  }
+
+  function announceLive(message) {
+    const text = String(message || "").trim();
+    if (!text) return;
+    const region = ensureLiveRegion();
+    region.textContent = "";
+    window.setTimeout(() => {
+      region.textContent = text;
+    }, 12);
+  }
+
+  function showToast(message, kind) {
+    const text = String(message || "").trim();
+    if (!text) return;
+    const region = ensureToastRegion();
+    const item = document.createElement("div");
+    item.className = "wolfbbs-toast";
+    item.setAttribute("data-kind", kind || "ok");
+    item.textContent = text;
+    region.appendChild(item);
+    window.requestAnimationFrame(() => item.classList.add("show"));
+    window.setTimeout(() => {
+      item.classList.remove("show");
+      window.setTimeout(() => item.remove(), 170);
+    }, 1600);
+    announceLive(text);
+    const history = readJSON(toastHistoryKey, []);
+    history.unshift({
+      text: text,
+      kind: kind || "ok",
+      at: new Date().toISOString()
+    });
+    writeJSON(toastHistoryKey, history.slice(0, 60));
+  }
+
+  function pushUndoAction(action) {
+    if (!action || !action.type) return;
+    const stack = readJSON(undoStackKey, []);
+    stack.unshift(action);
+    writeJSON(undoStackKey, stack.slice(0, 20));
+  }
+
+  function popUndoAction() {
+    const stack = readJSON(undoStackKey, []);
+    if (!stack.length) return null;
+    const action = stack.shift();
+    writeJSON(undoStackKey, stack);
+    return action;
+  }
+
+  function loadTelemetry() {
+    return Object.assign({
+      routeHits: {},
+      events: {},
+      lastUpdatedAt: ""
+    }, readJSON(telemetryKey, {}));
+  }
+
+  function saveTelemetry(next) {
+    const payload = Object.assign({
+      routeHits: {},
+      events: {},
+      lastUpdatedAt: ""
+    }, next || {});
+    payload.lastUpdatedAt = new Date().toISOString();
+    writeJSON(telemetryKey, payload);
+    return payload;
+  }
+
+  function trackTelemetry(eventKey) {
+    const key = String(eventKey || "").trim();
+    if (!key) return;
+    const telemetry = loadTelemetry();
+    telemetry.routeHits[currentRoute || "/"] = (telemetry.routeHits[currentRoute || "/"] || 0) + 1;
+    telemetry.events[key] = (telemetry.events[key] || 0) + 1;
+    saveTelemetry(telemetry);
+    window.dispatchEvent(new Event("wolfbbs-telemetry-updated"));
+  }
+
+  function downloadJSONFile(filename, payload) {
+    const body = JSON.stringify(payload, null, 2);
+    const blob = new Blob([body], { type: "application/json;charset=utf-8" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    window.setTimeout(() => {
+      URL.revokeObjectURL(link.href);
+      link.remove();
+    }, 0);
+  }
+
+  const uiPrefs = Object.assign({
+    theme: "default",
+    density: "comfortable",
+    fontScale: 1,
+    layout: "standard",
+    accent: "blue",
+    motion: "full"
+  }, readJSON(uiPrefsKey, {}));
+
+  function persistUIPrefs() {
+    writeJSON(uiPrefsKey, uiPrefs);
+  }
+
+  function applyUIPrefs() {
+    const theme = ["default", "contrast", "night"].includes(uiPrefs.theme) ? uiPrefs.theme : "default";
+    const density = uiPrefs.density === "compact" ? "compact" : "comfortable";
+    const fontScale = clamp(Number(uiPrefs.fontScale || 1), 0.9, 1.2);
+    const layout = ["standard", "wide", "focus"].includes(uiPrefs.layout) ? uiPrefs.layout : "standard";
+    const accent = ["blue", "teal", "amber"].includes(uiPrefs.accent) ? uiPrefs.accent : "blue";
+    const motion = uiPrefs.motion === "reduced" ? "reduced" : "full";
+    uiPrefs.theme = theme;
+    uiPrefs.density = density;
+    uiPrefs.fontScale = fontScale;
+    uiPrefs.layout = layout;
+    uiPrefs.accent = accent;
+    uiPrefs.motion = motion;
+    document.body.setAttribute("data-theme-mode", theme);
+    document.body.setAttribute("data-density", density);
+    document.body.setAttribute("data-layout-mode", layout);
+    document.body.setAttribute("data-accent-mode", accent);
+    document.body.setAttribute("data-motion-mode", motion);
+    document.body.classList.toggle("wolfbbs-motion-reduced", motion === "reduced");
+    document.documentElement.style.setProperty("--font-scale", String(fontScale));
+  }
+
+  applyUIPrefs();
+
+  function normalizePath(raw) {
+    const value = String(raw || "").trim();
+    if (!value || value[0] !== "/") return "";
+    const base = value.split("?")[0].replace(/\/+$/, "");
+    return base || "/";
+  }
 
   const title = (document.querySelector("h1") && document.querySelector("h1").textContent.trim()) || document.title || "WolfBBS";
   const currentPath = location.pathname + location.search;
+  const currentRoute = normalizePath(currentPath);
+  if (currentRoute) {
+    document.body.setAttribute("data-route", currentRoute);
+  }
+  try {
+    const startedAt = Number(readJSON(sessionStartKey, Date.now()) || Date.now());
+    writeJSON(sessionStartKey, startedAt);
+    const trail = Object.assign({ visited: [] }, readJSON(sessionTrailKey, {}));
+    const nextVisited = [currentRoute || "/",].concat((trail.visited || []).filter((item) => item !== (currentRoute || "/"))).slice(0, 20);
+    writeJSON(sessionTrailKey, {
+      startedAt: startedAt,
+      updatedAt: new Date().toISOString(),
+      visited: nextVisited
+    });
+  } catch (_) {}
+  trackTelemetry("route:view");
+  function isCurrentNav(href) {
+    const candidate = normalizePath(href);
+    if (!candidate) return false;
+    if (candidate === "/") return currentRoute === "/";
+    return currentRoute === candidate || currentRoute.startsWith(candidate + "/");
+  }
+
+  const navRows = Array.from(document.querySelectorAll("p")).filter((p) => p.querySelectorAll("a").length >= 3 && p.textContent.includes("|"));
+  navRows.forEach((row) => {
+    row.classList.add("wolfbbs-nav-row");
+    row.querySelectorAll("a[href]").forEach((anchor) => {
+      const href = anchor.getAttribute("href");
+      if (isCurrentNav(href)) {
+        anchor.classList.add("wolfbbs-nav-active");
+      }
+    });
+  });
+  function routeKind(pathname) {
+    const p = String(pathname || "");
+    if (p.startsWith("/admin")) return "admin";
+    if (p === "/connect" || p === "/tour" || p === "/help" || p === "/login" || p === "/start") return "guest";
+    return "caller";
+  }
+
+  function routeLabel(kind) {
+    if (kind === "admin") return "Sysop Lane";
+    if (kind === "guest") return "Guest Lane";
+    return "Caller Lane";
+  }
+
+  function buildPageShell() {
+    const h1 = document.querySelector("h1");
+    if (!h1 || h1.closest(".wolfbbs-page-hero")) return;
+    const navRow = navRows.length ? navRows[0] : null;
+    const lead = Array.from(document.querySelectorAll("body > p")).find((p) => {
+      if (p === navRow) return false;
+      if (p.classList.contains("wolfbbs-nav-row")) return false;
+      if (p.querySelector("a")) return false;
+      const text = (p.textContent || "").trim();
+      return text.length >= 18;
+    });
+
+    const hero = document.createElement("header");
+    hero.className = "wolfbbs-page-hero";
+    const heroMain = document.createElement("div");
+    heroMain.className = "wolfbbs-page-hero-main";
+    const heroMeta = document.createElement("div");
+    heroMeta.className = "wolfbbs-page-hero-meta";
+
+    const kind = routeKind(currentRoute);
+    const laneChip = document.createElement("span");
+    laneChip.className = "wolfbbs-hero-chip";
+    laneChip.setAttribute("data-kind", kind);
+    laneChip.textContent = routeLabel(kind);
+    heroMeta.appendChild(laneChip);
+
+    const jumpChip = document.createElement("span");
+    jumpChip.className = "wolfbbs-hero-chip";
+    jumpChip.textContent = "Ctrl+K jump";
+    heroMeta.appendChild(jumpChip);
+
+    h1.parentNode.insertBefore(hero, h1);
+    hero.appendChild(heroMain);
+    hero.appendChild(heroMeta);
+    heroMain.appendChild(h1);
+    if (lead && lead.parentNode === document.body) {
+      heroMain.appendChild(lead);
+    }
+
+    if (document.querySelector("main.wolfbbs-main")) return;
+    const scriptNodeRaw = document.getElementById("wolfbbs-modern-ui-js");
+    const scriptNode = scriptNodeRaw && scriptNodeRaw.parentNode === document.body ? scriptNodeRaw : null;
+    const contentStart = navRow ? navRow.nextSibling : hero.nextSibling;
+    if (!contentStart) return;
+    const main = document.createElement("main");
+    main.className = "wolfbbs-main";
+    main.id = "wolfbbs-main-anchor";
+    let node = contentStart;
+    while (node && node !== scriptNode) {
+      const next = node.nextSibling;
+      if (node.nodeType === 1 || (node.nodeType === 3 && node.textContent.trim())) {
+        main.appendChild(node);
+      }
+      node = next;
+    }
+    if (scriptNode) {
+      document.body.insertBefore(main, scriptNode);
+    } else {
+      document.body.appendChild(main);
+    }
+  }
+
+  buildPageShell();
+  const routeLabelOverrides = {
+    "admin": "Admin",
+    "setup": "Setup",
+    "config": "Config",
+    "launch": "Launch",
+    "ops": "Ops",
+    "system": "System",
+    "events": "Events",
+    "boards": "Boards",
+    "mail": "Mail",
+    "chat": "Chat",
+    "doors": "Doors",
+    "status": "Status",
+    "today": "Today",
+    "digest": "Digest",
+    "attention": "Attention",
+    "clubhouse": "Clubhouse",
+    "radar": "Radar",
+    "scores": "Scores",
+    "tournaments": "Tournaments",
+    "connect": "Connect",
+    "tour": "Tour",
+    "showcase": "Showcase",
+    "help": "Help",
+    "gateway": "Gateway",
+    "offline": "Offline",
+    "collections": "Collections",
+    "directory": "Directory",
+    "discover": "Discover",
+    "first-call": "First Call"
+  };
+
+  function humanizeRoutePart(part) {
+    const clean = String(part || "").trim().toLowerCase();
+    if (!clean) return "";
+    if (routeLabelOverrides[clean]) return routeLabelOverrides[clean];
+    return clean.replace(/[-_]+/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase());
+  }
+
+  function mountSkipAndScrollUI() {
+    if (!document.getElementById("wolfbbsSkipLink")) {
+      const skip = document.createElement("a");
+      skip.id = "wolfbbsSkipLink";
+      skip.className = "wolfbbs-skip-link";
+      skip.href = "#wolfbbs-main-anchor";
+      skip.textContent = "Skip to content";
+      document.body.insertBefore(skip, document.body.firstChild);
+    }
+    if (!document.getElementById("wolfbbsScrollProgress")) {
+      const progress = document.createElement("div");
+      progress.id = "wolfbbsScrollProgress";
+      progress.innerHTML = "<span></span>";
+      document.body.appendChild(progress);
+    }
+    const progressFill = document.querySelector("#wolfbbsScrollProgress span");
+    function updateProgress() {
+      const doc = document.documentElement;
+      const total = Math.max(1, doc.scrollHeight - doc.clientHeight);
+      const pct = clamp((doc.scrollTop / total) * 100, 0, 100);
+      if (progressFill) {
+        progressFill.style.width = pct.toFixed(2) + "%";
+      }
+      const back = document.getElementById("wolfbbsBackToTop");
+      if (back) {
+        back.classList.toggle("show", doc.scrollTop > 220);
+      }
+    }
+    if (!document.getElementById("wolfbbsBackToTop")) {
+      const back = document.createElement("button");
+      back.id = "wolfbbsBackToTop";
+      back.type = "button";
+      back.textContent = "Top";
+      back.addEventListener("click", () => {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      });
+      document.body.appendChild(back);
+    }
+    window.addEventListener("scroll", updateProgress, { passive: true });
+    updateProgress();
+  }
+
+  function mountBreadcrumbs() {
+    if (document.querySelector(".wolfbbs-breadcrumbs")) return;
+    const parts = currentRoute.split("/").filter(Boolean);
+    if (!parts.length) return;
+    const crumb = document.createElement("nav");
+    crumb.className = "wolfbbs-breadcrumbs";
+    crumb.setAttribute("aria-label", "Breadcrumb");
+    const home = document.createElement("a");
+    home.href = "/start";
+    home.textContent = "Start";
+    crumb.appendChild(home);
+    let href = "";
+    parts.forEach((part) => {
+      href += "/" + part;
+      const sep = document.createElement("span");
+      sep.className = "wolfbbs-breadcrumb-sep";
+      sep.textContent = "/";
+      crumb.appendChild(sep);
+      const link = document.createElement("a");
+      link.href = href;
+      link.textContent = humanizeRoutePart(part);
+      crumb.appendChild(link);
+    });
+    const hero = document.querySelector(".wolfbbs-page-hero");
+    if (hero && hero.parentNode) {
+      hero.parentNode.insertBefore(crumb, hero);
+      return;
+    }
+    const navRow = document.querySelector("p.wolfbbs-nav-row");
+    if (navRow && navRow.parentNode) {
+      navRow.parentNode.insertBefore(crumb, navRow);
+    }
+  }
+
+  function applyGlossaryEnhancer() {
+    const glossary = {
+      "WFC": "Waiting For Caller operator console.",
+      "watch tier": "Boards that escalate into attention workflows.",
+      "digest tier": "Boards surfaced in lower-noise daily summaries.",
+      "launch readiness": "Go-live health and configuration confidence state.",
+      "sysop": "Primary board operator role."
+    };
+    const nodes = Array.from(document.querySelectorAll("p, li"));
+    nodes.forEach((node) => {
+      if (node.dataset.wolfbbsGlossary === "1") return;
+      let html = node.innerHTML;
+      let touched = false;
+      Object.keys(glossary).forEach((term) => {
+        const re = new RegExp("\\b" + term.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&") + "\\b", "gi");
+        if (!re.test(html)) return;
+        touched = true;
+        html = html.replace(re, (match) => '<abbr title="' + glossary[term] + '">' + match + '</abbr>');
+      });
+      if (touched) {
+        node.innerHTML = html;
+        node.dataset.wolfbbsGlossary = "1";
+      }
+    });
+  }
+
+  function mountRevisitBanner() {
+    if (document.querySelector(".wolfbbs-revisit-banner")) return;
+    const key = revisitKeyPrefix + (currentRoute || "/");
+    const last = readJSON(key, {});
+    writeJSON(key, { at: new Date().toISOString() });
+    if (!last || !last.at) return;
+    const previous = new Date(last.at).getTime();
+    if (!Number.isFinite(previous)) return;
+    const elapsedSec = Math.max(1, Math.floor((Date.now() - previous) / 1000));
+    const elapsedLabel = elapsedSec < 60 ? (elapsedSec + "s ago") : elapsedSec < 3600 ? (Math.floor(elapsedSec / 60) + "m ago") : (Math.floor(elapsedSec / 3600) + "h ago");
+    const bar = document.createElement("div");
+    bar.className = "wolfbbs-revisit-banner";
+    bar.textContent = "Last visited this route " + elapsedLabel + ".";
+    const dismiss = document.createElement("button");
+    dismiss.type = "button";
+    dismiss.className = "wolfbbs-section-toggle";
+    dismiss.textContent = "Dismiss";
+    dismiss.addEventListener("click", () => bar.remove());
+    bar.appendChild(dismiss);
+    const hero = document.querySelector(".wolfbbs-page-hero");
+    if (hero && hero.parentNode) {
+      hero.parentNode.insertBefore(bar, hero.nextSibling);
+    }
+  }
+
+  function mountKPIDeltas() {
+    const cards = Array.from(document.querySelectorAll(".wolfbbs-kpi-card"));
+    if (!cards.length) return;
+    const key = kpiSnapshotKeyPrefix + (currentRoute || "/");
+    const previous = readJSON(key, {});
+    const next = {};
+    cards.forEach((card, idx) => {
+      const strong = card.querySelector("strong");
+      if (!strong) return;
+      const value = parseNumericValue(strong.textContent || "");
+      if (value === null) return;
+      const slot = "kpi_" + idx;
+      next[slot] = value;
+      if (!(slot in previous)) return;
+      const delta = value - Number(previous[slot] || 0);
+      const badge = document.createElement("span");
+      badge.className = "wolfbbs-kpi-delta";
+      if (delta > 0) {
+        badge.classList.add("up");
+        badge.textContent = "▲ " + delta.toFixed(1);
+      } else if (delta < 0) {
+        badge.classList.add("down");
+        badge.textContent = "▼ " + Math.abs(delta).toFixed(1);
+      } else {
+        badge.textContent = "• 0.0";
+      }
+      if (!card.querySelector(".wolfbbs-kpi-delta")) {
+        strong.insertAdjacentElement("afterend", badge);
+      }
+    });
+    writeJSON(key, next);
+    evaluateKPIWatchers(next);
+  }
+
+  function loadFavorites() {
+    return readJSON(favoritesKey, []).filter((item) => item && item.href && item.label);
+  }
+
+  function saveFavorites(rows) {
+    const clean = rows
+      .map((item) => ({
+        href: normalizePath(item.href),
+        label: String(item.label || "").trim() || "Route"
+      }))
+      .filter((item) => item.href)
+      .slice(0, 10);
+    writeJSON(favoritesKey, clean);
+    return clean;
+  }
+
+  function loadRoutePins() {
+    return readJSON(routePinsKey, []).filter((item) => item && item.href && item.label);
+  }
+
+  function saveRoutePins(rows) {
+    const clean = (rows || [])
+      .map((item) => ({
+        href: normalizePath(item.href),
+        label: String(item.label || "").trim() || "Route"
+      }))
+      .filter((item) => item.href)
+      .slice(0, 12);
+    writeJSON(routePinsKey, clean);
+    return clean;
+  }
+
+  function isCurrentFavorite() {
+    return loadFavorites().some((item) => normalizePath(item.href) === currentRoute);
+  }
+
+  function toggleFavoriteCurrentRoute() {
+    const favorites = loadFavorites();
+    const index = favorites.findIndex((item) => normalizePath(item.href) === currentRoute);
+    if (index >= 0) {
+      favorites.splice(index, 1);
+      saveFavorites(favorites);
+      showToast("Removed from favorites", "ok");
+      return false;
+    }
+    favorites.unshift({ href: currentRoute, label: title });
+    saveFavorites(favorites);
+    showToast("Added to favorites", "ok");
+    return true;
+  }
+
+  function renderFavoritesRail() {
+    const existing = document.querySelector(".wolfbbs-favorites-rail");
+    if (existing) existing.remove();
+    const favorites = loadFavorites();
+    if (!favorites.length) return;
+    const rail = document.createElement("div");
+    rail.className = "wolfbbs-favorites-rail";
+    const heading = document.createElement("strong");
+    heading.textContent = "Favorites";
+    rail.appendChild(heading);
+    favorites.forEach((item) => {
+      const link = document.createElement("a");
+      link.href = item.href;
+      link.textContent = item.label;
+      rail.appendChild(link);
+    });
+    const navRow = document.querySelector("p.wolfbbs-nav-row");
+    const recentRail = document.querySelector(".wolfbbs-recent-rail");
+    const hero = document.querySelector(".wolfbbs-page-hero");
+    if (recentRail && recentRail.parentNode) {
+      recentRail.parentNode.insertBefore(rail, recentRail.nextSibling);
+      return;
+    }
+    if (navRow && navRow.parentNode) {
+      navRow.parentNode.insertBefore(rail, navRow.nextSibling);
+      return;
+    }
+    if (hero && hero.parentNode) {
+      hero.parentNode.insertBefore(rail, hero.nextSibling);
+    }
+  }
+
+  function loadFocusState() {
+    return Object.assign({
+      durationSeconds: 25 * 60,
+      remainingSeconds: 25 * 60,
+      running: false,
+      startedAt: ""
+    }, readJSON(focusKey, {}));
+  }
+
+  function saveFocusState(next) {
+    const state = Object.assign({
+      durationSeconds: 25 * 60,
+      remainingSeconds: 25 * 60,
+      running: false,
+      startedAt: ""
+    }, next || {});
+    writeJSON(focusKey, state);
+    return state;
+  }
+
+  function formatDuration(totalSeconds) {
+    const value = Math.max(0, Number(totalSeconds || 0));
+    const mins = Math.floor(value / 60);
+    const secs = value % 60;
+    return String(mins).padStart(2, "0") + ":" + String(secs).padStart(2, "0");
+  }
+
+  function attachFocusTimerUI(target, controls) {
+    if (!target) return;
+    const pill = document.createElement("span");
+    pill.className = "wolfbbs-focus-pill";
+    pill.setAttribute("data-state", "idle");
+    target.appendChild(pill);
+
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    controls.appendChild(toggle);
+
+    const reset = document.createElement("button");
+    reset.type = "button";
+    reset.textContent = "Reset focus";
+    controls.appendChild(reset);
+
+    let state = loadFocusState();
+    let ticker = null;
+
+    function sync() {
+      if (state.running && state.startedAt) {
+        const started = new Date(state.startedAt).getTime();
+        if (Number.isFinite(started)) {
+          const elapsed = Math.floor((Date.now() - started) / 1000);
+          state.remainingSeconds = Math.max(0, state.durationSeconds - elapsed);
+          if (state.remainingSeconds === 0) {
+            state.running = false;
+            state.startedAt = "";
+            showToast("Focus session complete", "ok");
+            trackTelemetry("focus:complete");
+          }
+        }
+      }
+      pill.textContent = "Focus " + formatDuration(state.remainingSeconds);
+      pill.setAttribute("data-state", state.running ? "running" : "idle");
+      toggle.textContent = state.running ? "Pause focus" : "Start focus";
+      saveFocusState(state);
+    }
+
+    function startTicker() {
+      if (ticker) window.clearInterval(ticker);
+      ticker = window.setInterval(sync, 1000);
+    }
+
+    toggle.addEventListener("click", () => {
+      if (!state.running) {
+        state.running = true;
+        state.startedAt = new Date(Date.now() - (state.durationSeconds - state.remainingSeconds) * 1000).toISOString();
+        trackTelemetry("focus:start");
+      } else {
+        state.running = false;
+        state.startedAt = "";
+        trackTelemetry("focus:pause");
+      }
+      sync();
+    });
+
+    reset.addEventListener("click", () => {
+      state = {
+        durationSeconds: 25 * 60,
+        remainingSeconds: 25 * 60,
+        running: false,
+        startedAt: ""
+      };
+      sync();
+      showToast("Focus timer reset", "ok");
+      trackTelemetry("focus:reset");
+    });
+
+    sync();
+    startTicker();
+  }
+
+  function readFocusMode() {
+    return readJSON(focusModeKey, { enabled: false }).enabled === true;
+  }
+
+  function applyFocusMode(enabled) {
+    document.body.classList.toggle("wolfbbs-focus-ui", Boolean(enabled));
+    writeJSON(focusModeKey, { enabled: Boolean(enabled) });
+  }
+
+  function mountGuideMinimizeControl() {
+    const guide = document.querySelector(".wolfbbs-guide-strip");
+    if (!guide || guide.querySelector("[data-guide-toggle]")) return;
+    const state = Object.assign({ minimized: false }, readJSON(guideStateKey + ":" + currentRoute, {}));
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("data-guide-toggle", "1");
+    button.className = "wolfbbs-section-toggle";
+    function sync() {
+      guide.classList.toggle("wolfbbs-guide-minimized", Boolean(state.minimized));
+      button.textContent = state.minimized ? "Show guide" : "Hide guide";
+      writeJSON(guideStateKey + ":" + currentRoute, state);
+    }
+    button.addEventListener("click", () => {
+      state.minimized = !state.minimized;
+      sync();
+      trackTelemetry("guide:toggle");
+    });
+    const host = guide.querySelector("strong") ? guide.querySelector("strong").parentNode : guide;
+    host.appendChild(button);
+    sync();
+  }
+
+  function mountNetworkStatusChip(heroMeta) {
+    if (!heroMeta || heroMeta.querySelector('[data-kind="net-online"], [data-kind="net-offline"]')) return;
+    const chip = document.createElement("span");
+    chip.className = "wolfbbs-hero-chip";
+    function sync() {
+      const online = navigator.onLine;
+      chip.setAttribute("data-kind", online ? "net-online" : "net-offline");
+      chip.textContent = online ? "Online" : "Offline";
+    }
+    sync();
+    window.addEventListener("online", () => {
+      sync();
+      announceLive("Network online");
+      trackTelemetry("network:online");
+    });
+    window.addEventListener("offline", () => {
+      sync();
+      announceLive("Network offline");
+      trackTelemetry("network:offline");
+    });
+    heroMeta.appendChild(chip);
+  }
+
+  function mountLatencyChip(heroMeta) {
+    if (!heroMeta || heroMeta.querySelector('[data-kind="latency"]')) return;
+    const chip = document.createElement("span");
+    chip.className = "wolfbbs-hero-chip";
+    chip.setAttribute("data-kind", "latency");
+    chip.textContent = "Latency --";
+    heroMeta.appendChild(chip);
+    async function probe() {
+      const started = Date.now();
+      try {
+        const res = await fetch("/healthz?ts=" + encodeURIComponent(String(started)), { cache: "no-store", credentials: "same-origin" });
+        if (!res.ok) throw new Error("bad response");
+        const ms = Math.max(0, Date.now() - started);
+        chip.textContent = "Latency " + ms + "ms";
+      } catch (_) {
+        chip.textContent = "Latency n/a";
+      }
+    }
+    probe();
+    window.setInterval(probe, 60000);
+  }
+
+  function mountTelemetryChip(heroMeta) {
+    if (!heroMeta || heroMeta.querySelector('[data-kind="telemetry"]')) return;
+    const chip = document.createElement("span");
+    chip.className = "wolfbbs-hero-chip";
+    chip.setAttribute("data-kind", "telemetry");
+    function sync() {
+      const telemetry = loadTelemetry();
+      const actions = Object.values(telemetry.events || {}).reduce((acc, value) => acc + Number(value || 0), 0);
+      chip.textContent = "Actions " + actions;
+    }
+    sync();
+    window.addEventListener("storage", (event) => {
+      if (event && event.key === telemetryKey) sync();
+    });
+    window.addEventListener("wolfbbs-telemetry-updated", sync);
+    heroMeta.appendChild(chip);
+  }
+
+  function mountSessionDurationChip(heroMeta) {
+    if (!heroMeta || heroMeta.querySelector('[data-kind="session-time"]')) return;
+    const chip = document.createElement("span");
+    chip.className = "wolfbbs-hero-chip wolfbbs-session-chip";
+    chip.setAttribute("data-kind", "session-time");
+    function sync() {
+      const startedAt = Number(readJSON(sessionStartKey, Date.now()) || Date.now());
+      const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+      const mm = String(Math.floor(elapsed / 60)).padStart(2, "0");
+      const ss = String(elapsed % 60).padStart(2, "0");
+      chip.textContent = "Session " + mm + ":" + ss;
+    }
+    sync();
+    window.setInterval(sync, 1000);
+    heroMeta.appendChild(chip);
+  }
+
+  function mountSessionTrailChip(heroMeta) {
+    if (!heroMeta || heroMeta.querySelector('[data-kind="session-trail"]')) return;
+    const chip = document.createElement("span");
+    chip.className = "wolfbbs-hero-chip wolfbbs-session-chip";
+    chip.setAttribute("data-kind", "session-trail");
+    function sync() {
+      const trail = Object.assign({ visited: [] }, readJSON(sessionTrailKey, {}));
+      const visited = Array.isArray(trail.visited) ? trail.visited : [];
+      chip.textContent = "Hops " + visited.length;
+      chip.title = visited.join(" -> ");
+    }
+    sync();
+    window.addEventListener("storage", (event) => {
+      if (event && event.key === sessionTrailKey) sync();
+    });
+    window.addEventListener("wolfbbs-storage-updated", (event) => {
+      if (event && event.detail && event.detail.key === sessionTrailKey) sync();
+    });
+    heroMeta.appendChild(chip);
+  }
+
+  function mountShortcutLegendOverlay() {
+    if (document.getElementById("wolfbbsShortcutOverlay")) return;
+    const overlay = document.createElement("div");
+    overlay.id = "wolfbbsShortcutOverlay";
+    overlay.innerHTML = '<div id="wolfbbsShortcutPanel"><h3>Shortcut Legend</h3><ul><li><strong>Ctrl/Cmd+K</strong>: command palette</li><li><strong>?</strong>: palette quick open</li><li><strong>Alt+1..6</strong>: route jump macros</li><li><strong>Alt+0</strong>: macro help</li><li><strong>Alt+J / Alt+K</strong>: next/previous section</li><li><strong>Ctrl/Cmd+Shift+N</strong>: quick notes workspace</li><li><strong>Ctrl/Cmd+Shift+D</strong>: draft center</li><li><strong>Ctrl/Cmd+Shift+I</strong>: incident console</li><li><strong>Ctrl/Cmd+Shift+P</strong>: playbook runner</li><li><strong>Ctrl/Cmd+Shift+M</strong>: reminder scheduler</li><li><strong>Ctrl/Cmd+Shift+G</strong>: release gate</li><li><strong>Ctrl/Cmd+Shift+U</strong>: bug capture</li><li><strong>F1</strong>: macro help panel</li><li><strong>Ctrl/Cmd+Shift+/</strong>: this legend</li></ul><p class="wolfbbs-muted">Esc closes overlays.</p></div>';
+    document.body.appendChild(overlay);
+    function open() {
+      overlay.classList.add("active");
+      trackTelemetry("shortcut-legend:open");
+    }
+    function close() {
+      overlay.classList.remove("active");
+    }
+    window.wolfbbsOpenShortcutLegend = open;
+    window.wolfbbsCloseShortcutLegend = close;
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) close();
+    });
+    document.addEventListener("keydown", (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key === "?") {
+        event.preventDefault();
+        open();
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key === "/") {
+        event.preventDefault();
+        open();
+        return;
+      }
+      if (event.key === "Escape" && overlay.classList.contains("active")) {
+        event.preventDefault();
+        close();
+      }
+    });
+  }
+
+  function mountPreferenceControls() {
+    const heroMeta = document.querySelector(".wolfbbs-page-hero-meta");
+    if (!heroMeta || heroMeta.querySelector(".wolfbbs-pref-controls")) return;
+    applyFocusMode(readFocusMode());
+    mountNetworkStatusChip(heroMeta);
+    mountLatencyChip(heroMeta);
+    mountTelemetryChip(heroMeta);
+    mountSessionDurationChip(heroMeta);
+    mountSessionTrailChip(heroMeta);
+    const controls = document.createElement("div");
+    controls.className = "wolfbbs-pref-controls";
+    function markSecondaryControl(button) {
+      if (button) button.setAttribute("data-control-priority", "secondary");
+      return button;
+    }
+
+    const profileKey = "wolfbbs:ui:profile:v1";
+    let profileMode = String(readJSON(profileKey, "balanced") || "balanced");
+    if (!["balanced", "reader", "operator"].includes(profileMode)) {
+      profileMode = "balanced";
+    }
+
+    const theme = document.createElement("button");
+    theme.type = "button";
+    const themeModes = ["default", "contrast", "night"];
+    function syncThemeLabel() {
+      theme.textContent = "Theme: " + (uiPrefs.theme === "default" ? "Soft" : uiPrefs.theme === "contrast" ? "Contrast" : "Night");
+    }
+    theme.addEventListener("click", () => {
+      const current = themeModes.indexOf(uiPrefs.theme);
+      const prev = uiPrefs.theme;
+      uiPrefs.theme = themeModes[(current + 1 + themeModes.length) % themeModes.length];
+      persistUIPrefs();
+      applyUIPrefs();
+      syncThemeLabel();
+      showToast("Theme updated", "ok");
+      pushUndoAction({ type: "ui-theme", value: prev });
+    });
+    syncThemeLabel();
+    controls.appendChild(theme);
+
+    const density = document.createElement("button");
+    density.type = "button";
+    function syncDensityLabel() {
+      density.textContent = "Density: " + (uiPrefs.density === "compact" ? "Compact" : "Comfort");
+    }
+    density.addEventListener("click", () => {
+      const prev = uiPrefs.density;
+      uiPrefs.density = uiPrefs.density === "compact" ? "comfortable" : "compact";
+      persistUIPrefs();
+      applyUIPrefs();
+      syncDensityLabel();
+      showToast("Density updated", "ok");
+      pushUndoAction({ type: "ui-density", value: prev });
+    });
+    syncDensityLabel();
+    controls.appendChild(density);
+
+    const layout = document.createElement("button");
+    layout.type = "button";
+    const layoutModes = ["standard", "wide", "focus"];
+    function syncLayoutLabel() {
+      const label = uiPrefs.layout === "wide" ? "Wide" : uiPrefs.layout === "focus" ? "Focus" : "Standard";
+      layout.textContent = "Layout: " + label;
+    }
+    layout.addEventListener("click", () => {
+      const prev = uiPrefs.layout;
+      const current = layoutModes.indexOf(uiPrefs.layout);
+      uiPrefs.layout = layoutModes[(current + 1 + layoutModes.length) % layoutModes.length];
+      persistUIPrefs();
+      applyUIPrefs();
+      syncLayoutLabel();
+      showToast("Layout updated", "ok");
+      pushUndoAction({ type: "ui-layout", value: prev });
+    });
+    syncLayoutLabel();
+    controls.appendChild(layout);
+
+    const accent = document.createElement("button");
+    accent.type = "button";
+    const accentModes = ["blue", "teal", "amber"];
+    function syncAccentLabel() {
+      const label = uiPrefs.accent === "teal" ? "Teal" : uiPrefs.accent === "amber" ? "Amber" : "Blue";
+      accent.textContent = "Accent: " + label;
+    }
+    accent.addEventListener("click", () => {
+      const prev = uiPrefs.accent;
+      const current = accentModes.indexOf(uiPrefs.accent);
+      uiPrefs.accent = accentModes[(current + 1 + accentModes.length) % accentModes.length];
+      persistUIPrefs();
+      applyUIPrefs();
+      syncAccentLabel();
+      showToast("Accent updated", "ok");
+      pushUndoAction({ type: "ui-accent", value: prev });
+    });
+    syncAccentLabel();
+    controls.appendChild(accent);
+
+    const motion = document.createElement("button");
+    motion.type = "button";
+    function syncMotionLabel() {
+      motion.textContent = uiPrefs.motion === "reduced" ? "Motion: Reduced" : "Motion: Full";
+    }
+    motion.addEventListener("click", () => {
+      const prev = uiPrefs.motion;
+      uiPrefs.motion = uiPrefs.motion === "reduced" ? "full" : "reduced";
+      persistUIPrefs();
+      applyUIPrefs();
+      syncMotionLabel();
+      showToast("Motion preference updated", "ok");
+      pushUndoAction({ type: "ui-motion", value: prev });
+    });
+    syncMotionLabel();
+    controls.appendChild(motion);
+
+    const profile = document.createElement("button");
+    profile.type = "button";
+    function syncProfileLabel() {
+      const label = profileMode === "reader" ? "Reader" : profileMode === "operator" ? "Operator" : "Balanced";
+      profile.textContent = "Profile: " + label;
+    }
+    function applyProfile(targetMode) {
+      const mode = ["balanced", "reader", "operator"].includes(targetMode) ? targetMode : "balanced";
+      profileMode = mode;
+      if (mode === "reader") {
+        uiPrefs.layout = "wide";
+        uiPrefs.motion = "reduced";
+        uiPrefs.density = "comfortable";
+        uiPrefs.accent = "blue";
+      } else if (mode === "operator") {
+        uiPrefs.layout = "standard";
+        uiPrefs.motion = "full";
+        uiPrefs.density = "compact";
+        uiPrefs.accent = "teal";
+      } else {
+        uiPrefs.layout = "standard";
+        uiPrefs.motion = "full";
+        uiPrefs.density = "comfortable";
+        uiPrefs.accent = "blue";
+      }
+      writeJSON(profileKey, profileMode);
+      persistUIPrefs();
+      applyUIPrefs();
+      syncLayoutLabel();
+      syncDensityLabel();
+      syncAccentLabel();
+      syncMotionLabel();
+      syncProfileLabel();
+    }
+    profile.addEventListener("click", () => {
+      const before = {
+        profile: profileMode,
+        prefs: {
+          theme: uiPrefs.theme,
+          density: uiPrefs.density,
+          fontScale: uiPrefs.fontScale,
+          layout: uiPrefs.layout,
+          accent: uiPrefs.accent,
+          motion: uiPrefs.motion
+        }
+      };
+      if (profileMode === "balanced") {
+        applyProfile("reader");
+      } else if (profileMode === "reader") {
+        applyProfile("operator");
+      } else {
+        applyProfile("balanced");
+      }
+      showToast("UI profile updated", "ok");
+      pushUndoAction({ type: "ui-profile", value: before });
+    });
+    if (profileMode === "reader" || profileMode === "operator") {
+      applyProfile(profileMode);
+    } else {
+      syncProfileLabel();
+    }
+    controls.appendChild(profile);
+
+    const smaller = document.createElement("button");
+    smaller.type = "button";
+    smaller.textContent = "A-";
+    smaller.title = "Smaller text";
+    smaller.addEventListener("click", () => {
+      const prev = uiPrefs.fontScale;
+      uiPrefs.fontScale = clamp(Number(uiPrefs.fontScale || 1) - 0.05, 0.9, 1.2);
+      persistUIPrefs();
+      applyUIPrefs();
+      showToast("Text size " + Math.round(uiPrefs.fontScale * 100) + "%", "ok");
+      pushUndoAction({ type: "ui-font-scale", value: prev });
+    });
+    controls.appendChild(smaller);
+
+    const larger = document.createElement("button");
+    larger.type = "button";
+    larger.textContent = "A+";
+    larger.title = "Larger text";
+    larger.addEventListener("click", () => {
+      const prev = uiPrefs.fontScale;
+      uiPrefs.fontScale = clamp(Number(uiPrefs.fontScale || 1) + 0.05, 0.9, 1.2);
+      persistUIPrefs();
+      applyUIPrefs();
+      showToast("Text size " + Math.round(uiPrefs.fontScale * 100) + "%", "ok");
+      pushUndoAction({ type: "ui-font-scale", value: prev });
+    });
+    controls.appendChild(larger);
+
+    const favorite = document.createElement("button");
+    favorite.type = "button";
+    function syncFavoriteLabel() {
+      favorite.textContent = isCurrentFavorite() ? "Unfavorite" : "Favorite";
+    }
+    favorite.addEventListener("click", () => {
+      const prev = isCurrentFavorite();
+      toggleFavoriteCurrentRoute();
+      syncFavoriteLabel();
+      renderFavoritesRail();
+      pushUndoAction({ type: "ui-favorite-current", value: prev });
+    });
+    syncFavoriteLabel();
+    controls.appendChild(favorite);
+
+    const pinRoute = document.createElement("button");
+    pinRoute.type = "button";
+    function syncPinRouteLabel() {
+      const pinned = loadRoutePins().some((item) => normalizePath(item.href) === currentRoute);
+      pinRoute.textContent = pinned ? "Unpin route" : "Pin route";
+    }
+    pinRoute.addEventListener("click", () => {
+      const pins = loadRoutePins();
+      const idx = pins.findIndex((item) => normalizePath(item.href) === currentRoute);
+      const prev = idx >= 0;
+      if (idx >= 0) {
+        pins.splice(idx, 1);
+      } else {
+        pins.unshift({ href: currentRoute, label: title });
+      }
+      saveRoutePins(pins);
+      syncPinRouteLabel();
+      if (idx < 0 && typeof window.wolfbbsSetActionDockCollapsed === "function") {
+        window.wolfbbsSetActionDockCollapsed(false);
+      }
+      if (typeof window.wolfbbsRenderActionDock === "function") window.wolfbbsRenderActionDock();
+      showToast(idx >= 0 ? "Route unpinned" : "Route pinned", "ok");
+      pushUndoAction({ type: "ui-pin-route", value: prev });
+    });
+    syncPinRouteLabel();
+    controls.appendChild(pinRoute);
+
+    const copyRoute = document.createElement("button");
+    copyRoute.type = "button";
+    copyRoute.textContent = "Copy route";
+    copyRoute.addEventListener("click", () => {
+      const href = location.origin + location.pathname + location.search + location.hash;
+      copyText(href).then(() => {
+        showToast("Route URL copied", "ok");
+      }).catch(() => {
+        showToast("Could not copy route URL", "error");
+      });
+      trackTelemetry("route:copy");
+    });
+    controls.appendChild(copyRoute);
+
+    const trailBack = document.createElement("button");
+    trailBack.type = "button";
+    function previousTrailRoute() {
+      const trail = Object.assign({ visited: [] }, readJSON(sessionTrailKey, {}));
+      const rows = Array.isArray(trail.visited) ? trail.visited : [];
+      for (let i = 0; i < rows.length; i++) {
+        const candidate = normalizePath(rows[i]);
+        if (candidate && candidate !== currentRoute) {
+          return candidate;
+        }
+      }
+      return "";
+    }
+    function syncTrailBackLabel() {
+      const prevRoute = previousTrailRoute();
+      if (!prevRoute) {
+        trailBack.textContent = "Back trail";
+        trailBack.disabled = true;
+        return;
+      }
+      trailBack.textContent = "Back: " + humanizeRoutePart(prevRoute.split("/").filter(Boolean).slice(-1)[0] || "start");
+      trailBack.disabled = false;
+    }
+    trailBack.addEventListener("click", () => {
+      const prevRoute = previousTrailRoute();
+      if (!prevRoute) return;
+      location.assign(prevRoute);
+    });
+    syncTrailBackLabel();
+    controls.appendChild(trailBack);
+
+    const shortcutsButton = document.createElement("button");
+    shortcutsButton.type = "button";
+    shortcutsButton.textContent = "Shortcuts";
+    shortcutsButton.addEventListener("click", () => {
+      if (typeof window.wolfbbsOpenShortcutLegend === "function") {
+        window.wolfbbsOpenShortcutLegend();
+      }
+    });
+    controls.appendChild(shortcutsButton);
+
+    const contextHelp = document.createElement("button");
+    contextHelp.type = "button";
+    contextHelp.textContent = "Context help";
+    contextHelp.addEventListener("click", () => {
+      if (typeof window.wolfbbsOpenContextHelp === "function") {
+        window.wolfbbsOpenContextHelp();
+      }
+    });
+    controls.appendChild(contextHelp);
+
+    const reset = document.createElement("button");
+    reset.type = "button";
+    reset.textContent = "Reset UI";
+    reset.addEventListener("click", () => {
+      const prev = {
+        theme: uiPrefs.theme,
+        density: uiPrefs.density,
+        fontScale: uiPrefs.fontScale,
+        layout: uiPrefs.layout,
+        accent: uiPrefs.accent,
+        motion: uiPrefs.motion
+      };
+      uiPrefs.theme = "default";
+      uiPrefs.density = "comfortable";
+      uiPrefs.fontScale = 1;
+      uiPrefs.layout = "standard";
+      uiPrefs.accent = "blue";
+      uiPrefs.motion = "full";
+      persistUIPrefs();
+      applyUIPrefs();
+      syncThemeLabel();
+      syncDensityLabel();
+      syncLayoutLabel();
+      syncAccentLabel();
+      syncMotionLabel();
+      showToast("UI preferences reset", "ok");
+      pushUndoAction({ type: "ui-pref-reset", value: prev });
+    });
+    controls.appendChild(reset);
+
+    const focusUI = document.createElement("button");
+    focusUI.type = "button";
+    function syncFocusUILabel() {
+      focusUI.textContent = document.body.classList.contains("wolfbbs-focus-ui") ? "Focus UI: On" : "Focus UI: Off";
+    }
+    focusUI.addEventListener("click", () => {
+      const prev = document.body.classList.contains("wolfbbs-focus-ui");
+      const next = !document.body.classList.contains("wolfbbs-focus-ui");
+      applyFocusMode(next);
+      syncFocusUILabel();
+      trackTelemetry("focus-ui:toggle");
+      pushUndoAction({ type: "ui-focus-mode", value: prev });
+    });
+    syncFocusUILabel();
+    controls.appendChild(focusUI);
+
+    const compactControlsKey = "wolfbbs:ui:compact-controls:v1";
+    const compactControls = document.createElement("button");
+    compactControls.type = "button";
+    let compactEnabled = Boolean(readJSON(compactControlsKey, false));
+    function syncCompactLabel() {
+      compactControls.textContent = compactEnabled ? "Controls: Compact" : "Controls: Full";
+    }
+    function applyCompactControls() {
+      document.body.classList.toggle("wolfbbs-controls-compact", compactEnabled);
+    }
+    compactControls.addEventListener("click", () => {
+      compactEnabled = !compactEnabled;
+      writeJSON(compactControlsKey, compactEnabled);
+      applyCompactControls();
+      syncCompactLabel();
+      trackTelemetry("controls:compact-toggle");
+    });
+    applyCompactControls();
+    syncCompactLabel();
+    controls.appendChild(compactControls);
+
+    const autoRefreshKey = "wolfbbs:ui:auto-refresh:v1";
+    const autoRefreshButton = document.createElement("button");
+    autoRefreshButton.type = "button";
+    const autoRefreshState = Object.assign({ enabled: false, seconds: 30 }, readJSON(autoRefreshKey, {}));
+    let autoRefreshTimer = null;
+    function syncAutoRefreshLabel() {
+      autoRefreshButton.textContent = autoRefreshState.enabled ? ("Auto " + autoRefreshState.seconds + "s") : "Auto refresh";
+    }
+    function armAutoRefresh() {
+      if (autoRefreshTimer) window.clearInterval(autoRefreshTimer);
+      if (!autoRefreshState.enabled) return;
+      autoRefreshTimer = window.setInterval(() => {
+        if (document.hidden) return;
+        location.reload();
+      }, Math.max(15, Number(autoRefreshState.seconds || 30)) * 1000);
+    }
+    autoRefreshButton.addEventListener("click", () => {
+      autoRefreshState.enabled = !autoRefreshState.enabled;
+      writeJSON(autoRefreshKey, autoRefreshState);
+      syncAutoRefreshLabel();
+      if (autoRefreshState.enabled) armAutoRefresh();
+      trackTelemetry("auto-refresh:toggle");
+    });
+    syncAutoRefreshLabel();
+    if (autoRefreshState.enabled) armAutoRefresh();
+    controls.appendChild(markSecondaryControl(autoRefreshButton));
+
+    const exportTelemetry = document.createElement("button");
+    exportTelemetry.type = "button";
+    exportTelemetry.textContent = "Export UX";
+    exportTelemetry.addEventListener("click", () => {
+      downloadJSONFile("wolfbbs-ux-telemetry.json", loadTelemetry());
+      showToast("UX telemetry exported", "ok");
+      trackTelemetry("telemetry:export");
+    });
+    controls.appendChild(markSecondaryControl(exportTelemetry));
+
+    const exportDiag = document.createElement("button");
+    exportDiag.type = "button";
+    exportDiag.textContent = "Export diag";
+    exportDiag.addEventListener("click", () => {
+      downloadJSONFile("wolfbbs-ui-diagnostics.json", {
+        route: currentRoute,
+        generatedAt: new Date().toISOString(),
+        prefs: readJSON(uiPrefsKey, {}),
+        focusMode: readJSON(focusModeKey, {}),
+        focusTimer: readJSON(focusKey, {}),
+        favorites: readJSON(favoritesKey, []),
+        notes: String(localStorage.getItem(notesKey) || ""),
+        telemetry: loadTelemetry()
+      });
+      showToast("UI diagnostics exported", "ok");
+      trackTelemetry("diagnostics:export");
+    });
+    controls.appendChild(markSecondaryControl(exportDiag));
+
+    const toastCenter = document.createElement("button");
+    toastCenter.type = "button";
+    toastCenter.textContent = "Notifications";
+    toastCenter.addEventListener("click", () => {
+      if (typeof window.wolfbbsOpenToastCenter === "function") {
+        window.wolfbbsOpenToastCenter();
+      }
+    });
+    controls.appendChild(markSecondaryControl(toastCenter));
+
+    const workspace = document.createElement("button");
+    workspace.type = "button";
+    workspace.textContent = "Workspaces";
+    workspace.addEventListener("click", () => {
+      if (typeof window.wolfbbsOpenWorkspaceHub === "function") {
+        window.wolfbbsOpenWorkspaceHub();
+      }
+    });
+    controls.appendChild(markSecondaryControl(workspace));
+
+    const checkpoints = document.createElement("button");
+    checkpoints.type = "button";
+    checkpoints.textContent = "Checkpoints";
+    checkpoints.addEventListener("click", () => {
+      if (typeof window.wolfbbsOpenCheckpointHub === "function") {
+        window.wolfbbsOpenCheckpointHub();
+      }
+    });
+    controls.appendChild(markSecondaryControl(checkpoints));
+
+    const spotlight = document.createElement("button");
+    spotlight.type = "button";
+    spotlight.textContent = "Spotlight";
+    spotlight.addEventListener("click", () => {
+      if (typeof window.wolfbbsOpenSpotlight === "function") {
+        window.wolfbbsOpenSpotlight();
+      }
+    });
+    controls.appendChild(markSecondaryControl(spotlight));
+
+    const drafts = document.createElement("button");
+    drafts.type = "button";
+    drafts.textContent = "Drafts";
+    drafts.addEventListener("click", () => {
+      if (typeof window.wolfbbsOpenDraftCenter === "function") {
+        window.wolfbbsOpenDraftCenter();
+      }
+    });
+    controls.appendChild(markSecondaryControl(drafts));
+
+    const kpiWatch = document.createElement("button");
+    kpiWatch.type = "button";
+    kpiWatch.textContent = "KPI watch";
+    kpiWatch.addEventListener("click", () => {
+      if (typeof window.wolfbbsOpenKPIWatchCenter === "function") {
+        window.wolfbbsOpenKPIWatchCenter();
+      }
+    });
+    controls.appendChild(markSecondaryControl(kpiWatch));
+
+    const incidents = document.createElement("button");
+    incidents.type = "button";
+    incidents.textContent = "Incidents";
+    incidents.addEventListener("click", () => {
+      if (typeof window.wolfbbsOpenIncidentConsole === "function") {
+        window.wolfbbsOpenIncidentConsole();
+      }
+    });
+    controls.appendChild(markSecondaryControl(incidents));
+
+    const playbook = document.createElement("button");
+    playbook.type = "button";
+    playbook.textContent = "Playbooks";
+    playbook.addEventListener("click", () => {
+      if (typeof window.wolfbbsOpenPlaybookRunner === "function") {
+        window.wolfbbsOpenPlaybookRunner();
+      }
+    });
+    controls.appendChild(markSecondaryControl(playbook));
+
+    const reminders = document.createElement("button");
+    reminders.type = "button";
+    reminders.textContent = "Reminders";
+    reminders.addEventListener("click", () => {
+      if (typeof window.wolfbbsOpenReminderScheduler === "function") {
+        window.wolfbbsOpenReminderScheduler();
+      }
+    });
+    controls.appendChild(markSecondaryControl(reminders));
+
+    const releaseGate = document.createElement("button");
+    releaseGate.type = "button";
+    releaseGate.textContent = "Release gate";
+    releaseGate.addEventListener("click", () => {
+      if (typeof window.wolfbbsOpenReleaseGate === "function") {
+        window.wolfbbsOpenReleaseGate();
+      }
+    });
+    controls.appendChild(markSecondaryControl(releaseGate));
+
+    const feedback = document.createElement("button");
+    feedback.type = "button";
+    feedback.textContent = "Feedback";
+    feedback.addEventListener("click", () => {
+      if (typeof window.wolfbbsOpenFeedbackPulse === "function") {
+        window.wolfbbsOpenFeedbackPulse();
+      }
+    });
+    controls.appendChild(markSecondaryControl(feedback));
+
+    const bugReport = document.createElement("button");
+    bugReport.type = "button";
+    bugReport.textContent = "Bug report";
+    bugReport.addEventListener("click", () => {
+      if (typeof window.wolfbbsOpenBugCapture === "function") {
+        window.wolfbbsOpenBugCapture();
+      }
+    });
+    controls.appendChild(bugReport);
+
+    const undoButton = document.createElement("button");
+    undoButton.type = "button";
+    undoButton.textContent = "Undo UI";
+    undoButton.addEventListener("click", () => {
+      const action = popUndoAction();
+      if (!action) {
+        showToast("Nothing to undo", "error");
+        return;
+      }
+      switch (action.type) {
+      case "ui-theme":
+        uiPrefs.theme = action.value;
+        persistUIPrefs();
+        applyUIPrefs();
+        syncThemeLabel();
+        break;
+      case "ui-density":
+        uiPrefs.density = action.value;
+        persistUIPrefs();
+        applyUIPrefs();
+        syncDensityLabel();
+        break;
+      case "ui-layout":
+        uiPrefs.layout = action.value || "standard";
+        persistUIPrefs();
+        applyUIPrefs();
+        syncLayoutLabel();
+        break;
+      case "ui-accent":
+        uiPrefs.accent = action.value || "blue";
+        persistUIPrefs();
+        applyUIPrefs();
+        syncAccentLabel();
+        break;
+      case "ui-motion":
+        uiPrefs.motion = action.value === "reduced" ? "reduced" : "full";
+        persistUIPrefs();
+        applyUIPrefs();
+        syncMotionLabel();
+        break;
+      case "ui-profile":
+        if (action.value && action.value.prefs) {
+          const previousPrefs = action.value.prefs;
+          uiPrefs.theme = previousPrefs.theme || "default";
+          uiPrefs.density = previousPrefs.density || "comfortable";
+          uiPrefs.fontScale = Number(previousPrefs.fontScale || 1);
+          uiPrefs.layout = previousPrefs.layout || "standard";
+          uiPrefs.accent = previousPrefs.accent || "blue";
+          uiPrefs.motion = previousPrefs.motion === "reduced" ? "reduced" : "full";
+          profileMode = ["balanced", "reader", "operator"].includes(action.value.profile) ? action.value.profile : "balanced";
+          writeJSON(profileKey, profileMode);
+          persistUIPrefs();
+          applyUIPrefs();
+          syncThemeLabel();
+          syncDensityLabel();
+          syncLayoutLabel();
+          syncAccentLabel();
+          syncMotionLabel();
+          syncProfileLabel();
+        }
+        break;
+      case "ui-font-scale":
+        uiPrefs.fontScale = action.value;
+        persistUIPrefs();
+        applyUIPrefs();
+        break;
+      case "ui-focus-mode":
+        applyFocusMode(Boolean(action.value));
+        syncFocusUILabel();
+        break;
+      case "ui-favorite-current":
+        const hasCurrent = isCurrentFavorite();
+        if (Boolean(action.value) !== hasCurrent) {
+          toggleFavoriteCurrentRoute();
+          syncFavoriteLabel();
+          renderFavoritesRail();
+        }
+        break;
+      case "ui-pin-route":
+        const pins = loadRoutePins();
+        const pinIdx = pins.findIndex((item) => normalizePath(item.href) === currentRoute);
+        if (Boolean(action.value) && pinIdx < 0) {
+          pins.unshift({ href: currentRoute, label: title });
+          saveRoutePins(pins);
+        }
+        if (!Boolean(action.value) && pinIdx >= 0) {
+          pins.splice(pinIdx, 1);
+          saveRoutePins(pins);
+        }
+        syncPinRouteLabel();
+        if (typeof window.wolfbbsRenderActionDock === "function") window.wolfbbsRenderActionDock();
+        break;
+      case "ui-pref-reset":
+        if (action.value && typeof action.value === "object") {
+          uiPrefs.theme = action.value.theme || "default";
+          uiPrefs.density = action.value.density || "comfortable";
+          uiPrefs.fontScale = Number(action.value.fontScale || 1);
+          uiPrefs.layout = action.value.layout || "standard";
+          uiPrefs.accent = action.value.accent || "blue";
+          uiPrefs.motion = action.value.motion === "reduced" ? "reduced" : "full";
+          persistUIPrefs();
+          applyUIPrefs();
+          syncThemeLabel();
+          syncDensityLabel();
+          syncLayoutLabel();
+          syncAccentLabel();
+          syncMotionLabel();
+        }
+        break;
+      default:
+        showToast("Undo item unsupported", "error");
+        return;
+      }
+      showToast("UI action undone", "ok");
+      trackTelemetry("ui:undo");
+    });
+    controls.appendChild(undoButton);
+
+    heroMeta.appendChild(controls);
+    attachFocusTimerUI(heroMeta, controls);
+  }
+
+  function mountSectionToggles() {
+    const sections = Array.from(document.querySelectorAll("main.wolfbbs-main > section, main.wolfbbs-main > article"));
+    sections.forEach((section, index) => {
+      if (section.classList.contains("wolfbbs-section-collapsible")) return;
+      const heading = section.querySelector(":scope > h2");
+      if (!heading) return;
+      section.classList.add("wolfbbs-section-collapsible");
+      if (!heading.dataset.navLabel) {
+        heading.dataset.navLabel = heading.textContent.trim();
+      }
+      const body = document.createElement("div");
+      body.className = "wolfbbs-section-body";
+      while (heading.nextSibling) {
+        body.appendChild(heading.nextSibling);
+      }
+      section.appendChild(body);
+      const key = sectionStatePrefix + currentRoute + ":" + (heading.id || index);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "wolfbbs-section-toggle";
+      heading.appendChild(button);
+      function setState(collapsed) {
+        section.classList.toggle("is-collapsed", collapsed);
+        button.textContent = collapsed ? "Expand" : "Collapse";
+        writeJSON(key, { collapsed: Boolean(collapsed) });
+      }
+      const saved = readJSON(key, {});
+      setState(Boolean(saved && saved.collapsed));
+      button.addEventListener("click", () => {
+        setState(!section.classList.contains("is-collapsed"));
+      });
+    });
+  }
+
+  const routeActionRegistry = {
+    "/start": [{ label: "Connect", href: "/connect" }, { label: "Help", href: "/help" }],
+    "/today": [{ label: "Attention", href: "/attention" }, { label: "Boards", href: "/boards?mode=watched" }],
+    "/attention": [{ label: "Mail", href: "/mail?box=unread" }, { label: "Boards", href: "/boards?mode=mentions" }],
+    "/boards": [{ label: "Create message", href: "/boards?compose=1" }, { label: "Open today", href: "/today" }],
+    "/chat": [{ label: "Open #lobby", href: "/chat?channel=%23lobby" }, { label: "Clubhouse", href: "/clubhouse" }],
+    "/mail": [{ label: "Compose", href: "/mail?compose=1" }, { label: "Directory", href: "/directory" }],
+    "/admin/setup": [{ label: "Seed boards", href: "/admin/setup" }, { label: "Create users", href: "/admin/users" }],
+    "/admin/launch": [{ label: "Ops center", href: "/admin/ops" }, { label: "Status", href: "/status" }],
+    "/admin/ops": [{ label: "System", href: "/admin/system" }, { label: "Audit", href: "/admin/audit" }]
+  };
+
+  function actionsForRoute(pathname) {
+    const path = normalizePath(pathname);
+    if (!path) return [];
+    if (routeActionRegistry[path]) return routeActionRegistry[path];
+    const prefix = Object.keys(routeActionRegistry).find((key) => path.indexOf(key + "/") === 0);
+    return prefix ? routeActionRegistry[prefix] : [{ label: "Start", href: "/start" }, { label: "Help", href: "/help" }];
+  }
+
+  function mountActionDock() {
+    if (document.getElementById("wolfbbsActionDock")) return;
+    const persistedState = Object.assign({ collapsed: true, side: "right" }, readJSON(actionDockStateKey, {}));
+    const state = {
+      collapsed: Boolean(persistedState.collapsed),
+      side: persistedState.side === "left" ? "left" : "right"
+    };
+    const dock = document.createElement("aside");
+    dock.id = "wolfbbsActionDock";
+    const head = document.createElement("div");
+    head.className = "wolfbbs-action-dock-head";
+    const titleNode = document.createElement("strong");
+    titleNode.textContent = "Quick Launch Dock";
+    const headActions = document.createElement("div");
+    headActions.className = "wolfbbs-inline-actions";
+    const refreshButton = document.createElement("button");
+    refreshButton.type = "button";
+    refreshButton.textContent = "Refresh";
+    const sideButton = document.createElement("button");
+    sideButton.type = "button";
+    const collapseButton = document.createElement("button");
+    collapseButton.type = "button";
+    headActions.appendChild(refreshButton);
+    headActions.appendChild(sideButton);
+    headActions.appendChild(collapseButton);
+    head.appendChild(titleNode);
+    head.appendChild(headActions);
+    const body = document.createElement("div");
+    body.className = "wolfbbs-action-dock-body";
+    const searchWrap = document.createElement("label");
+    searchWrap.className = "wolfbbs-action-dock-search";
+    const searchInput = document.createElement("input");
+    searchInput.type = "search";
+    searchInput.placeholder = "Filter route actions";
+    searchInput.setAttribute("aria-label", "Filter action dock links");
+    searchWrap.appendChild(searchInput);
+    dock.appendChild(head);
+    dock.appendChild(body);
+    document.body.appendChild(dock);
+    let lastCollisionNoticeAt = 0;
+    let scrollAdjustTimer = null;
+    let manualExpandUntil = 0;
+
+    function persistDockState() {
+      writeJSON(actionDockStateKey, {
+        collapsed: Boolean(state.collapsed),
+        side: state.side === "left" ? "left" : "right"
+      });
+    }
+
+    function rectsOverlap(a, b) {
+      if (!a || !b) return false;
+      return !(a.right <= b.left || a.left >= b.right || a.bottom <= b.top || a.top >= b.bottom);
+    }
+
+    function dockIntersectsCriticalControls() {
+      if (state.collapsed) return false;
+      const dockRect = dock.getBoundingClientRect();
+      if (!dockRect || dockRect.width <= 0 || dockRect.height <= 0) return false;
+      const criticalNodes = [];
+      const prefControls = document.querySelector(".wolfbbs-pref-controls");
+      const navRow = document.querySelector("p.wolfbbs-nav-row");
+      const sectionNav = document.querySelector(".wolfbbs-section-nav");
+      if (prefControls) criticalNodes.push(prefControls);
+      if (navRow) criticalNodes.push(navRow);
+      if (sectionNav) criticalNodes.push(sectionNav);
+      return criticalNodes.some((node) => {
+        const rect = node.getBoundingClientRect();
+        return rect && rect.width > 0 && rect.height > 0 && rectsOverlap(dockRect, rect);
+      });
+    }
+
+    function maybeAutoAdjustDock() {
+      if (!dockIntersectsCriticalControls()) return;
+      if (state.side !== "left") {
+        state.side = "left";
+      } else if (!state.collapsed && Date.now() >= manualExpandUntil) {
+        state.collapsed = true;
+      } else {
+        return;
+      }
+      persistDockState();
+      renderActionDock();
+      const now = Date.now();
+      if (now - lastCollisionNoticeAt > 3000) {
+        showToast("Action dock adjusted to keep controls clickable", "ok");
+        lastCollisionNoticeAt = now;
+      }
+      trackTelemetry("action-dock:collision-avoid");
+    }
+
+    function setCollapsed(collapsed, reason) {
+      const next = Boolean(collapsed);
+      if (state.collapsed === next) return;
+      if (!next) {
+        // Keep the dock expanded briefly after explicit user action or
+        // route-pin auto-expand to avoid immediate auto-collapse.
+        manualExpandUntil = Date.now() + 7000;
+      } else if (next) {
+        manualExpandUntil = 0;
+      }
+      state.collapsed = next;
+      persistDockState();
+      renderActionDock();
+      if (reason) {
+        trackTelemetry("action-dock:toggle");
+      }
+    }
+
+    function renderGroup(label, rows, queryText) {
+      const group = document.createElement("section");
+      group.className = "wolfbbs-action-dock-group";
+      const heading = document.createElement("strong");
+      heading.className = "wolfbbs-action-dock-group-title";
+      heading.textContent = label;
+      const count = document.createElement("span");
+      const sourceRows = Array.isArray(rows) ? rows.slice(0, 16) : [];
+      const query = String(queryText || "").trim().toLowerCase();
+      const filteredRows = query
+        ? sourceRows.filter((item) => {
+            const href = String(item && item.href || "");
+            const itemLabel = String(item && item.label || "");
+            return href.toLowerCase().includes(query) || itemLabel.toLowerCase().includes(query);
+          })
+        : sourceRows;
+      count.textContent = String(filteredRows.length) + "/" + String(sourceRows.length);
+      heading.appendChild(count);
+      group.appendChild(heading);
+      const links = document.createElement("div");
+      links.className = "wolfbbs-action-dock-links";
+      filteredRows.forEach((item) => {
+        const link = document.createElement("a");
+        link.href = item.href;
+        link.textContent = item.label;
+        links.appendChild(link);
+      });
+      if (!links.children.length) {
+        const none = document.createElement("span");
+        none.className = "wolfbbs-muted";
+        none.textContent = "No items";
+        links.appendChild(none);
+      }
+      group.appendChild(links);
+      return group;
+    }
+
+    function renderActionDock() {
+      body.innerHTML = "";
+      body.appendChild(searchWrap);
+      const actions = actionsForRoute(currentRoute).map((item) => ({
+        href: item.href,
+        label: item.label
+      }));
+      const pinned = loadRoutePins();
+      const trail = Object.assign({ visited: [] }, readJSON(sessionTrailKey, {}));
+      const recent = (trail.visited || [])
+        .map((href) => ({ href: normalizePath(href), label: humanizeRoutePart(String(href).split("/").filter(Boolean).slice(-1)[0] || "start") }))
+        .filter((item) => item.href && item.href !== currentRoute)
+        .slice(0, 8);
+      const queryText = String(searchInput.value || "");
+      body.appendChild(renderGroup("Route actions", actions, queryText));
+      body.appendChild(renderGroup("Pinned routes", pinned, queryText));
+      body.appendChild(renderGroup("Recent route hops", recent, queryText));
+      dock.setAttribute("data-collapsed", state.collapsed ? "true" : "false");
+      dock.setAttribute("data-side", state.side);
+      sideButton.textContent = state.side === "left" ? "Dock right" : "Dock left";
+      collapseButton.textContent = state.collapsed ? "Expand" : "Collapse";
+      window.requestAnimationFrame(maybeAutoAdjustDock);
+    }
+
+    collapseButton.addEventListener("click", () => {
+      setCollapsed(!state.collapsed, "manual");
+    });
+    refreshButton.addEventListener("click", () => {
+      renderActionDock();
+      showToast("Action dock refreshed", "ok");
+      trackTelemetry("action-dock:refresh");
+    });
+    sideButton.addEventListener("click", () => {
+      state.side = state.side === "left" ? "right" : "left";
+      persistDockState();
+      renderActionDock();
+      trackTelemetry("action-dock:side-toggle");
+    });
+    searchInput.addEventListener("input", () => {
+      renderActionDock();
+    });
+    window.addEventListener("resize", () => {
+      window.requestAnimationFrame(maybeAutoAdjustDock);
+    });
+    window.addEventListener("scroll", () => {
+      if (scrollAdjustTimer) window.clearTimeout(scrollAdjustTimer);
+      scrollAdjustTimer = window.setTimeout(() => {
+        maybeAutoAdjustDock();
+      }, 80);
+    }, { passive: true });
+    window.wolfbbsRenderActionDock = renderActionDock;
+    window.wolfbbsSetActionDockCollapsed = (collapsed) => {
+      setCollapsed(collapsed, "external");
+    };
+    renderActionDock();
+  }
+  mountActionDock();
+
+  const goalCoachRegistry = {
+    "/start": [
+      { id: "connect", label: "Pick a connection route", href: "/connect" },
+      { id: "tour", label: "Open guided tour", href: "/tour" },
+      { id: "signin", label: "Sign in with caller account", href: "/login" }
+    ],
+    "/today": [
+      { id: "attention", label: "Review action queue", href: "/attention" },
+      { id: "boards", label: "Check watched boards", href: "/boards?mode=watched" },
+      { id: "events", label: "Review upcoming events", href: "/events" }
+    ],
+    "/admin/setup": [
+      { id: "identity", label: "Save identity and safety settings", href: "/admin/setup" },
+      { id: "boards", label: "Seed baseline boards", href: "/admin/setup" },
+      { id: "caller", label: "Create non-sysop caller account", href: "/admin/users" }
+    ],
+    "/admin/launch": [
+      { id: "checks", label: "Review launch readiness checks", href: "/admin/launch" },
+      { id: "ops", label: "Verify ops center is clean", href: "/admin/ops" },
+      { id: "walk", label: "Run real caller walkthrough", href: "/connect" }
+    ],
+    "/chat": [
+      { id: "join", label: "Join #lobby", href: "/chat?channel=%23lobby" },
+      { id: "send", label: "Send one message", href: "/chat" },
+      { id: "presence", label: "Verify online list", href: "/chat" }
+    ]
+  };
+
+  function goalsForRoute(pathname) {
+    const path = normalizePath(pathname);
+    if (!path) return [];
+    if (goalCoachRegistry[path]) return goalCoachRegistry[path];
+    const prefix = Object.keys(goalCoachRegistry).find((key) => path.indexOf(key + "/") === 0);
+    return prefix ? goalCoachRegistry[prefix] : [];
+  }
+
+  function goalStorageKey(route) {
+    return goalsPrefix + normalizePath(route || currentRoute || "/");
+  }
+
+  function mountGoalCoach() {
+    if (document.querySelector(".wolfbbs-goal-coach")) return;
+    const goals = goalsForRoute(currentRoute);
+    if (!goals.length) return;
+    const key = goalStorageKey(currentRoute);
+    const state = Object.assign({}, readJSON(key, {}));
+    const card = document.createElement("section");
+    card.className = "wolfbbs-goal-coach";
+    const head = document.createElement("div");
+    head.className = "wolfbbs-goal-head";
+    const titleNode = document.createElement("strong");
+    titleNode.textContent = "Goal Coach";
+    const progress = document.createElement("span");
+    head.appendChild(titleNode);
+    head.appendChild(progress);
+    card.appendChild(head);
+    const list = document.createElement("ul");
+    list.className = "wolfbbs-goal-list";
+    goals.forEach((goal) => {
+      const item = document.createElement("li");
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = Boolean(state[goal.id]);
+      box.addEventListener("change", () => {
+        state[goal.id] = box.checked;
+        writeJSON(key, state);
+        syncProgress();
+        trackTelemetry("goals:toggle");
+      });
+      item.appendChild(box);
+      const label = document.createElement("span");
+      label.textContent = goal.label;
+      item.appendChild(label);
+      if (goal.href) {
+        const link = document.createElement("a");
+        link.href = goal.href;
+        link.textContent = "open";
+        item.appendChild(link);
+      }
+      list.appendChild(item);
+    });
+    card.appendChild(list);
+    const actions = document.createElement("div");
+    actions.className = "wolfbbs-goal-actions";
+    const complete = document.createElement("button");
+    complete.type = "button";
+    complete.textContent = "Complete all";
+    complete.addEventListener("click", () => {
+      goals.forEach((goal) => { state[goal.id] = true; });
+      writeJSON(key, state);
+      list.querySelectorAll('input[type="checkbox"]').forEach((node) => { node.checked = true; });
+      syncProgress();
+      showToast("Goal coach completed", "ok");
+      trackTelemetry("goals:complete-all");
+    });
+    actions.appendChild(complete);
+    const reset = document.createElement("button");
+    reset.type = "button";
+    reset.textContent = "Reset goals";
+    reset.addEventListener("click", () => {
+      goals.forEach((goal) => { state[goal.id] = false; });
+      writeJSON(key, state);
+      list.querySelectorAll('input[type="checkbox"]').forEach((node) => { node.checked = false; });
+      syncProgress();
+      trackTelemetry("goals:reset");
+    });
+    actions.appendChild(reset);
+    card.appendChild(actions);
+
+    function syncProgress() {
+      const done = goals.filter((goal) => Boolean(state[goal.id])).length;
+      progress.textContent = done + "/" + goals.length + " complete";
+    }
+    syncProgress();
+    const target = document.querySelector(".wolfbbs-guide-strip") || document.querySelector(".wolfbbs-recent-rail") || document.querySelector("main.wolfbbs-main");
+    if (target && target.parentNode) {
+      target.parentNode.insertBefore(card, target.nextSibling);
+    }
+  }
+
+  function mountRouteScorecard() {
+    if (document.querySelector(".wolfbbs-scorecard")) return;
+    const forms = document.querySelectorAll("form").length;
+    const tables = document.querySelectorAll("table").length;
+    const links = document.querySelectorAll("a[href]").length;
+    const headings = document.querySelectorAll("h2,h3").length;
+    const actionable = Math.min(40, forms * 8 + tables * 6 + Math.min(links, 24));
+    const guidance = Math.min(30, headings * 3);
+    const structure = Math.min(30, document.querySelectorAll("section,article").length);
+    const score = clamp(actionable + guidance + structure, 0, 100);
+    const level = score >= 76 ? "strong" : score >= 56 ? "ok" : "warn";
+    const bar = document.createElement("div");
+    bar.className = "wolfbbs-scorecard";
+    const scorePill = document.createElement("span");
+    scorePill.className = "wolfbbs-score-pill";
+    scorePill.setAttribute("data-level", level === "strong" ? "strong" : level === "warn" ? "warn" : "ok");
+    scorePill.textContent = "Route readiness " + score + "/100";
+    bar.appendChild(scorePill);
+    const a = document.createElement("span");
+    a.className = "wolfbbs-score-pill";
+    a.textContent = "Actions " + actionable;
+    bar.appendChild(a);
+    const g = document.createElement("span");
+    g.className = "wolfbbs-score-pill";
+    g.textContent = "Guidance " + guidance;
+    bar.appendChild(g);
+    const s = document.createElement("span");
+    s.className = "wolfbbs-score-pill";
+    s.textContent = "Structure " + structure;
+    bar.appendChild(s);
+    const hero = document.querySelector(".wolfbbs-page-hero");
+    if (hero && hero.parentNode) {
+      hero.parentNode.insertBefore(bar, hero.nextSibling);
+    }
+  }
+
+  function enhanceEmptyStates() {
+    const candidates = Array.from(document.querySelectorAll("p,li,td")).filter((node) => {
+      if (node.dataset.wolfbbsEmptyEnhanced === "1") return false;
+      const text = (node.textContent || "").trim();
+      return /^(no\b.*\b(yet|now)|no active\b|seasonal challenge is not configured)/i.test(text);
+    });
+    if (!candidates.length) return;
+    const actions = actionsForRoute(currentRoute);
+    candidates.slice(0, 4).forEach((node) => {
+      const row = document.createElement("div");
+      row.className = "wolfbbs-empty-actions";
+      actions.slice(0, 2).forEach((action) => {
+        const link = document.createElement("a");
+        link.href = action.href;
+        link.textContent = action.label;
+        row.appendChild(link);
+      });
+      node.appendChild(row);
+      node.dataset.wolfbbsEmptyEnhanced = "1";
+    });
+  }
+
+  function mountQuickNotesWorkspace() {
+    if (document.getElementById("wolfbbsNotesButton")) return;
+    const button = document.createElement("button");
+    button.id = "wolfbbsNotesButton";
+    button.type = "button";
+    button.textContent = "Quick Notes";
+    document.body.appendChild(button);
+
+    const overlay = document.createElement("div");
+    overlay.id = "wolfbbsNotesOverlay";
+    overlay.innerHTML = '<div id="wolfbbsNotesPanel"><div id="wolfbbsNotesHeader"><strong>Quick Notes Workspace</strong><button type="button" id="wolfbbsNotesClose">Close</button></div><textarea id="wolfbbsNotesArea" placeholder="Capture operator notes, release checks, and caller follow-up items."></textarea><div class="wolfbbs-notes-actions"><button type="button" id="wolfbbsNotesCopy">Copy notes</button><button type="button" id="wolfbbsNotesDownload">Download notes</button><button type="button" id="wolfbbsNotesClear">Clear notes</button></div></div>';
+    document.body.appendChild(overlay);
+    const area = overlay.querySelector("#wolfbbsNotesArea");
+    const close = overlay.querySelector("#wolfbbsNotesClose");
+    const copy = overlay.querySelector("#wolfbbsNotesCopy");
+    const download = overlay.querySelector("#wolfbbsNotesDownload");
+    const clear = overlay.querySelector("#wolfbbsNotesClear");
+    area.value = String(localStorage.getItem(notesKey) || "");
+    area.addEventListener("input", () => {
+      localStorage.setItem(notesKey, area.value || "");
+    });
+    function open() {
+      overlay.classList.add("active");
+      window.setTimeout(() => area.focus(), 20);
+      trackTelemetry("notes:open");
+    }
+    function shut() {
+      overlay.classList.remove("active");
+    }
+    button.addEventListener("click", open);
+    close.addEventListener("click", shut);
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) shut();
+    });
+    copy.addEventListener("click", () => {
+      copyText(area.value || "").then(() => {
+        showToast("Notes copied", "ok");
+        trackTelemetry("notes:copy");
+      }).catch(() => showToast("Copy failed", "error"));
+    });
+    download.addEventListener("click", () => {
+      downloadJSONFile("wolfbbs-notes.json", {
+        route: currentRoute,
+        updatedAt: new Date().toISOString(),
+        body: area.value || ""
+      });
+      showToast("Notes downloaded", "ok");
+      trackTelemetry("notes:download");
+    });
+    clear.addEventListener("click", () => {
+      area.value = "";
+      localStorage.setItem(notesKey, "");
+      showToast("Notes cleared", "ok");
+      trackTelemetry("notes:clear");
+    });
+    document.addEventListener("keydown", (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && String(event.key).toLowerCase() === "n") {
+        event.preventDefault();
+        open();
+      }
+    });
+  }
+
+  function mountUXDiagnosticsButton() {
+    if (document.getElementById("wolfbbsUXDiagButton")) return;
+    const button = document.createElement("button");
+    button.id = "wolfbbsUXDiagButton";
+    button.type = "button";
+    button.textContent = "UX Diag";
+    button.addEventListener("click", () => {
+      downloadJSONFile("wolfbbs-ui-diagnostics.json", {
+        route: currentRoute,
+        generatedAt: new Date().toISOString(),
+        prefs: readJSON(uiPrefsKey, {}),
+        focusMode: readJSON(focusModeKey, {}),
+        focusTimer: readJSON(focusKey, {}),
+        favorites: readJSON(favoritesKey, []),
+        notes: String(localStorage.getItem(notesKey) || ""),
+        telemetry: loadTelemetry()
+      });
+      showToast("UI diagnostics exported", "ok");
+      trackTelemetry("diagnostics:quick-export");
+    });
+    document.body.appendChild(button);
+  }
+
+  function loadWorkspaces() {
+    return readJSON(workspaceKey, []).filter((item) => item && item.id && item.name);
+  }
+
+  function saveWorkspaces(rows) {
+    const clean = rows.filter((item) => item && item.id && item.name).slice(0, 24);
+    writeJSON(workspaceKey, clean);
+    return clean;
+  }
+
+  function buildHandoffMarkdown() {
+    const telemetry = loadTelemetry();
+    const favorites = loadFavorites().map((item) => "- [" + item.label + "](" + item.href + ")").join("\n");
+    const topEvents = Object.keys(telemetry.events || {})
+      .map((key) => ({ key: key, value: telemetry.events[key] }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8)
+      .map((row) => "- " + row.key + ": " + row.value)
+      .join("\n");
+    return [
+      "# WolfBBS UI Handoff",
+      "",
+      "- Generated: " + new Date().toISOString(),
+      "- Route: " + currentRoute,
+      "",
+      "## Favorites",
+      favorites || "- (none)",
+      "",
+      "## Top UX Signals",
+      topEvents || "- (none)",
+      "",
+      "## Notes",
+      "~~~",
+      String(localStorage.getItem(notesKey) || "").trim() || "(none)",
+      "~~~"
+    ].join("\n");
+  }
+
+  function mountWorkspaceHub() {
+    if (document.getElementById("wolfbbsWorkspaceOverlay")) return;
+    const overlay = document.createElement("div");
+    overlay.id = "wolfbbsWorkspaceOverlay";
+    overlay.innerHTML = '<div id="wolfbbsWorkspacePanel"><div class="wolfbbs-inline-actions"><strong>Workspace Hub</strong><button type="button" id="wolfbbsWorkspaceClose">Close</button><button type="button" id="wolfbbsWorkspaceCreate">Save current as workspace</button><button type="button" id="wolfbbsWorkspaceHandoff">Export handoff</button></div><div id="wolfbbsWorkspaceList"></div></div>';
+    document.body.appendChild(overlay);
+    const list = overlay.querySelector("#wolfbbsWorkspaceList");
+    const close = overlay.querySelector("#wolfbbsWorkspaceClose");
+    const create = overlay.querySelector("#wolfbbsWorkspaceCreate");
+    const handoff = overlay.querySelector("#wolfbbsWorkspaceHandoff");
+
+    function render() {
+      list.innerHTML = "";
+      const rows = loadWorkspaces();
+      if (!rows.length) {
+        const empty = document.createElement("p");
+        empty.textContent = "No workspaces saved yet.";
+        list.appendChild(empty);
+        return;
+      }
+      rows.forEach((row) => {
+        const card = document.createElement("div");
+        card.className = "wolfbbs-workspace-row";
+        const title = document.createElement("strong");
+        title.textContent = row.name;
+        card.appendChild(title);
+        const meta = document.createElement("p");
+        meta.textContent = (row.routes || []).join(" | ");
+        card.appendChild(meta);
+        const actions = document.createElement("div");
+        actions.className = "wolfbbs-inline-actions";
+        const open = document.createElement("button");
+        open.type = "button";
+        open.textContent = "Open first route";
+        open.addEventListener("click", () => {
+          if (Array.isArray(row.routes) && row.routes.length) {
+            location.href = row.routes[0];
+          }
+        });
+        actions.appendChild(open);
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.textContent = "Delete workspace";
+        remove.addEventListener("click", () => {
+          const next = loadWorkspaces().filter((item) => item.id !== row.id);
+          saveWorkspaces(next);
+          render();
+          trackTelemetry("workspace:delete");
+        });
+        actions.appendChild(remove);
+        card.appendChild(actions);
+        list.appendChild(card);
+      });
+    }
+
+    function openHub() {
+      overlay.classList.add("active");
+      render();
+      trackTelemetry("workspace:open");
+    }
+    function closeHub() {
+      overlay.classList.remove("active");
+    }
+
+    window.wolfbbsOpenWorkspaceHub = openHub;
+    close.addEventListener("click", closeHub);
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) closeHub();
+    });
+    create.addEventListener("click", () => {
+      const name = window.prompt("Workspace name", title + " Workspace");
+      if (!name) return;
+      const rows = loadWorkspaces();
+      rows.unshift({
+        id: "ws-" + Math.random().toString(36).slice(2, 10),
+        name: String(name).trim().slice(0, 60),
+        createdAt: new Date().toISOString(),
+        routes: [currentRoute].concat(loadFavorites().map((item) => item.href)).slice(0, 8)
+      });
+      saveWorkspaces(rows);
+      render();
+      showToast("Workspace saved", "ok");
+      trackTelemetry("workspace:create");
+    });
+    handoff.addEventListener("click", () => {
+      const markdown = buildHandoffMarkdown();
+      copyText(markdown).then(() => {
+        showToast("Handoff markdown copied", "ok");
+      }).catch(() => showToast("Handoff copy failed", "error"));
+      downloadJSONFile("wolfbbs-handoff.json", {
+        generatedAt: new Date().toISOString(),
+        route: currentRoute,
+        markdown: markdown
+      });
+      trackTelemetry("handoff:export");
+    });
+  }
+
+  function mountToastCenter() {
+    if (document.getElementById("wolfbbsToastCenterOverlay")) return;
+    const overlay = document.createElement("div");
+    overlay.id = "wolfbbsToastCenterOverlay";
+    overlay.innerHTML = '<div id="wolfbbsToastCenterPanel"><div class="wolfbbs-inline-actions"><strong>Notification Center</strong><button type="button" id="wolfbbsToastCenterClose">Close</button><button type="button" id="wolfbbsToastCenterClear">Clear</button></div><ul id="wolfbbsToastCenterList"></ul></div>';
+    document.body.appendChild(overlay);
+    const list = overlay.querySelector("#wolfbbsToastCenterList");
+    const close = overlay.querySelector("#wolfbbsToastCenterClose");
+    const clear = overlay.querySelector("#wolfbbsToastCenterClear");
+    function render() {
+      list.innerHTML = "";
+      const rows = readJSON(toastHistoryKey, []);
+      if (!rows.length) {
+        const li = document.createElement("li");
+        li.textContent = "No notifications yet.";
+        list.appendChild(li);
+        return;
+      }
+      rows.slice(0, 40).forEach((row) => {
+        const li = document.createElement("li");
+        li.textContent = "[" + (row.kind || "ok") + "] " + row.text + " • " + row.at;
+        list.appendChild(li);
+      });
+    }
+    function openCenter() {
+      overlay.classList.add("active");
+      render();
+      trackTelemetry("toast-center:open");
+    }
+    window.wolfbbsOpenToastCenter = openCenter;
+    close.addEventListener("click", () => overlay.classList.remove("active"));
+    clear.addEventListener("click", () => {
+      writeJSON(toastHistoryKey, []);
+      render();
+      trackTelemetry("toast-center:clear");
+    });
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) overlay.classList.remove("active");
+    });
+  }
+
+  function mountSpotlightSearch() {
+    if (document.getElementById("wolfbbsSpotlightOverlay")) return;
+    const overlay = document.createElement("div");
+    overlay.id = "wolfbbsSpotlightOverlay";
+    overlay.innerHTML = '<div id="wolfbbsSpotlightPanel"><div class="wolfbbs-inline-actions"><strong>Spotlight Search</strong><button type="button" id="wolfbbsSpotlightClose">Close</button></div><label>Find on page <input id="wolfbbsSpotlightInput" type="search" placeholder="Type to spotlight"></label><p id="wolfbbsSpotlightCount" class="wolfbbs-muted">0 matches</p><div class="wolfbbs-inline-actions"><button type="button" id="wolfbbsSpotlightClear">Clear spotlight</button></div></div>';
+    document.body.appendChild(overlay);
+    const input = overlay.querySelector("#wolfbbsSpotlightInput");
+    const count = overlay.querySelector("#wolfbbsSpotlightCount");
+    const close = overlay.querySelector("#wolfbbsSpotlightClose");
+    const clear = overlay.querySelector("#wolfbbsSpotlightClear");
+    function apply(query) {
+      const q = String(query || "").trim().toLowerCase();
+      let hits = 0;
+      Array.from(document.querySelectorAll("main.wolfbbs-main p, main.wolfbbs-main li, main.wolfbbs-main td, main.wolfbbs-main h2, main.wolfbbs-main h3")).forEach((node) => {
+        const match = q && (node.textContent || "").toLowerCase().includes(q);
+        node.classList.toggle("wolfbbs-spotlight-hit", Boolean(match));
+        if (match) hits += 1;
+      });
+      count.textContent = hits + " match(es)";
+      writeJSON(spotlightKey, { query: q });
+    }
+    function open() {
+      overlay.classList.add("active");
+      const saved = readJSON(spotlightKey, {});
+      input.value = saved.query || "";
+      apply(input.value);
+      window.setTimeout(() => input.focus(), 20);
+      trackTelemetry("spotlight:open");
+    }
+    window.wolfbbsOpenSpotlight = open;
+    input.addEventListener("input", () => apply(input.value));
+    clear.addEventListener("click", () => {
+      input.value = "";
+      apply("");
+    });
+    close.addEventListener("click", () => overlay.classList.remove("active"));
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) overlay.classList.remove("active");
+    });
+    document.addEventListener("keydown", (event) => {
+      const tag = event.target && event.target.tagName ? event.target.tagName.toLowerCase() : "";
+      const editing = tag === "input" || tag === "textarea" || tag === "select" || event.target.isContentEditable;
+      if (!editing && (event.metaKey || event.ctrlKey) && event.shiftKey && String(event.key).toLowerCase() === "f") {
+        event.preventDefault();
+        open();
+      }
+    });
+  }
+
+  function loadCheckpoints() {
+    return readJSON(checkpointKey, []).filter((item) => item && item.id && item.name);
+  }
+
+  function saveCheckpoints(rows) {
+    const clean = rows.filter((item) => item && item.id && item.name).slice(0, 24);
+    writeJSON(checkpointKey, clean);
+    return clean;
+  }
+
+  function captureCheckpointPayload() {
+    return {
+      prefs: readJSON(uiPrefsKey, {}),
+      favorites: readJSON(favoritesKey, []),
+      notes: String(localStorage.getItem(notesKey) || ""),
+      focusMode: readJSON(focusModeKey, {}),
+      spotlight: readJSON(spotlightKey, {}),
+      route: currentRoute
+    };
+  }
+
+  function applyCheckpointPayload(payload) {
+    if (!payload || typeof payload !== "object") return;
+    writeJSON(uiPrefsKey, payload.prefs || {});
+    writeJSON(favoritesKey, payload.favorites || []);
+    localStorage.setItem(notesKey, payload.notes || "");
+    writeJSON(focusModeKey, payload.focusMode || { enabled: false });
+    writeJSON(spotlightKey, payload.spotlight || { query: "" });
+    window.location.reload();
+  }
+
+  function mountCheckpointHub() {
+    if (document.getElementById("wolfbbsCheckpointOverlay")) return;
+    const overlay = document.createElement("div");
+    overlay.id = "wolfbbsCheckpointOverlay";
+    overlay.style.cssText = "position:fixed;inset:0;background:rgba(8,17,30,.45);display:none;z-index:68;padding:22px 16px;";
+    overlay.innerHTML = '<div style="max-width:700px;margin:0 auto;background:#fff;border:1px solid #c8d7e8;border-radius:14px;box-shadow:0 20px 40px rgba(8,19,36,.28);padding:14px 15px;"><div class="wolfbbs-inline-actions"><strong>Session Checkpoints</strong><button type="button" id="wolfbbsCheckpointClose">Close</button><button type="button" id="wolfbbsCheckpointCreate">Save checkpoint</button></div><div id="wolfbbsCheckpointList" style="display:grid;gap:8px;margin-top:10px;"></div></div>';
+    document.body.appendChild(overlay);
+    const list = overlay.querySelector("#wolfbbsCheckpointList");
+    const close = overlay.querySelector("#wolfbbsCheckpointClose");
+    const create = overlay.querySelector("#wolfbbsCheckpointCreate");
+    function render() {
+      list.innerHTML = "";
+      const rows = loadCheckpoints();
+      if (!rows.length) {
+        const p = document.createElement("p");
+        p.textContent = "No checkpoints saved.";
+        list.appendChild(p);
+        return;
+      }
+      rows.forEach((row) => {
+        const card = document.createElement("div");
+        card.className = "wolfbbs-workspace-row";
+        const title = document.createElement("strong");
+        title.textContent = row.name;
+        card.appendChild(title);
+        const meta = document.createElement("p");
+        meta.textContent = row.createdAt;
+        card.appendChild(meta);
+        const actions = document.createElement("div");
+        actions.className = "wolfbbs-inline-actions";
+        const restore = document.createElement("button");
+        restore.type = "button";
+        restore.textContent = "Restore checkpoint";
+        restore.addEventListener("click", () => applyCheckpointPayload(row.payload));
+        actions.appendChild(restore);
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.textContent = "Delete checkpoint";
+        remove.addEventListener("click", () => {
+          saveCheckpoints(loadCheckpoints().filter((item) => item.id !== row.id));
+          render();
+          trackTelemetry("checkpoint:delete");
+        });
+        actions.appendChild(remove);
+        card.appendChild(actions);
+        list.appendChild(card);
+      });
+    }
+    function open() {
+      overlay.style.display = "block";
+      render();
+      trackTelemetry("checkpoint:open");
+    }
+    window.wolfbbsOpenCheckpointHub = open;
+    close.addEventListener("click", () => overlay.style.display = "none");
+    create.addEventListener("click", () => {
+      const name = window.prompt("Checkpoint name", "Checkpoint " + new Date().toLocaleTimeString());
+      if (!name) return;
+      const rows = loadCheckpoints();
+      rows.unshift({
+        id: "cp-" + Math.random().toString(36).slice(2, 10),
+        name: String(name).trim().slice(0, 60),
+        createdAt: new Date().toISOString(),
+        payload: captureCheckpointPayload()
+      });
+      saveCheckpoints(rows);
+      render();
+      trackTelemetry("checkpoint:create");
+    });
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) overlay.style.display = "none";
+    });
+  }
+
+  function applyStorageUpdateKey(key) {
+    const targetKey = String(key || "").trim();
+    if (!targetKey) return;
+    if (targetKey === uiPrefsKey) {
+      const next = Object.assign({}, readJSON(uiPrefsKey, {}));
+      if (next.theme) uiPrefs.theme = next.theme;
+      if (next.density) uiPrefs.density = next.density;
+      if (next.fontScale) uiPrefs.fontScale = next.fontScale;
+      applyUIPrefs();
+    }
+    if (targetKey === favoritesKey) {
+      renderFavoritesRail();
+    }
+    if (targetKey === notesKey) {
+      const notesArea = document.getElementById("wolfbbsNotesArea");
+      if (notesArea && notesArea !== document.activeElement) {
+        notesArea.value = String(localStorage.getItem(notesKey) || "");
+      }
+    }
+    if (targetKey === telemetryKey) {
+      window.dispatchEvent(new Event("wolfbbs-telemetry-updated"));
+    }
+  }
+
+  function mountCrossTabSync() {
+    if (window.BroadcastChannel) {
+      try {
+        wolfbbsSyncChannel = new BroadcastChannel(syncChannelName);
+        wolfbbsSyncChannel.onmessage = (event) => {
+          const payload = event && event.data ? event.data : {};
+          if (!payload || payload.source === syncTabID) return;
+          if (payload.type === "storage:update") {
+            applyStorageUpdateKey(payload.key);
+          }
+        };
+      } catch (_) {
+        wolfbbsSyncChannel = null;
+      }
+    }
+    window.addEventListener("storage", (event) => {
+      if (!event || !event.key) return;
+      applyStorageUpdateKey(event.key);
+    });
+    window.addEventListener("wolfbbs-storage-updated", (event) => {
+      const detail = event && event.detail ? event.detail : {};
+      if (!detail || !detail.key) return;
+      applyStorageUpdateKey(detail.key);
+    });
+  }
+
+  function draftFormKey(form, index) {
+    const action = normalizePath(form.getAttribute("action") || currentRoute || "/");
+    const method = (form.getAttribute("method") || "get").toLowerCase();
+    return draftKeyPrefix + normalizePath(currentRoute || "/") + ":" + method + ":" + action + ":" + String(index || 0);
+  }
+
+  function captureDraftPayload(form) {
+    const fields = Array.from(form.querySelectorAll("input[name], textarea[name], select[name]"));
+    const payload = {};
+    fields.forEach((field) => {
+      const type = (field.getAttribute("type") || "").toLowerCase();
+      if (type === "hidden" || type === "password" || type === "file" || type === "submit" || type === "button") return;
+      if (type === "checkbox" || type === "radio") {
+        payload[field.name] = Boolean(field.checked);
+        return;
+      }
+      payload[field.name] = field.value || "";
+    });
+    return payload;
+  }
+
+  function applyDraftPayload(form, values) {
+    const payload = values && typeof values === "object" ? values : {};
+    const fields = Array.from(form.querySelectorAll("input[name], textarea[name], select[name]"));
+    fields.forEach((field) => {
+      const type = (field.getAttribute("type") || "").toLowerCase();
+      if (type === "hidden" || type === "password" || type === "file" || type === "submit" || type === "button") return;
+      if (!(field.name in payload)) return;
+      if (type === "checkbox" || type === "radio") {
+        field.checked = Boolean(payload[field.name]);
+        return;
+      }
+      field.value = payload[field.name];
+    });
+  }
+
+  function listRouteDrafts() {
+    const prefix = draftKeyPrefix + normalizePath(currentRoute || "/") + ":";
+    const out = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = String(localStorage.key(i) || "");
+      if (!key.startsWith(prefix)) continue;
+      const value = readJSON(key, null);
+      if (!value || typeof value !== "object" || !value.values) continue;
+      out.push({
+        key: key,
+        value: value
+      });
+    }
+    out.sort((a, b) => String(b.value.updatedAt || "").localeCompare(String(a.value.updatedAt || "")));
+    return out.slice(0, 40);
+  }
+
+  function mountDraftCenter() {
+    if (document.getElementById("wolfbbsDraftOverlay")) return;
+    const overlay = document.createElement("div");
+    overlay.id = "wolfbbsDraftOverlay";
+    overlay.innerHTML = '<div id="wolfbbsDraftPanel"><div class="wolfbbs-inline-actions"><strong>Draft Center</strong><button type="button" id="wolfbbsDraftClose">Close</button><button type="button" id="wolfbbsDraftRefresh">Refresh</button><button type="button" id="wolfbbsDraftExport">Export drafts</button></div><div id="wolfbbsDraftList"></div></div>';
+    document.body.appendChild(overlay);
+    const list = overlay.querySelector("#wolfbbsDraftList");
+    const close = overlay.querySelector("#wolfbbsDraftClose");
+    const refresh = overlay.querySelector("#wolfbbsDraftRefresh");
+    const exportButton = overlay.querySelector("#wolfbbsDraftExport");
+    function render() {
+      list.innerHTML = "";
+      const rows = listRouteDrafts();
+      if (!rows.length) {
+        const p = document.createElement("p");
+        p.textContent = "No route drafts saved yet.";
+        list.appendChild(p);
+        return;
+      }
+      const forms = Array.from(document.querySelectorAll("form"));
+      rows.forEach((row) => {
+        const card = document.createElement("div");
+        card.className = "wolfbbs-draft-row";
+        const heading = document.createElement("strong");
+        const idx = Number(row.value.formIndex || -1);
+        heading.textContent = idx >= 0 ? ("Form #" + (idx + 1)) : "Form draft";
+        card.appendChild(heading);
+        const meta = document.createElement("p");
+        meta.className = "wolfbbs-muted";
+        meta.textContent = String(row.value.updatedAt || "");
+        card.appendChild(meta);
+        const actions = document.createElement("div");
+        actions.className = "wolfbbs-inline-actions";
+        const restore = document.createElement("button");
+        restore.type = "button";
+        restore.textContent = "Restore";
+        restore.addEventListener("click", () => {
+          const target = idx >= 0 && idx < forms.length ? forms[idx] : null;
+          if (!target) {
+            showToast("Draft form is not available on this page", "error");
+            return;
+          }
+          applyDraftPayload(target, row.value.values);
+          showToast("Draft restored", "ok");
+          trackTelemetry("draft:center-restore");
+          if (!target.querySelector(".wolfbbs-draft-banner")) {
+            const banner = document.createElement("div");
+            banner.className = "wolfbbs-restore-banner wolfbbs-draft-banner";
+            banner.textContent = "Draft restored from Draft Center.";
+            target.insertBefore(banner, target.firstChild);
+          }
+        });
+        actions.appendChild(restore);
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.textContent = "Delete";
+        remove.addEventListener("click", () => {
+          localStorage.removeItem(row.key);
+          render();
+          trackTelemetry("draft:center-delete");
+        });
+        actions.appendChild(remove);
+        card.appendChild(actions);
+        list.appendChild(card);
+      });
+    }
+    function open() {
+      overlay.classList.add("active");
+      render();
+      trackTelemetry("draft:center-open");
+    }
+    window.wolfbbsOpenDraftCenter = open;
+    close.addEventListener("click", () => overlay.classList.remove("active"));
+    refresh.addEventListener("click", render);
+    exportButton.addEventListener("click", () => {
+      downloadJSONFile("wolfbbs-drafts.json", {
+        route: currentRoute,
+        generatedAt: new Date().toISOString(),
+        drafts: listRouteDrafts()
+      });
+      showToast("Drafts exported", "ok");
+      trackTelemetry("draft:center-export");
+    });
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) overlay.classList.remove("active");
+    });
+  }
+
+  function kpiWatchersKey(route) {
+    return kpiWatchKeyPrefix + normalizePath(route || currentRoute || "/");
+  }
+
+  function loadKPIWatchers(route) {
+    return Object.assign({}, readJSON(kpiWatchersKey(route), {}));
+  }
+
+  function saveKPIWatchers(route, payload) {
+    const next = payload && typeof payload === "object" ? payload : {};
+    writeJSON(kpiWatchersKey(route), next);
+    return next;
+  }
+
+  function evaluateKPIWatchers(snapshot) {
+    const watchers = loadKPIWatchers(currentRoute);
+    let changed = false;
+    Object.keys(watchers).forEach((slot) => {
+      const row = watchers[slot];
+      if (!row || !row.enabled) return;
+      const value = Number(snapshot && snapshot[slot]);
+      const threshold = Number(row.threshold);
+      if (!Number.isFinite(value) || !Number.isFinite(threshold)) return;
+      if (value >= threshold && Number(row.lastAlertValue || -1) !== value) {
+        showToast("KPI watch: " + slot + " reached " + formatCompactNumber(value), "ok");
+        row.lastAlertValue = value;
+        watchers[slot] = row;
+        changed = true;
+        trackTelemetry("kpi-watch:trigger");
+      }
+    });
+    if (changed) {
+      saveKPIWatchers(currentRoute, watchers);
+    }
+  }
+
+  function mountKPIWatchCenter() {
+    if (document.getElementById("wolfbbsKPIWatchOverlay")) return;
+    const overlay = document.createElement("div");
+    overlay.id = "wolfbbsKPIWatchOverlay";
+    overlay.style.cssText = "position:fixed;inset:0;background:rgba(8,17,30,.45);display:none;z-index:69;padding:22px 16px;";
+    overlay.innerHTML = '<div id="wolfbbsReleaseGatePanel"><div class="wolfbbs-inline-actions"><strong>KPI Watch Center</strong><button type="button" id="wolfbbsKPIWatchClose">Close</button><button type="button" id="wolfbbsKPIWatchReset">Reset</button></div><div id="wolfbbsKPIWatchList" style="display:grid;gap:8px;margin-top:10px;"></div></div>';
+    document.body.appendChild(overlay);
+    const list = overlay.querySelector("#wolfbbsKPIWatchList");
+    const close = overlay.querySelector("#wolfbbsKPIWatchClose");
+    const reset = overlay.querySelector("#wolfbbsKPIWatchReset");
+    function render() {
+      list.innerHTML = "";
+      const cards = Array.from(document.querySelectorAll(".wolfbbs-kpi-card"));
+      const watchers = loadKPIWatchers(currentRoute);
+      if (!cards.length) {
+        const p = document.createElement("p");
+        p.textContent = "No KPI cards on this route.";
+        list.appendChild(p);
+        return;
+      }
+      cards.forEach((card, idx) => {
+        const strong = card.querySelector("strong");
+        const slot = "kpi_" + idx;
+        const currentVal = parseNumericValue(strong ? strong.textContent : "");
+        const row = document.createElement("div");
+        row.className = "wolfbbs-release-gate-row";
+        const title = document.createElement("strong");
+        title.textContent = slot + " • current " + (currentVal === null ? "--" : formatCompactNumber(currentVal));
+        row.appendChild(title);
+        const actions = document.createElement("div");
+        actions.className = "wolfbbs-inline-actions";
+        const set = document.createElement("button");
+        set.type = "button";
+        set.textContent = watchers[slot] && watchers[slot].enabled ? ("Threshold " + watchers[slot].threshold) : "Set threshold";
+        set.addEventListener("click", () => {
+          const seed = watchers[slot] && watchers[slot].enabled ? String(watchers[slot].threshold) : (currentVal === null ? "1" : String(Math.ceil(currentVal)));
+          const raw = window.prompt("Threshold for " + slot, seed);
+          if (!raw) return;
+          const value = Number(raw);
+          if (!Number.isFinite(value)) {
+            showToast("Threshold must be numeric", "error");
+            return;
+          }
+          watchers[slot] = { enabled: true, threshold: value, updatedAt: new Date().toISOString() };
+          saveKPIWatchers(currentRoute, watchers);
+          render();
+          trackTelemetry("kpi-watch:set");
+        });
+        actions.appendChild(set);
+        const clear = document.createElement("button");
+        clear.type = "button";
+        clear.textContent = "Clear";
+        clear.addEventListener("click", () => {
+          delete watchers[slot];
+          saveKPIWatchers(currentRoute, watchers);
+          render();
+          trackTelemetry("kpi-watch:clear");
+        });
+        actions.appendChild(clear);
+        row.appendChild(actions);
+        list.appendChild(row);
+      });
+    }
+    function open() {
+      overlay.style.display = "block";
+      render();
+      trackTelemetry("kpi-watch:open");
+    }
+    window.wolfbbsOpenKPIWatchCenter = open;
+    close.addEventListener("click", () => overlay.style.display = "none");
+    reset.addEventListener("click", () => {
+      saveKPIWatchers(currentRoute, {});
+      render();
+      trackTelemetry("kpi-watch:reset");
+    });
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) overlay.style.display = "none";
+    });
+  }
+
+  function loadIncidents() {
+    return readJSON(incidentKey, []).filter((row) => row && row.id && row.title);
+  }
+
+  function saveIncidents(rows) {
+    const clean = rows.filter((row) => row && row.id && row.title).slice(0, 80);
+    writeJSON(incidentKey, clean);
+    return clean;
+  }
+
+  function mountIncidentConsole() {
+    if (document.getElementById("wolfbbsIncidentOverlay")) return;
+    const overlay = document.createElement("div");
+    overlay.id = "wolfbbsIncidentOverlay";
+    overlay.innerHTML = '<div id="wolfbbsIncidentPanel"><div class="wolfbbs-inline-actions"><strong>Incident Console</strong><button type="button" id="wolfbbsIncidentClose">Close</button><button type="button" id="wolfbbsIncidentCreate">Create incident</button><button type="button" id="wolfbbsIncidentExport">Export</button></div><div id="wolfbbsIncidentList"></div></div>';
+    document.body.appendChild(overlay);
+    const list = overlay.querySelector("#wolfbbsIncidentList");
+    const close = overlay.querySelector("#wolfbbsIncidentClose");
+    const create = overlay.querySelector("#wolfbbsIncidentCreate");
+    const exportButton = overlay.querySelector("#wolfbbsIncidentExport");
+    function render() {
+      list.innerHTML = "";
+      const rows = loadIncidents();
+      if (!rows.length) {
+        const p = document.createElement("p");
+        p.textContent = "No incidents logged.";
+        list.appendChild(p);
+        return;
+      }
+      rows.forEach((row) => {
+        const card = document.createElement("div");
+        card.className = "wolfbbs-incident-row";
+        const title = document.createElement("strong");
+        title.textContent = row.title;
+        card.appendChild(title);
+        const meta = document.createElement("p");
+        meta.className = "wolfbbs-muted";
+        meta.textContent = (row.status || "open") + " • " + (row.createdAt || "");
+        card.appendChild(meta);
+        const badge = document.createElement("span");
+        badge.className = "wolfbbs-incident-badge";
+        badge.setAttribute("data-severity", row.severity || "medium");
+        badge.textContent = "severity " + (row.severity || "medium");
+        card.appendChild(badge);
+        const actions = document.createElement("div");
+        actions.className = "wolfbbs-inline-actions";
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.textContent = row.status === "resolved" ? "Reopen" : "Resolve";
+        toggle.addEventListener("click", () => {
+          const next = loadIncidents().map((item) => {
+            if (item.id !== row.id) return item;
+            const clone = Object.assign({}, item);
+            clone.status = item.status === "resolved" ? "open" : "resolved";
+            clone.resolvedAt = clone.status === "resolved" ? new Date().toISOString() : "";
+            return clone;
+          });
+          saveIncidents(next);
+          render();
+          trackTelemetry("incident:toggle");
+        });
+        actions.appendChild(toggle);
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.textContent = "Delete";
+        remove.addEventListener("click", () => {
+          saveIncidents(loadIncidents().filter((item) => item.id !== row.id));
+          render();
+          trackTelemetry("incident:delete");
+        });
+        actions.appendChild(remove);
+        card.appendChild(actions);
+        list.appendChild(card);
+      });
+    }
+    function open() {
+      overlay.classList.add("active");
+      render();
+      trackTelemetry("incident:open");
+    }
+    window.wolfbbsOpenIncidentConsole = open;
+    close.addEventListener("click", () => overlay.classList.remove("active"));
+    create.addEventListener("click", () => {
+      const title = String(window.prompt("Incident title", "Service health check") || "").trim();
+      if (!title) return;
+      const severityRaw = String(window.prompt("Severity (low, medium, high)", "medium") || "medium").toLowerCase();
+      const severity = ["low", "medium", "high"].includes(severityRaw) ? severityRaw : "medium";
+      const note = String(window.prompt("Optional note", "") || "").trim();
+      const rows = loadIncidents();
+      rows.unshift({
+        id: "inc-" + Math.random().toString(36).slice(2, 10),
+        title: title.slice(0, 100),
+        severity: severity,
+        note: note.slice(0, 500),
+        status: "open",
+        route: currentRoute,
+        createdAt: new Date().toISOString()
+      });
+      saveIncidents(rows);
+      render();
+      trackTelemetry("incident:create");
+      showToast("Incident logged", "ok");
+    });
+    exportButton.addEventListener("click", () => {
+      downloadJSONFile("wolfbbs-incidents.json", {
+        generatedAt: new Date().toISOString(),
+        incidents: loadIncidents()
+      });
+      trackTelemetry("incident:export");
+    });
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) overlay.classList.remove("active");
+    });
+  }
+
+  const playbookRegistry = {
+    "/admin/setup": [
+      "Validate identity and public host",
+      "Seed baseline boards and channels",
+      "Create one non-sysop account",
+      "Run status verification checks"
+    ],
+    "/admin/launch": [
+      "Review launch readiness blockers",
+      "Run caller journey smoke test",
+      "Confirm alert channels are working",
+      "Publish launch bulletin"
+    ],
+    "/admin/ops": [
+      "Review unresolved incidents",
+      "Check active sessions and rate limits",
+      "Review admin audit tail",
+      "Export diagnostics package"
+    ]
+  };
+
+  function playbookForRoute(route) {
+    const path = normalizePath(route || currentRoute || "/");
+    if (playbookRegistry[path]) return playbookRegistry[path];
+    const prefix = Object.keys(playbookRegistry).find((key) => path.indexOf(key + "/") === 0);
+    return prefix ? playbookRegistry[prefix] : [
+      "Review route objective",
+      "Complete primary action",
+      "Capture notes for handoff",
+      "Mark route complete"
+    ];
+  }
+
+  function playbookKey(route) {
+    return playbookKeyPrefix + normalizePath(route || currentRoute || "/");
+  }
+
+  function mountPlaybookRunner() {
+    if (document.getElementById("wolfbbsPlaybookOverlay")) return;
+    const overlay = document.createElement("div");
+    overlay.id = "wolfbbsPlaybookOverlay";
+    overlay.innerHTML = '<div id="wolfbbsPlaybookPanel"><div class="wolfbbs-inline-actions"><strong>Playbook Runner</strong><button type="button" id="wolfbbsPlaybookClose">Close</button><button type="button" id="wolfbbsPlaybookComplete">Complete all</button><button type="button" id="wolfbbsPlaybookReset">Reset</button></div><div id="wolfbbsPlaybookList"></div></div>';
+    document.body.appendChild(overlay);
+    const list = overlay.querySelector("#wolfbbsPlaybookList");
+    const close = overlay.querySelector("#wolfbbsPlaybookClose");
+    const complete = overlay.querySelector("#wolfbbsPlaybookComplete");
+    const reset = overlay.querySelector("#wolfbbsPlaybookReset");
+    function render() {
+      list.innerHTML = "";
+      const steps = playbookForRoute(currentRoute);
+      const state = Object.assign({}, readJSON(playbookKey(currentRoute), {}));
+      const head = document.createElement("p");
+      const done = steps.filter((_, idx) => Boolean(state["step_" + idx])).length;
+      head.className = "wolfbbs-muted";
+      head.textContent = done + "/" + steps.length + " complete";
+      list.appendChild(head);
+      steps.forEach((step, idx) => {
+        const row = document.createElement("div");
+        row.className = "wolfbbs-playbook-row";
+        const actions = document.createElement("div");
+        actions.className = "wolfbbs-inline-actions";
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.checked = Boolean(state["step_" + idx]);
+        box.addEventListener("change", () => {
+          state["step_" + idx] = box.checked;
+          writeJSON(playbookKey(currentRoute), state);
+          render();
+          trackTelemetry("playbook:toggle");
+        });
+        actions.appendChild(box);
+        const label = document.createElement("span");
+        label.textContent = step;
+        actions.appendChild(label);
+        row.appendChild(actions);
+        list.appendChild(row);
+      });
+    }
+    function open() {
+      overlay.classList.add("active");
+      render();
+      trackTelemetry("playbook:open");
+    }
+    window.wolfbbsOpenPlaybookRunner = open;
+    close.addEventListener("click", () => overlay.classList.remove("active"));
+    complete.addEventListener("click", () => {
+      const steps = playbookForRoute(currentRoute);
+      const state = {};
+      steps.forEach((_, idx) => { state["step_" + idx] = true; });
+      writeJSON(playbookKey(currentRoute), state);
+      render();
+      trackTelemetry("playbook:complete-all");
+    });
+    reset.addEventListener("click", () => {
+      writeJSON(playbookKey(currentRoute), {});
+      render();
+      trackTelemetry("playbook:reset");
+    });
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) overlay.classList.remove("active");
+    });
+  }
+
+  function loadReminders() {
+    return readJSON(reminderKey, []).filter((row) => row && row.id && row.text);
+  }
+
+  function saveReminders(rows) {
+    const clean = rows.filter((row) => row && row.id && row.text).slice(0, 120);
+    writeJSON(reminderKey, clean);
+    return clean;
+  }
+
+  function mountReminderScheduler() {
+    if (document.getElementById("wolfbbsReminderOverlay")) return;
+    const overlay = document.createElement("div");
+    overlay.id = "wolfbbsReminderOverlay";
+    overlay.innerHTML = '<div id="wolfbbsReminderPanel"><div class="wolfbbs-inline-actions"><strong>Reminder Scheduler</strong><button type="button" id="wolfbbsReminderClose">Close</button><button type="button" id="wolfbbsReminderCreate">Add reminder</button><button type="button" id="wolfbbsReminderClearDone">Clear done</button></div><div id="wolfbbsReminderList"></div></div>';
+    document.body.appendChild(overlay);
+    const list = overlay.querySelector("#wolfbbsReminderList");
+    const close = overlay.querySelector("#wolfbbsReminderClose");
+    const create = overlay.querySelector("#wolfbbsReminderCreate");
+    const clearDone = overlay.querySelector("#wolfbbsReminderClearDone");
+    function render() {
+      list.innerHTML = "";
+      const rows = loadReminders();
+      if (!rows.length) {
+        const p = document.createElement("p");
+        p.textContent = "No reminders yet.";
+        list.appendChild(p);
+        return;
+      }
+      rows.forEach((row) => {
+        const dueAt = new Date(row.dueAt || "").getTime();
+        const due = Number.isFinite(dueAt) && dueAt <= Date.now() && row.done !== true;
+        const card = document.createElement("div");
+        card.className = "wolfbbs-reminder-row";
+        card.setAttribute("data-due", due ? "true" : "false");
+        const title = document.createElement("strong");
+        title.textContent = row.text;
+        card.appendChild(title);
+        const meta = document.createElement("p");
+        meta.className = "wolfbbs-muted";
+        meta.textContent = (row.done ? "done" : "scheduled") + " • due " + String(row.dueAt || "");
+        card.appendChild(meta);
+        const actions = document.createElement("div");
+        actions.className = "wolfbbs-inline-actions";
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.textContent = row.done ? "Reopen" : "Done";
+        toggle.addEventListener("click", () => {
+          const next = loadReminders().map((item) => {
+            if (item.id !== row.id) return item;
+            const clone = Object.assign({}, item);
+            clone.done = !item.done;
+            clone.fired = clone.done;
+            return clone;
+          });
+          saveReminders(next);
+          render();
+          trackTelemetry("reminder:toggle");
+        });
+        actions.appendChild(toggle);
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.textContent = "Delete";
+        remove.addEventListener("click", () => {
+          saveReminders(loadReminders().filter((item) => item.id !== row.id));
+          render();
+          trackTelemetry("reminder:delete");
+        });
+        actions.appendChild(remove);
+        card.appendChild(actions);
+        list.appendChild(card);
+      });
+    }
+    function tick() {
+      const rows = loadReminders();
+      let changed = false;
+      rows.forEach((row) => {
+        const dueAt = new Date(row.dueAt || "").getTime();
+        if (!Number.isFinite(dueAt) || row.done || row.fired) return;
+        if (dueAt <= Date.now()) {
+          row.fired = true;
+          changed = true;
+          showToast("Reminder: " + row.text, "ok");
+          trackTelemetry("reminder:fired");
+        }
+      });
+      if (changed) {
+        saveReminders(rows);
+      }
+    }
+    function open() {
+      overlay.classList.add("active");
+      render();
+      trackTelemetry("reminder:open");
+    }
+    window.wolfbbsOpenReminderScheduler = open;
+    close.addEventListener("click", () => overlay.classList.remove("active"));
+    create.addEventListener("click", () => {
+      const text = String(window.prompt("Reminder text", "Follow up on board replies") || "").trim();
+      if (!text) return;
+      const minutesRaw = String(window.prompt("Due in minutes", "30") || "30").trim();
+      const minutes = Number(minutesRaw);
+      if (!Number.isFinite(minutes) || minutes <= 0) {
+        showToast("Minutes must be a positive number", "error");
+        return;
+      }
+      const rows = loadReminders();
+      rows.unshift({
+        id: "rem-" + Math.random().toString(36).slice(2, 10),
+        text: text.slice(0, 140),
+        dueAt: new Date(Date.now() + minutes * 60 * 1000).toISOString(),
+        done: false,
+        fired: false,
+        route: currentRoute,
+        createdAt: new Date().toISOString()
+      });
+      saveReminders(rows);
+      render();
+      trackTelemetry("reminder:create");
+    });
+    clearDone.addEventListener("click", () => {
+      saveReminders(loadReminders().filter((row) => !row.done));
+      render();
+      trackTelemetry("reminder:clear-done");
+    });
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) overlay.classList.remove("active");
+    });
+    tick();
+    window.setInterval(tick, 15000);
+  }
+
+  function mountReleaseGate() {
+    if (document.getElementById("wolfbbsReleaseGateOverlay")) return;
+    const checks = [
+      { id: "tests", label: "All automated test suites are green" },
+      { id: "smoke", label: "Smoke verification passed for target env" },
+      { id: "auth", label: "Auth and RBAC behavior verified" },
+      { id: "chat", label: "Chat and moderation flow verified" },
+      { id: "docs", label: "Install and product docs are up to date" },
+      { id: "observability", label: "Status and diagnostics reviewed" }
+    ];
+    const overlay = document.createElement("div");
+    overlay.id = "wolfbbsReleaseGateOverlay";
+    overlay.innerHTML = '<div id="wolfbbsReleaseGatePanel"><div class="wolfbbs-inline-actions"><strong>Release Gate</strong><button type="button" id="wolfbbsReleaseGateClose">Close</button><button type="button" id="wolfbbsReleaseGateExport">Export gate</button><button type="button" id="wolfbbsReleaseGateReset">Reset</button></div><div id="wolfbbsReleaseGateSummary" class="wolfbbs-muted"></div><div id="wolfbbsReleaseGateList"></div></div>';
+    document.body.appendChild(overlay);
+    const summary = overlay.querySelector("#wolfbbsReleaseGateSummary");
+    const list = overlay.querySelector("#wolfbbsReleaseGateList");
+    const close = overlay.querySelector("#wolfbbsReleaseGateClose");
+    const exportButton = overlay.querySelector("#wolfbbsReleaseGateExport");
+    const reset = overlay.querySelector("#wolfbbsReleaseGateReset");
+    function render() {
+      const state = Object.assign({}, readJSON(releaseGateKey, {}));
+      const done = checks.filter((row) => Boolean(state[row.id])).length;
+      summary.textContent = "Release confidence " + done + "/" + checks.length;
+      list.innerHTML = "";
+      checks.forEach((row) => {
+        const item = document.createElement("div");
+        item.className = "wolfbbs-release-gate-row";
+        const actions = document.createElement("div");
+        actions.className = "wolfbbs-inline-actions";
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.checked = Boolean(state[row.id]);
+        box.addEventListener("change", () => {
+          state[row.id] = box.checked;
+          writeJSON(releaseGateKey, state);
+          render();
+          trackTelemetry("release-gate:toggle");
+        });
+        actions.appendChild(box);
+        const label = document.createElement("span");
+        label.textContent = row.label;
+        actions.appendChild(label);
+        item.appendChild(actions);
+        list.appendChild(item);
+      });
+    }
+    function open() {
+      overlay.classList.add("active");
+      render();
+      trackTelemetry("release-gate:open");
+    }
+    window.wolfbbsOpenReleaseGate = open;
+    close.addEventListener("click", () => overlay.classList.remove("active"));
+    reset.addEventListener("click", () => {
+      writeJSON(releaseGateKey, {});
+      render();
+      trackTelemetry("release-gate:reset");
+    });
+    exportButton.addEventListener("click", () => {
+      downloadJSONFile("wolfbbs-release-gate.json", {
+        route: currentRoute,
+        generatedAt: new Date().toISOString(),
+        checks: checks,
+        state: readJSON(releaseGateKey, {})
+      });
+      trackTelemetry("release-gate:export");
+    });
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) overlay.classList.remove("active");
+    });
+  }
+
+  function mountFeedbackPulse() {
+    if (document.getElementById("wolfbbsFeedbackButton")) return;
+    const button = document.createElement("button");
+    button.id = "wolfbbsFeedbackButton";
+    button.type = "button";
+    button.textContent = "Feedback";
+    document.body.appendChild(button);
+    const overlay = document.createElement("div");
+    overlay.id = "wolfbbsFeedbackOverlay";
+    overlay.innerHTML = '<div id="wolfbbsFeedbackPanel"><div class="wolfbbs-inline-actions"><strong>Feedback Pulse</strong><button type="button" id="wolfbbsFeedbackClose">Close</button><button type="button" id="wolfbbsFeedbackExport">Export</button></div><p class="wolfbbs-muted">Rate this route and capture one note for product improvement.</p><div class="wolfbbs-rating-row" id="wolfbbsFeedbackRatings"></div><textarea id="wolfbbsFeedbackNote" placeholder="What should improve next?" style="width:100%;min-height:110px;margin-top:10px;"></textarea><div class="wolfbbs-inline-actions" style="margin-top:10px;"><button type="button" id="wolfbbsFeedbackSave">Save feedback</button></div></div>';
+    document.body.appendChild(overlay);
+    const ratings = overlay.querySelector("#wolfbbsFeedbackRatings");
+    const close = overlay.querySelector("#wolfbbsFeedbackClose");
+    const exportButton = overlay.querySelector("#wolfbbsFeedbackExport");
+    const save = overlay.querySelector("#wolfbbsFeedbackSave");
+    const note = overlay.querySelector("#wolfbbsFeedbackNote");
+    let selected = 0;
+    function syncRatings() {
+      ratings.innerHTML = "";
+      for (let i = 1; i <= 5; i++) {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.textContent = String(i);
+        chip.setAttribute("data-active", selected === i ? "true" : "false");
+        chip.addEventListener("click", () => {
+          selected = i;
+          syncRatings();
+        });
+        ratings.appendChild(chip);
+      }
+    }
+    function open() {
+      overlay.classList.add("active");
+      note.value = "";
+      selected = 0;
+      syncRatings();
+      trackTelemetry("feedback:open");
+    }
+    window.wolfbbsOpenFeedbackPulse = open;
+    button.addEventListener("click", open);
+    close.addEventListener("click", () => overlay.classList.remove("active"));
+    save.addEventListener("click", () => {
+      if (selected <= 0) {
+        showToast("Choose a rating before saving", "error");
+        return;
+      }
+      const rows = readJSON(feedbackKey, []);
+      rows.unshift({
+        id: "fb-" + Math.random().toString(36).slice(2, 10),
+        route: currentRoute,
+        rating: selected,
+        note: String(note.value || "").trim().slice(0, 600),
+        createdAt: new Date().toISOString()
+      });
+      writeJSON(feedbackKey, rows.slice(0, 120));
+      showToast("Feedback saved", "ok");
+      trackTelemetry("feedback:save");
+      overlay.classList.remove("active");
+    });
+    exportButton.addEventListener("click", () => {
+      downloadJSONFile("wolfbbs-feedback.json", {
+        generatedAt: new Date().toISOString(),
+        feedback: readJSON(feedbackKey, [])
+      });
+      trackTelemetry("feedback:export");
+    });
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) overlay.classList.remove("active");
+    });
+    syncRatings();
+  }
+
+  function mountMacroHelp() {
+    if (document.getElementById("wolfbbsMacroHelpOverlay")) return;
+    const overlay = document.createElement("div");
+    overlay.id = "wolfbbsMacroHelpOverlay";
+    overlay.innerHTML = '<div id="wolfbbsMacroHelpPanel"><h3>Keyboard Macros</h3><ul><li><strong>Ctrl/Cmd+K</strong> open command palette</li><li><strong>?</strong> open command palette</li><li><strong>Alt+1..6</strong> quick route jump</li><li><strong>Alt+J / Alt+K</strong> section navigation</li><li><strong>Ctrl/Cmd+Shift+N</strong> quick notes</li><li><strong>Ctrl/Cmd+Shift+D / I / P / M / G</strong> drafts, incidents, playbooks, reminders, release gate</li><li><strong>Ctrl/Cmd+Shift+U</strong> bug capture</li><li><strong>F1</strong> keyboard help</li></ul><p class="wolfbbs-muted">Esc closes overlays.</p></div>';
+    document.body.appendChild(overlay);
+    function openHelp() {
+      overlay.classList.add("active");
+      trackTelemetry("macro:help-open");
+    }
+    function closeHelp() {
+      overlay.classList.remove("active");
+    }
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) closeHelp();
+    });
+    window.wolfbbsOpenMacroHelp = openHelp;
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "F1") {
+        event.preventDefault();
+        openHelp();
+        return;
+      }
+      if (event.key === "Escape" && overlay.classList.contains("active")) {
+        event.preventDefault();
+        closeHelp();
+      }
+    });
+  }
+
+  function buildBugCapturePayload() {
+    const telemetry = loadTelemetry();
+    const topEvents = Object.entries(telemetry.events || {})
+      .sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0))
+      .slice(0, 15)
+      .map((entry) => ({ key: entry[0], count: Number(entry[1] || 0) }));
+    return {
+      route: currentRoute,
+      path: location.pathname + location.search + location.hash,
+      title: document.title || title,
+      generatedAt: new Date().toISOString(),
+      userAgent: navigator.userAgent,
+      uiPrefs: readJSON(uiPrefsKey, {}),
+      focusMode: readJSON(focusModeKey, {}),
+      focusTimer: readJSON(focusKey, {}),
+      session: readJSON(sessionTrailKey, {}),
+      notifications: readJSON(toastHistoryKey, []).slice(0, 25),
+      telemetryTopEvents: topEvents,
+      notesPreview: String(localStorage.getItem(notesKey) || "").slice(0, 800)
+    };
+  }
+
+  function mountBugCapture() {
+    if (document.getElementById("wolfbbsBugOverlay")) return;
+    const overlay = document.createElement("div");
+    overlay.id = "wolfbbsBugOverlay";
+    overlay.innerHTML = '<div id="wolfbbsBugPanel"><h3>Bug Report Capture</h3><p class="wolfbbs-muted">Captures route, UI state, telemetry summary, and notification history for reproducible bug reports.</p><label>Snapshot JSON<textarea id="wolfbbsBugPayload"></textarea></label><div class="wolfbbs-inline-actions"><button type="button" id="wolfbbsBugRefresh">Refresh</button><button type="button" id="wolfbbsBugCopy">Copy JSON</button><button type="button" id="wolfbbsBugDownload">Download JSON</button><button type="button" id="wolfbbsBugClose">Close</button></div></div>';
+    document.body.appendChild(overlay);
+    const payloadField = overlay.querySelector("#wolfbbsBugPayload");
+    function render() {
+      if (!payloadField) return;
+      payloadField.value = JSON.stringify(buildBugCapturePayload(), null, 2);
+    }
+    function open() {
+      render();
+      overlay.classList.add("active");
+      trackTelemetry("bug-capture:open");
+    }
+    function close() {
+      overlay.classList.remove("active");
+    }
+    overlay.querySelector("#wolfbbsBugRefresh").addEventListener("click", () => {
+      render();
+      showToast("Bug snapshot refreshed", "ok");
+      trackTelemetry("bug-capture:refresh");
+    });
+    overlay.querySelector("#wolfbbsBugCopy").addEventListener("click", () => {
+      copyText(payloadField.value || "").then(() => {
+        showToast("Bug snapshot copied", "ok");
+      }).catch(() => {
+        showToast("Could not copy bug snapshot", "error");
+      });
+      trackTelemetry("bug-capture:copy");
+    });
+    overlay.querySelector("#wolfbbsBugDownload").addEventListener("click", () => {
+      const payload = buildBugCapturePayload();
+      downloadJSONFile("wolfbbs-bug-capture.json", payload);
+      writeJSON(bugCaptureKey, payload);
+      showToast("Bug snapshot downloaded", "ok");
+      trackTelemetry("bug-capture:download");
+    });
+    overlay.querySelector("#wolfbbsBugClose").addEventListener("click", close);
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) close();
+    });
+    const quickButton = document.createElement("button");
+    quickButton.type = "button";
+    quickButton.id = "wolfbbsBugButton";
+    quickButton.textContent = "Bug capture";
+    quickButton.addEventListener("click", open);
+    document.body.appendChild(quickButton);
+    window.wolfbbsOpenBugCapture = open;
+    document.addEventListener("keydown", (event) => {
+      const editingTag = event.target && event.target.tagName ? event.target.tagName.toLowerCase() : "";
+      const editing = editingTag === "input" || editingTag === "textarea" || editingTag === "select" || (event.target && event.target.isContentEditable);
+      if (!editing && (event.metaKey || event.ctrlKey) && event.shiftKey && String(event.key).toLowerCase() === "u") {
+        event.preventDefault();
+        open();
+        return;
+      }
+      if (event.key === "Escape" && overlay.classList.contains("active")) {
+        event.preventDefault();
+        close();
+      }
+    });
+  }
+
+  function mountContextHelpDrawer() {
+    if (document.getElementById("wolfbbsContextHelpOverlay")) return;
+    const overlay = document.createElement("div");
+    overlay.id = "wolfbbsContextHelpOverlay";
+    overlay.innerHTML = '<div id="wolfbbsContextHelpPanel"><h3>Context Help</h3><p class="wolfbbs-muted" id="wolfbbsContextHelpBody"></p><div id="wolfbbsContextHelpActions" class="wolfbbs-action-dock-links"></div><div class="wolfbbs-inline-actions"><button type="button" id="wolfbbsContextHelpClose">Close</button></div></div>';
+    document.body.appendChild(overlay);
+    const bodyNode = overlay.querySelector("#wolfbbsContextHelpBody");
+    const actionsNode = overlay.querySelector("#wolfbbsContextHelpActions");
+    function render() {
+      const primer = typeof primerForPath === "function" ? primerForPath(currentRoute) : null;
+      const actions = typeof actionsForRoute === "function" ? actionsForRoute(currentRoute) : [];
+      bodyNode.textContent = primer && primer.body ? String(primer.body).trim() : "Use this route as a focused step in the caller/sysop loop.";
+      actionsNode.innerHTML = "";
+      actions.slice(0, 8).forEach((item) => {
+        const link = document.createElement("a");
+        link.href = item.href;
+        link.textContent = item.label;
+        actionsNode.appendChild(link);
+      });
+      if (!actionsNode.children.length) {
+        const fallback = document.createElement("a");
+        fallback.href = "/help";
+        fallback.textContent = "Open help";
+        actionsNode.appendChild(fallback);
+      }
+    }
+    function open() {
+      render();
+      overlay.classList.add("active");
+      trackTelemetry("context-help:open");
+    }
+    function close() {
+      overlay.classList.remove("active");
+    }
+    overlay.querySelector("#wolfbbsContextHelpClose").addEventListener("click", close);
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) close();
+    });
+    window.wolfbbsOpenContextHelp = open;
+  }
+
+  function isEditingTarget(node) {
+    if (!node) return false;
+    const tag = node.tagName ? node.tagName.toLowerCase() : "";
+    if (tag === "input" || tag === "textarea" || tag === "select") return true;
+    return Boolean(node.isContentEditable);
+  }
+
+  function mountUXRound20Pass() {
+    const main = document.querySelector("main.wolfbbs-main");
+    const hero = document.querySelector(".wolfbbs-page-hero");
+    const heroMeta = document.querySelector(".wolfbbs-page-hero-meta");
+    const navRow = document.querySelector("p.wolfbbs-nav-row");
+    const routeActions = actionsForRoute(currentRoute).slice(0, 4);
+
+    // 1-4: route compass, context path, route actions, and surface metrics.
+    if (!document.querySelector(".wolfbbs-ux20-compass")) {
+      const compass = document.createElement("section");
+      compass.className = "wolfbbs-ux20-compass";
+      const left = document.createElement("div");
+      const heading = document.createElement("strong");
+      heading.textContent = "Route Compass";
+      left.appendChild(heading);
+      const sub = document.createElement("p");
+      const path = document.createElement("span");
+      path.className = "wolfbbs-ux20-path";
+      path.textContent = currentRoute || "/";
+      sub.appendChild(path);
+      sub.appendChild(document.createTextNode(" \u2022 optimized flow mode"));
+      left.appendChild(sub);
+      if (routeActions.length) {
+        const row = document.createElement("div");
+        row.className = "wolfbbs-ux20-action-row";
+        routeActions.forEach((action) => {
+          const link = document.createElement("a");
+          link.href = action.href;
+          link.textContent = action.label;
+          link.addEventListener("click", () => trackTelemetry("ux20:compass-action"));
+          row.appendChild(link);
+        });
+        left.appendChild(row);
+      }
+      compass.appendChild(left);
+      const metrics = document.createElement("div");
+      metrics.className = "wolfbbs-ux20-metrics";
+      const stats = [
+        { label: "Forms", value: document.querySelectorAll("form").length },
+        { label: "Tables", value: document.querySelectorAll("table").length },
+        { label: "Sections", value: document.querySelectorAll("main.wolfbbs-main > section, main.wolfbbs-main > article").length || document.querySelectorAll("section,article").length },
+        { label: "Inputs", value: document.querySelectorAll("input,textarea,select").length }
+      ];
+      stats.forEach((row) => {
+        const chip = document.createElement("span");
+        chip.textContent = row.label + " " + row.value;
+        metrics.appendChild(chip);
+      });
+      compass.appendChild(metrics);
+      if (hero && hero.parentNode) {
+        hero.parentNode.insertBefore(compass, hero.nextSibling);
+      } else if (navRow && navRow.parentNode) {
+        navRow.parentNode.insertBefore(compass, navRow.nextSibling);
+      } else if (main && main.parentNode) {
+        main.parentNode.insertBefore(compass, main);
+      }
+    }
+
+    // 5: floating primary action for faster loop execution.
+    if (routeActions.length && !document.getElementById("wolfbbsUX20PrimaryAction")) {
+      const primary = document.createElement("button");
+      primary.id = "wolfbbsUX20PrimaryAction";
+      primary.type = "button";
+      primary.textContent = "Next: " + routeActions[0].label;
+      primary.addEventListener("click", () => {
+        trackTelemetry("ux20:primary-action");
+        location.assign(routeActions[0].href);
+      });
+      document.body.appendChild(primary);
+    }
+
+    // 6: end-of-page next-step guide with route actions and trail.
+    if (main && !main.querySelector(".wolfbbs-ux20-next")) {
+      const next = document.createElement("section");
+      next.className = "wolfbbs-ux20-next";
+      const titleNode = document.createElement("strong");
+      titleNode.textContent = "Recommended Next Steps";
+      next.appendChild(titleNode);
+      const list = document.createElement("ul");
+      routeActions.slice(0, 3).forEach((action) => {
+        const li = document.createElement("li");
+        const link = document.createElement("a");
+        link.href = action.href;
+        link.textContent = action.label;
+        li.appendChild(link);
+        list.appendChild(li);
+      });
+      const trail = Object.assign({ visited: [] }, readJSON(sessionTrailKey, {}));
+      const previous = (trail.visited || []).find((item) => normalizePath(item) && normalizePath(item) !== currentRoute);
+      if (previous) {
+        const li = document.createElement("li");
+        li.appendChild(document.createTextNode("Return to "));
+        const link = document.createElement("a");
+        link.href = previous;
+        link.textContent = humanizeRoutePart(String(previous).split("/").filter(Boolean).slice(-1)[0] || "start");
+        li.appendChild(link);
+        list.appendChild(li);
+      }
+      if (!list.children.length) {
+        const li = document.createElement("li");
+        li.textContent = "Open /start for the guided route map.";
+        list.appendChild(li);
+      }
+      next.appendChild(list);
+      main.appendChild(next);
+    }
+
+    // 7-9: section filter, completion meter, and jump-to-next-incomplete.
+    const sectionNav = document.querySelector(".wolfbbs-section-nav");
+    if (sectionNav && sectionNav.dataset.wolfbbsUx20Enhanced !== "1") {
+      sectionNav.dataset.wolfbbsUx20Enhanced = "1";
+      const filter = document.createElement("input");
+      filter.type = "search";
+      filter.className = "wolfbbs-ux20-section-filter";
+      filter.placeholder = "Filter sections";
+      const meter = document.createElement("span");
+      meter.className = "wolfbbs-ux20-section-meter";
+      meter.textContent = "Done 0/0";
+      const jump = document.createElement("button");
+      jump.type = "button";
+      jump.className = "wolfbbs-toolbar-button";
+      jump.textContent = "Next open";
+      sectionNav.insertBefore(filter, sectionNav.firstChild);
+      sectionNav.insertBefore(meter, filter.nextSibling);
+      sectionNav.insertBefore(jump, meter.nextSibling);
+      filter.addEventListener("input", () => {
+        const q = (filter.value || "").trim().toLowerCase();
+        Array.from(sectionNav.querySelectorAll('a[href^="#"]')).forEach((link) => {
+          const hit = !q || (link.textContent || "").toLowerCase().includes(q);
+          link.style.display = hit ? "" : "none";
+          link.classList.toggle("wolfbbs-ux20-highlight", Boolean(q) && hit);
+        });
+      });
+      jump.addEventListener("click", () => {
+        const nextHeading = Array.from(document.querySelectorAll("h2[id],h3[id]")).find((heading) => !heading.classList.contains("wolfbbs-section-done"));
+        if (!nextHeading) {
+          showToast("All visible sections marked done", "ok");
+          return;
+        }
+        location.hash = "#" + nextHeading.id;
+        nextHeading.scrollIntoView({ behavior: "smooth", block: "start" });
+        trackTelemetry("ux20:section-next-open");
+      });
+      const syncMeter = () => {
+        const headings = Array.from(document.querySelectorAll("h2[id],h3[id]"));
+        if (!headings.length) {
+          meter.textContent = "Done 0/0";
+          return;
+        }
+        const done = headings.filter((heading) => heading.classList.contains("wolfbbs-section-done")).length;
+        meter.textContent = "Done " + done + "/" + headings.length;
+      };
+      syncMeter();
+      document.addEventListener("click", (event) => {
+        if (event.target && event.target.classList && event.target.classList.contains("wolfbbs-section-done-toggle")) {
+          window.setTimeout(syncMeter, 0);
+        }
+      });
+    }
+
+    // 10-12: form completion meter, required markers, and quick reset helper.
+    Array.from(document.querySelectorAll("form")).forEach((form) => {
+      if (form.closest("table")) return;
+      const fields = Array.from(form.querySelectorAll("input[name], textarea[name], select[name]")).filter((field) => {
+        const type = (field.getAttribute("type") || "").toLowerCase();
+        if (type === "hidden" || type === "submit" || type === "button" || type === "file" || type === "password") return false;
+        return !field.disabled;
+      });
+      if (fields.length < 3) return;
+      let requiredFields = fields.filter((field) => field.hasAttribute("required"));
+      if (!requiredFields.length) {
+        requiredFields = fields.filter((field) => {
+          const tag = field.tagName.toLowerCase();
+          const type = (field.getAttribute("type") || "").toLowerCase();
+          return tag === "textarea" || tag === "select" || ["text", "email", "url", "search", "number", "tel"].includes(type || "text");
+        }).slice(0, Math.min(4, fields.length));
+      }
+      if (!requiredFields.length) return;
+      requiredFields.forEach((field) => {
+        const label = field.closest("label") || (field.id ? form.querySelector('label[for="' + field.id + '"]') : null);
+        if (!label || label.querySelector(".wolfbbs-ux20-required")) return;
+        const marker = document.createElement("span");
+        marker.className = "wolfbbs-ux20-required";
+        marker.textContent = "*";
+        label.appendChild(marker);
+      });
+      if (form.dataset.wolfbbsUx20Meter !== "1") {
+        form.dataset.wolfbbsUx20Meter = "1";
+        const meterRow = document.createElement("div");
+        meterRow.className = "wolfbbs-ux20-form-meter";
+        const text = document.createElement("span");
+        const meter = document.createElement("div");
+        meter.className = "wolfbbs-ux20-meter";
+        const fill = document.createElement("b");
+        meter.appendChild(fill);
+        meterRow.appendChild(text);
+        meterRow.appendChild(meter);
+        form.insertBefore(meterRow, form.firstChild);
+        const sync = () => {
+          const done = requiredFields.filter((field) => {
+            if (field.type === "checkbox" || field.type === "radio") return field.checked;
+            return String(field.value || "").trim().length > 0;
+          }).length;
+          const pct = Math.round((done / requiredFields.length) * 100);
+          text.textContent = "Required completion " + done + "/" + requiredFields.length;
+          fill.style.width = pct + "%";
+        };
+        requiredFields.forEach((field) => field.addEventListener("input", sync));
+        requiredFields.forEach((field) => field.addEventListener("change", sync));
+        sync();
+      }
+      if (fields.length >= 4 && !form.querySelector('[data-ux20-reset="1"]')) {
+        const reset = document.createElement("button");
+        reset.type = "button";
+        reset.className = "wolfbbs-form-secondary";
+        reset.setAttribute("data-ux20-reset", "1");
+        reset.textContent = "Reset fields";
+        reset.addEventListener("click", () => {
+          fields.forEach((field) => {
+            if (field.type === "checkbox" || field.type === "radio") {
+              field.checked = false;
+            } else if (field.tagName.toLowerCase() === "select") {
+              field.selectedIndex = 0;
+            } else {
+              field.value = "";
+            }
+            field.dispatchEvent(new Event("input", { bubbles: true }));
+            field.dispatchEvent(new Event("change", { bubbles: true }));
+          });
+          trackTelemetry("ux20:form-reset");
+          showToast("Form fields reset", "ok");
+        });
+        form.appendChild(reset);
+      }
+    });
+
+    // 13: double-submit guard to prevent duplicate posts.
+    if (document.body.dataset.wolfbbsUx20SubmitGuard !== "1") {
+      document.body.dataset.wolfbbsUx20SubmitGuard = "1";
+      document.addEventListener("submit", (event) => {
+        const form = event.target;
+        if (!form || form.tagName.toLowerCase() !== "form") return;
+        const now = Date.now();
+        const previous = Number(form.dataset.wolfbbsUx20SubmitAt || 0);
+        if (now - previous < 3500) {
+          event.preventDefault();
+          showToast("Submission already in progress. Please wait.", "error");
+          trackTelemetry("ux20:submit-guard");
+          return;
+        }
+        form.dataset.wolfbbsUx20SubmitAt = String(now);
+      }, true);
+    }
+
+    // 14: inline clear controls for search fields.
+    Array.from(document.querySelectorAll('input[type="search"]')).forEach((input) => {
+      if (input.dataset.wolfbbsUx20Clear === "1") return;
+      if (input.id === "wolfbbsPaletteInput") return;
+      input.dataset.wolfbbsUx20Clear = "1";
+      const wrap = document.createElement("span");
+      wrap.className = "wolfbbs-ux20-search-wrap";
+      input.parentNode.insertBefore(wrap, input);
+      wrap.appendChild(input);
+      const clear = document.createElement("button");
+      clear.type = "button";
+      clear.className = "wolfbbs-ux20-clear";
+      clear.textContent = "Clear";
+      clear.addEventListener("click", () => {
+        input.value = "";
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.focus();
+      });
+      wrap.appendChild(clear);
+    });
+
+    // 15: freeze-first-column toggle for enhanced tables.
+    Array.from(document.querySelectorAll(".wolfbbs-table-toolbar")).forEach((toolbar) => {
+      if (toolbar.dataset.wolfbbsUx20Freeze === "1") return;
+      const wrap = toolbar.nextElementSibling;
+      const table = wrap ? wrap.querySelector("table") : null;
+      if (!table) return;
+      toolbar.dataset.wolfbbsUx20Freeze = "1";
+      const freeze = document.createElement("button");
+      freeze.type = "button";
+      freeze.className = "wolfbbs-toolbar-button";
+      freeze.textContent = "Freeze col 1";
+      freeze.addEventListener("click", () => {
+        const enabled = table.classList.toggle("wolfbbs-ux20-freeze-col");
+        freeze.textContent = enabled ? "Unfreeze col 1" : "Freeze col 1";
+        trackTelemetry("ux20:table-freeze");
+      });
+      toolbar.appendChild(freeze);
+    });
+
+    // 16: alt+click table row to copy row values.
+    Array.from(document.querySelectorAll("table")).forEach((table) => {
+      if (table.dataset.wolfbbsUx20CopyRows === "1") return;
+      table.dataset.wolfbbsUx20CopyRows = "1";
+      Array.from(table.querySelectorAll("tr")).forEach((row) => {
+        row.addEventListener("click", (event) => {
+          if (!event.altKey) return;
+          event.preventDefault();
+          event.stopPropagation();
+          const text = Array.from(row.querySelectorAll("th,td")).map((cell) => (cell.textContent || "").trim()).filter(Boolean).join(" | ");
+          if (!text) return;
+          copyText(text).then(() => showToast("Row copied", "ok")).catch(() => showToast("Could not copy row", "error"));
+          trackTelemetry("ux20:table-row-copy");
+        });
+      });
+    });
+
+    // 17: slash shortcut focuses the first available search field.
+    if (!window.wolfbbsUX20SlashBound) {
+      window.wolfbbsUX20SlashBound = true;
+      document.addEventListener("keydown", (event) => {
+        if (event.defaultPrevented) return;
+        if (event.key !== "/" || event.ctrlKey || event.metaKey || event.altKey) return;
+        if (isEditingTarget(event.target)) return;
+        const target = document.querySelector('.wolfbbs-section-nav input[type="search"], .wolfbbs-table-toolbar input[type="search"], input[type="search"]');
+        if (!target) return;
+        event.preventDefault();
+        target.focus();
+        if (typeof target.select === "function") target.select();
+        announceLive("Search focused");
+        trackTelemetry("ux20:slash-search");
+      });
+    }
+
+    // 18: escape blurs active field when no overlay is open.
+    if (!window.wolfbbsUX20EscBound) {
+      window.wolfbbsUX20EscBound = true;
+      document.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape") return;
+        if (document.querySelector(".active#wolfbbsPaletteOverlay, .active#wolfbbsShortcutOverlay, .active#wolfbbsNotesOverlay")) return;
+        const active = document.activeElement;
+        if (!isEditingTarget(active)) return;
+        active.blur();
+        announceLive("Input focus cleared");
+        trackTelemetry("ux20:escape-blur");
+      });
+    }
+
+    // 19: two-key route macros: g + key.
+    if (!window.wolfbbsUX20GoBound) {
+      window.wolfbbsUX20GoBound = true;
+      let armedAt = 0;
+      const goMap = {
+        h: "/help",
+        s: "/start",
+        t: "/today",
+        a: "/attention",
+        b: "/boards",
+        c: "/chat",
+        m: "/mail",
+        d: "/doors"
+      };
+      document.addEventListener("keydown", (event) => {
+        if (event.defaultPrevented) return;
+        if (event.ctrlKey || event.metaKey || event.altKey) return;
+        if (isEditingTarget(event.target)) return;
+        const key = String(event.key || "").toLowerCase();
+        const now = Date.now();
+        if (key === "g") {
+          armedAt = now;
+          return;
+        }
+        if (now - armedAt > 1200) return;
+        armedAt = 0;
+        if (!goMap[key]) return;
+        event.preventDefault();
+        trackTelemetry("ux20:go-macro");
+        location.assign(goMap[key]);
+      });
+    }
+
+    // 20: visible status chip so callers know UX pass is active.
+    if (heroMeta && !heroMeta.querySelector('[data-kind="ux20"]')) {
+      const chip = document.createElement("span");
+      chip.className = "wolfbbs-hero-chip";
+      chip.setAttribute("data-kind", "ux20");
+      chip.textContent = "UX20 active";
+      chip.title = "20 UX enhancements enabled";
+      heroMeta.appendChild(chip);
+    }
+  }
+
+  mountSkipAndScrollUI();
+  mountRevisitBanner();
+  mountBreadcrumbs();
+  applyGlossaryEnhancer();
+  mountCrossTabSync();
+  mountPreferenceControls();
+  mountKPIDeltas();
+  mountSectionToggles();
+  mountGoalCoach();
+  mountRouteScorecard();
+  enhanceEmptyStates();
+  mountQuickNotesWorkspace();
+  mountUXDiagnosticsButton();
+  mountToastCenter();
+  mountWorkspaceHub();
+  mountCheckpointHub();
+  mountSpotlightSearch();
+  mountDraftCenter();
+  mountKPIWatchCenter();
+  mountIncidentConsole();
+  mountPlaybookRunner();
+  mountReminderScheduler();
+  mountReleaseGate();
+  mountFeedbackPulse();
+  mountMacroHelp();
+  mountShortcutLegendOverlay();
+  mountContextHelpDrawer();
+  mountBugCapture();
+  mountUXRound20Pass();
+
   const primerRegistry = {
     "/help": {
       eyebrow: "Start here",
@@ -6372,12 +12880,19 @@ body.wolfbbs-compose-fullscreen-open{
         a.textContent = item.label;
         rail.appendChild(a);
       });
-      const firstHeading = document.querySelector("h1");
-      if (firstHeading && firstHeading.parentNode) {
-        firstHeading.parentNode.insertBefore(rail, firstHeading.nextSibling);
+      const navRow = document.querySelector("p.wolfbbs-nav-row");
+      const hero = document.querySelector(".wolfbbs-page-hero");
+      const shellMain = document.querySelector("main.wolfbbs-main");
+      if (navRow && navRow.parentNode) {
+        navRow.parentNode.insertBefore(rail, navRow.nextSibling);
+      } else if (hero && hero.parentNode) {
+        hero.parentNode.insertBefore(rail, hero.nextSibling);
+      } else if (shellMain && shellMain.parentNode) {
+        shellMain.parentNode.insertBefore(rail, shellMain);
       }
     }
   } catch (_) {}
+  renderFavoritesRail();
 
   document.querySelectorAll('table').forEach((table) => {
     if (table.parentElement && table.parentElement.classList.contains('wolfbbs-table-wrap')) return;
@@ -6428,11 +12943,13 @@ body.wolfbbs-compose-fullscreen-open{
     const original = trigger.textContent;
     copyText(text).then(() => {
       trigger.textContent = 'Copied';
+      showToast("Copied to clipboard", "ok");
       window.setTimeout(() => {
         trigger.textContent = original;
       }, 1200);
     }).catch(() => {
       trigger.textContent = 'Copy failed';
+      showToast("Copy failed", "error");
       window.setTimeout(() => {
         trigger.textContent = original;
       }, 1200);
@@ -6484,6 +13001,16 @@ body.wolfbbs-compose-fullscreen-open{
   });
 
   const dirtyForms = new Set();
+  const baseDocumentTitle = document.title || "WolfBBS";
+  function refreshDirtyTitle() {
+    if (dirtyForms.size > 0) {
+      if (!document.title.startsWith("● ")) {
+        document.title = "● " + baseDocumentTitle;
+      }
+      return;
+    }
+    document.title = baseDocumentTitle;
+  }
   function draftFields(form) {
     return Array.from(form.querySelectorAll('textarea[name], input[name], select[name]')).filter((field) => {
       const type = (field.getAttribute('type') || '').toLowerCase();
@@ -6526,6 +13053,7 @@ body.wolfbbs-compose-fullscreen-open{
     function markClean(message) {
       dirty = false;
       dirtyForms.delete(form);
+      refreshDirtyTitle();
       status.classList.remove('dirty', 'error');
       status.textContent = message || 'Draft idle';
     }
@@ -6533,6 +13061,7 @@ body.wolfbbs-compose-fullscreen-open{
     function markDirty(message) {
       dirty = true;
       dirtyForms.add(form);
+      refreshDirtyTitle();
       status.classList.remove('error');
       status.classList.add('dirty');
       status.textContent = message || 'Unsaved draft changes';
@@ -7038,6 +13567,25 @@ body.wolfbbs-compose-fullscreen-open{
   document.addEventListener('submit', (event) => {
     const form = event.target;
     if (!form || form.tagName.toLowerCase() !== 'form') return;
+    const requiredInvalid = Array.from(form.querySelectorAll('[required]')).filter((node) => typeof node.checkValidity === 'function' && !node.checkValidity());
+    if (requiredInvalid.length) {
+      event.preventDefault();
+      const first = requiredInvalid[0];
+      if (typeof first.focus === 'function') first.focus();
+      if (typeof first.reportValidity === 'function') first.reportValidity();
+      showToast('Please fill required fields before submitting.', 'error');
+      trackTelemetry('form:required-missing');
+      return;
+    }
+    if (typeof form.checkValidity === 'function' && !form.checkValidity()) {
+      event.preventDefault();
+      const firstInvalid = form.querySelector(':invalid');
+      if (firstInvalid && typeof firstInvalid.focus === 'function') firstInvalid.focus();
+      if (firstInvalid && typeof firstInvalid.reportValidity === 'function') firstInvalid.reportValidity();
+      showToast('Please fix invalid form fields.', 'error');
+      trackTelemetry('form:invalid');
+      return;
+    }
     const submitter = event.submitter || form.querySelector('button[type="submit"], input[type="submit"]');
     const confirmMessage = inferredConfirmMessage(form, submitter);
     if (confirmMessage && !window.confirm(confirmMessage)) {
@@ -7060,38 +13608,29 @@ body.wolfbbs-compose-fullscreen-open{
       button.disabled = true;
       button.classList.add('wolfbbs-submit-busy');
     });
+    trackTelemetry('form:submit');
   }, true);
 
   const primer = primerForPath(location.pathname);
   if (primer) {
     const panel = document.createElement("section");
-    panel.className = "wolfbbs-primer wolfbbs-card";
-    const eyebrow = document.createElement("span");
-    eyebrow.className = "wolfbbs-primer-eyebrow";
-    eyebrow.textContent = primer.eyebrow || "Guide";
-    panel.appendChild(eyebrow);
+    panel.className = "wolfbbs-guide-strip";
+    const main = document.createElement("div");
     const heading = document.createElement("strong");
-    heading.className = "wolfbbs-primer-title";
-    heading.textContent = primer.title || title;
-    panel.appendChild(heading);
+    const headingPrefix = primer.eyebrow ? primer.eyebrow + " \u2022 " : "";
+    heading.textContent = headingPrefix + (primer.title || title);
+    main.appendChild(heading);
     if (primer.body) {
       const body = document.createElement("p");
-      body.textContent = primer.body;
-      panel.appendChild(body);
+      const trimmed = String(primer.body).trim();
+      body.textContent = trimmed.length > 190 ? trimmed.slice(0, 187) + "..." : trimmed;
+      main.appendChild(body);
     }
-    if (Array.isArray(primer.bullets) && primer.bullets.length) {
-      const list = document.createElement("ul");
-      primer.bullets.forEach((item) => {
-        const li = document.createElement("li");
-        li.textContent = item;
-        list.appendChild(li);
-      });
-      panel.appendChild(list);
-    }
+    panel.appendChild(main);
     if (Array.isArray(primer.actions) && primer.actions.length) {
       const actions = document.createElement("div");
-      actions.className = "wolfbbs-primer-actions";
-      primer.actions.forEach((item) => {
+      actions.className = "wolfbbs-guide-actions";
+      primer.actions.slice(0, 4).forEach((item) => {
         const link = document.createElement("a");
         link.href = item.href;
         link.textContent = item.label;
@@ -7099,59 +13638,1436 @@ body.wolfbbs-compose-fullscreen-open{
       });
       panel.appendChild(actions);
     }
-    const h1 = document.querySelector("h1");
+    if (Array.isArray(primer.bullets) && primer.bullets.length) {
+      const details = document.createElement("details");
+      details.className = "wolfbbs-guide-details";
+      const summary = document.createElement("summary");
+      summary.textContent = currentRoute.startsWith("/admin") ? "Operator notes" : "Usage notes";
+      details.appendChild(summary);
+      const list = document.createElement("ul");
+      primer.bullets.slice(0, 4).forEach((item) => {
+        const li = document.createElement("li");
+        li.textContent = item;
+        list.appendChild(li);
+      });
+      details.appendChild(list);
+      panel.appendChild(details);
+    }
     const recentRail = document.querySelector(".wolfbbs-recent-rail");
+    const shellMain = document.querySelector("main.wolfbbs-main");
+    const navRow = document.querySelector("p.wolfbbs-nav-row");
     if (recentRail && recentRail.parentNode) {
       recentRail.parentNode.insertBefore(panel, recentRail.nextSibling);
-    } else if (h1 && h1.parentNode) {
-      h1.parentNode.insertBefore(panel, h1.nextSibling);
+    } else if (shellMain && shellMain.parentNode) {
+      shellMain.parentNode.insertBefore(panel, shellMain);
+    } else if (navRow && navRow.parentNode) {
+      navRow.parentNode.insertBefore(panel, navRow.nextSibling);
     }
   }
+  mountGuideMinimizeControl();
 
   const headings = Array.from(document.querySelectorAll("h2, h3"));
-  if (headings.length >= 2) {
+  const sectionHeadings = headings
+    .filter((heading) => heading.tagName === "H2")
+    .filter((heading) => {
+      const text = heading.textContent.trim();
+      if (!text || text.length < 3) return false;
+      if (heading.closest("table")) return false;
+      return true;
+    })
+    .slice(0, 8);
+  const sectionPinsStorageKey = sectionPinsKeyPrefix + currentRoute;
+  const sectionDoneStorageKey = sectionDoneKeyPrefix + currentRoute;
+  const sectionPins = Object.assign({}, readJSON(sectionPinsStorageKey, {}));
+  const sectionDone = Object.assign({}, readJSON(sectionDoneStorageKey, {}));
+  function readingMinutesForHeading(heading) {
+    const section = heading.closest("section") || heading.closest("article") || heading.parentElement;
+    const text = section ? (section.textContent || "") : (heading.textContent || "");
+    const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+    return Math.max(1, Math.round(words / 180));
+  }
+  function applySectionDoneVisual(heading, done) {
+    heading.classList.toggle("wolfbbs-section-done", Boolean(done));
+  }
+  sectionHeadings.forEach((heading, idx) => {
+    if (!heading.id) heading.id = "wolfbbs-section-" + idx;
+    if (heading.querySelector(".wolfbbs-heading-link")) return;
+    const link = document.createElement("a");
+    link.href = "#" + heading.id;
+    link.className = "wolfbbs-heading-link";
+    link.textContent = "Link";
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      const hashURL = location.origin + location.pathname + location.search + "#" + heading.id;
+      copyText(hashURL).then(() => {
+        showToast("Section link copied", "ok");
+      }).catch(() => {
+        showToast("Could not copy section link", "error");
+      });
+      location.hash = heading.id;
+    });
+    heading.appendChild(link);
+    const pinButton = document.createElement("button");
+    pinButton.type = "button";
+    pinButton.className = "wolfbbs-section-pin-button";
+    function syncPinLabel() {
+      pinButton.textContent = sectionPins[heading.id] ? "Unpin" : "Pin";
+    }
+    pinButton.addEventListener("click", () => {
+      if (sectionPins[heading.id]) {
+        delete sectionPins[heading.id];
+      } else {
+        sectionPins[heading.id] = heading.dataset.navLabel || heading.textContent.trim();
+      }
+      writeJSON(sectionPinsStorageKey, sectionPins);
+      syncPinLabel();
+      if (typeof window.wolfbbsRenderSectionPins === "function") window.wolfbbsRenderSectionPins();
+      trackTelemetry("sections:pin-toggle");
+    });
+    syncPinLabel();
+    heading.appendChild(pinButton);
+    const doneButton = document.createElement("button");
+    doneButton.type = "button";
+    doneButton.className = "wolfbbs-section-done-toggle";
+    function syncDoneLabel() {
+      const done = Boolean(sectionDone[heading.id]);
+      doneButton.setAttribute("data-done", done ? "true" : "false");
+      doneButton.textContent = done ? "Done" : "Mark done";
+      applySectionDoneVisual(heading, done);
+    }
+    doneButton.addEventListener("click", () => {
+      sectionDone[heading.id] = !Boolean(sectionDone[heading.id]);
+      writeJSON(sectionDoneStorageKey, sectionDone);
+      syncDoneLabel();
+      trackTelemetry("sections:done-toggle");
+    });
+    syncDoneLabel();
+    heading.appendChild(doneButton);
+  });
+  if (sectionHeadings.length >= 2) {
+    const pinRail = document.createElement("div");
+    pinRail.className = "wolfbbs-section-pin-rail";
+    function renderSectionPins() {
+      pinRail.innerHTML = "";
+      const pinIDs = Object.keys(sectionPins).filter((id) => sectionPins[id]);
+      if (!pinIDs.length) {
+        const note = document.createElement("span");
+        note.className = "wolfbbs-muted";
+        note.textContent = "Pin important sections for quick return.";
+        pinRail.appendChild(note);
+        return;
+      }
+      pinIDs.forEach((id) => {
+        const heading = document.getElementById(id);
+        if (!heading) return;
+        const link = document.createElement("a");
+        link.href = "#" + id;
+        link.textContent = sectionPins[id];
+        pinRail.appendChild(link);
+      });
+    }
+    window.wolfbbsRenderSectionPins = renderSectionPins;
+    renderSectionPins();
     const nav = document.createElement("div");
     nav.className = "wolfbbs-section-nav";
-    headings.forEach((heading, idx) => {
+    const progress = document.createElement("span");
+    progress.className = "wolfbbs-section-progress";
+    progress.textContent = "Sections 0/" + sectionHeadings.length;
+    nav.appendChild(progress);
+    const collapseAll = document.createElement("button");
+    collapseAll.type = "button";
+    collapseAll.className = "wolfbbs-section-toggle";
+    collapseAll.textContent = "Collapse all";
+    collapseAll.addEventListener("click", () => {
+      Array.from(document.querySelectorAll(".wolfbbs-section-collapsible")).forEach((section) => {
+        section.classList.add("is-collapsed");
+        const toggle = section.querySelector(".wolfbbs-section-toggle");
+        if (toggle) toggle.textContent = "Expand";
+      });
+      trackTelemetry("sections:collapse-all");
+    });
+    nav.appendChild(collapseAll);
+    const expandAll = document.createElement("button");
+    expandAll.type = "button";
+    expandAll.className = "wolfbbs-section-toggle";
+    expandAll.textContent = "Expand all";
+    expandAll.addEventListener("click", () => {
+      Array.from(document.querySelectorAll(".wolfbbs-section-collapsible")).forEach((section) => {
+        section.classList.remove("is-collapsed");
+        const toggle = section.querySelector(".wolfbbs-section-toggle");
+        if (toggle) toggle.textContent = "Collapse";
+      });
+      trackTelemetry("sections:expand-all");
+    });
+    nav.appendChild(expandAll);
+    const copyAllLinks = document.createElement("button");
+    copyAllLinks.type = "button";
+    copyAllLinks.className = "wolfbbs-section-toggle";
+    copyAllLinks.textContent = "Copy all links";
+    copyAllLinks.addEventListener("click", () => {
+      const lines = sectionHeadings.map((heading) => location.origin + location.pathname + location.search + "#" + heading.id);
+      copyText(lines.join("\n")).then(() => {
+        showToast("Section links copied", "ok");
+      }).catch(() => {
+        showToast("Could not copy section links", "error");
+      });
+      trackTelemetry("sections:copy-all");
+    });
+    nav.appendChild(copyAllLinks);
+    const linkMap = new Map();
+    const seenSection = new Set();
+    sectionHeadings.forEach((heading, idx) => {
       if (!heading.id) heading.id = "wolfbbs-section-" + idx;
       const link = document.createElement("a");
       link.href = "#" + heading.id;
-      link.textContent = heading.textContent.trim();
+      link.textContent = (heading.dataset.navLabel || heading.textContent.trim()) + " • " + readingMinutesForHeading(heading) + "m";
       nav.appendChild(link);
+      linkMap.set(heading.id, link);
     });
-    const h1 = document.querySelector("h1");
-    if (h1 && h1.parentNode) {
-      h1.parentNode.insertBefore(nav, h1.nextSibling ? h1.nextSibling.nextSibling : null);
+    const shellMain = document.querySelector("main.wolfbbs-main");
+    if (shellMain && shellMain.parentNode) {
+      shellMain.parentNode.insertBefore(pinRail, shellMain);
+      shellMain.parentNode.insertBefore(nav, shellMain);
+    } else {
+      const h1 = document.querySelector("h1");
+      if (h1 && h1.parentNode) {
+        h1.parentNode.insertBefore(pinRail, h1.nextSibling ? h1.nextSibling.nextSibling : null);
+        h1.parentNode.insertBefore(nav, h1.nextSibling ? h1.nextSibling.nextSibling : null);
+      }
+    }
+    if ("IntersectionObserver" in window) {
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          const link = linkMap.get(entry.target.id);
+          if (!link) return;
+          if (entry.isIntersecting) {
+            seenSection.add(entry.target.id);
+            progress.textContent = "Sections " + seenSection.size + "/" + sectionHeadings.length;
+            nav.querySelectorAll("a").forEach((item) => item.classList.remove("wolfbbs-nav-active"));
+            link.classList.add("wolfbbs-nav-active");
+          }
+        });
+      }, { rootMargin: "-38% 0px -52% 0px", threshold: 0.05 });
+      sectionHeadings.forEach((heading) => observer.observe(heading));
+    }
+    document.addEventListener("keydown", (event) => {
+      const tag = event.target && event.target.tagName ? event.target.tagName.toLowerCase() : "";
+      const editing = tag === "input" || tag === "textarea" || tag === "select" || (event.target && event.target.isContentEditable);
+      if (editing || !event.altKey) return;
+      const currentID = location.hash ? location.hash.replace("#", "") : "";
+      let idx = sectionHeadings.findIndex((heading) => heading.id === currentID);
+      if (idx < 0) idx = 0;
+      if (String(event.key).toLowerCase() === "j") {
+        event.preventDefault();
+        idx = Math.min(sectionHeadings.length - 1, idx + 1);
+        location.hash = "#" + sectionHeadings[idx].id;
+        sectionHeadings[idx].scrollIntoView({ behavior: "smooth", block: "start" });
+        trackTelemetry("sections:key-next");
+      } else if (String(event.key).toLowerCase() === "k") {
+        event.preventDefault();
+        idx = Math.max(0, idx - 1);
+        location.hash = "#" + sectionHeadings[idx].id;
+        sectionHeadings[idx].scrollIntoView({ behavior: "smooth", block: "start" });
+        trackTelemetry("sections:key-prev");
+      }
+    });
+  }
+
+  function parseNumericValue(raw) {
+    const source = String(raw || "").replace(/,/g, "");
+    const match = source.match(/-?\d+(?:\.\d+)?/);
+    if (!match) return null;
+    const value = Number(match[0]);
+    if (!Number.isFinite(value)) return null;
+    return value;
+  }
+
+  function formatCompactNumber(value) {
+    const numeric = Number(value || 0);
+    if (!Number.isFinite(numeric)) return "0";
+    if (Math.abs(numeric) >= 1000) {
+      return numeric.toLocaleString(undefined, { maximumFractionDigits: 1 });
+    }
+    if (Math.abs(numeric) >= 100) {
+      return numeric.toFixed(0);
+    }
+    if (Math.abs(numeric) >= 10) {
+      return numeric.toFixed(1);
+    }
+    return numeric.toFixed(2);
+  }
+
+  function average(values) {
+    if (!values.length) return 0;
+    return values.reduce((acc, value) => acc + value, 0) / values.length;
+  }
+
+  const WolfCharts = (() => {
+    const registry = [];
+    let resizeTimer = null;
+
+    function withCanvas(canvas, draw) {
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const width = Math.max(140, Math.floor(rect.width || 140));
+      const height = Math.max(96, Math.floor(rect.height || 96));
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.floor(width * dpr);
+      canvas.height = Math.floor(height * dpr);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      draw(ctx, width, height);
+    }
+
+    function register(drawFn) {
+      registry.push(drawFn);
+      drawFn();
+    }
+
+    function drawLine(canvas, values, opts) {
+      const data = Array.isArray(values) ? values.slice() : [];
+      const options = opts || {};
+      register(() => {
+        withCanvas(canvas, (ctx, width, height) => {
+          ctx.clearRect(0, 0, width, height);
+          if (data.length < 2) return;
+
+          const min = Math.min.apply(null, data);
+          const max = Math.max.apply(null, data);
+          const span = max - min || 1;
+          const left = 10;
+          const right = width - 10;
+          const top = 10;
+          const bottom = height - 12;
+
+          ctx.strokeStyle = "rgba(82,112,146,.25)";
+          ctx.lineWidth = 1;
+          for (let i = 0; i < 4; i++) {
+            const y = top + ((bottom - top) * i) / 3;
+            ctx.beginPath();
+            ctx.moveTo(left, y);
+            ctx.lineTo(right, y);
+            ctx.stroke();
+          }
+
+          const points = data.map((value, index) => {
+            const x = left + ((right - left) * index) / (data.length - 1);
+            const y = bottom - ((value - min) / span) * (bottom - top);
+            return { x, y };
+          });
+
+          const gradient = ctx.createLinearGradient(0, top, 0, bottom);
+          gradient.addColorStop(0, options.fillTop || "rgba(16,104,205,.22)");
+          gradient.addColorStop(1, "rgba(16,104,205,0)");
+
+          ctx.beginPath();
+          ctx.moveTo(points[0].x, bottom);
+          points.forEach((point) => ctx.lineTo(point.x, point.y));
+          ctx.lineTo(points[points.length - 1].x, bottom);
+          ctx.closePath();
+          ctx.fillStyle = gradient;
+          ctx.fill();
+
+          ctx.beginPath();
+          points.forEach((point, index) => {
+            if (index === 0) {
+              ctx.moveTo(point.x, point.y);
+            } else {
+              ctx.lineTo(point.x, point.y);
+            }
+          });
+          ctx.strokeStyle = options.stroke || "#0f63cb";
+          ctx.lineWidth = 2.2;
+          ctx.stroke();
+
+          const end = points[points.length - 1];
+          ctx.beginPath();
+          ctx.arc(end.x, end.y, 3.2, 0, Math.PI * 2);
+          ctx.fillStyle = options.stroke || "#0f63cb";
+          ctx.fill();
+          ctx.strokeStyle = "#ffffff";
+          ctx.lineWidth = 1.3;
+          ctx.stroke();
+        });
+      });
+    }
+
+    function drawBars(canvas, values, labels, opts) {
+      const data = Array.isArray(values) ? values.slice() : [];
+      const names = Array.isArray(labels) ? labels.slice() : [];
+      const options = opts || {};
+      register(() => {
+        withCanvas(canvas, (ctx, width, height) => {
+          ctx.clearRect(0, 0, width, height);
+          if (!data.length) return;
+          const max = Math.max.apply(null, data) || 1;
+          const left = 8;
+          const right = width - 8;
+          const top = 8;
+          const bottom = height - 20;
+          const slotWidth = (right - left) / data.length;
+
+          for (let i = 0; i < data.length; i++) {
+            const value = data[i];
+            const barHeight = ((bottom - top) * value) / max;
+            const x = left + i * slotWidth + 3;
+            const y = bottom - barHeight;
+            const w = Math.max(6, slotWidth - 6);
+            const radius = 4;
+
+            const gradient = ctx.createLinearGradient(0, y, 0, bottom);
+            gradient.addColorStop(0, options.barTop || "#1d78df");
+            gradient.addColorStop(1, options.barBottom || "#0f4f95");
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.moveTo(x, bottom);
+            ctx.lineTo(x, y + radius);
+            ctx.quadraticCurveTo(x, y, x + radius, y);
+            ctx.lineTo(x + w - radius, y);
+            ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+            ctx.lineTo(x + w, bottom);
+            ctx.closePath();
+            ctx.fill();
+
+            if (names[i]) {
+              ctx.save();
+              ctx.fillStyle = "rgba(56,83,111,.86)";
+              ctx.font = "10px sans-serif";
+              ctx.textAlign = "center";
+              ctx.fillText(String(names[i]).slice(0, 6), x + w / 2, height - 6);
+              ctx.restore();
+            }
+          }
+        });
+      });
+    }
+
+    window.addEventListener("resize", () => {
+      if (resizeTimer) window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(() => {
+        registry.forEach((draw) => draw());
+      }, 120);
+    });
+
+    return {
+      line: drawLine,
+      bars: drawBars
+    };
+  })();
+  window.WolfCharts = WolfCharts;
+
+  function inferTableTitle(table) {
+    const container = table.closest("article,section,div");
+    if (!container) return "Table";
+    const heading = container.querySelector("h2,h3");
+    if (!heading) return "Table";
+    return heading.textContent.trim() || "Table";
+  }
+
+  function extractSeriesFromTable(table) {
+    const rows = Array.from(table.querySelectorAll("tr")).filter((row) => row.querySelectorAll("th,td").length >= 2);
+    if (rows.length < 4) return null;
+    const headerCells = Array.from(rows[0].querySelectorAll("th,td")).map((cell) => cell.textContent.trim());
+    const dataRows = rows.slice(1).map((row) => Array.from(row.querySelectorAll("th,td")).map((cell) => cell.textContent.trim()));
+    const colCount = Math.max.apply(null, dataRows.map((row) => row.length).concat(headerCells.length));
+    let best = null;
+
+    for (let col = 1; col < colCount; col++) {
+      const values = [];
+      const labels = [];
+      dataRows.forEach((cells, index) => {
+        if (cells.length <= col) return;
+        const parsed = parseNumericValue(cells[col]);
+        if (parsed === null) return;
+        values.push(parsed);
+        labels.push((cells[0] || "Row " + (index + 1)).slice(0, 18));
+      });
+      if (values.length < 3) continue;
+      const spread = Math.max.apply(null, values) - Math.min.apply(null, values);
+      const score = values.length * 10 + spread;
+      if (!best || score > best.score) {
+        best = {
+          score: score,
+          values: values,
+          labels: labels,
+          column: headerCells[col] || "Value",
+          title: inferTableTitle(table)
+        };
+      }
+    }
+    return best;
+  }
+
+  function mountDashboard() {
+    const eligibleRoutes = [
+      "/today",
+      "/status",
+      "/radar",
+      "/boards",
+      "/scores",
+      "/tournaments",
+      "/digest",
+      "/attention",
+      "/admin/ops",
+      "/admin/events",
+      "/admin/system",
+      "/admin/analytics",
+      "/admin/launch"
+    ];
+    const eligible = eligibleRoutes.some((prefix) => currentRoute === prefix || currentRoute.indexOf(prefix + "/") === 0);
+    if (!eligible) return;
+
+    const tables = Array.from(document.querySelectorAll("table")).filter((table) => table.querySelectorAll("tr").length >= 4);
+    const seriesList = tables.map((table) => extractSeriesFromTable(table)).filter(Boolean);
+    const kpiRows = Array.from(document.querySelectorAll(".wolfbbs-kpi-card")).map((card) => {
+      const strong = card.querySelector("strong");
+      const span = card.querySelector("span");
+      const value = strong ? parseNumericValue(strong.textContent) : null;
+      if (value === null) return null;
+      return {
+        label: span ? span.textContent.trim() : "KPI",
+        value: value
+      };
+    }).filter(Boolean);
+
+    if (!seriesList.length && kpiRows.length < 2) return;
+    const primary = seriesList[0] || null;
+    const secondary = seriesList[1] || null;
+
+    const dashboard = document.createElement("section");
+    dashboard.className = "wolfbbs-dashboard";
+
+    const trendCard = document.createElement("article");
+    trendCard.className = "wolfbbs-dashboard-card";
+    const trendTitle = document.createElement("h3");
+    trendTitle.textContent = primary ? "Data Trend" : "Activity Trend";
+    trendCard.appendChild(trendTitle);
+    const trendSub = document.createElement("p");
+    trendSub.className = "wolfbbs-dashboard-sub";
+    trendSub.textContent = primary ? (primary.title + " | " + primary.column) : "No table trend detected on this route.";
+    trendCard.appendChild(trendSub);
+    const trendShell = document.createElement("div");
+    trendShell.className = "wolfbbs-chart-shell";
+    const trendCanvas = document.createElement("canvas");
+    trendCanvas.className = "wolfbbs-chart-canvas";
+    trendShell.appendChild(trendCanvas);
+    trendCard.appendChild(trendShell);
+    const trendLegend = document.createElement("div");
+    trendLegend.className = "wolfbbs-chart-legend";
+    trendCard.appendChild(trendLegend);
+    if (primary) {
+      const trendValues = primary.values.slice(-24);
+      WolfCharts.line(trendCanvas, trendValues, { stroke: "#0f63cb", fillTop: "rgba(16,99,203,.22)" });
+      const trendMin = Math.min.apply(null, trendValues);
+      const trendMax = Math.max.apply(null, trendValues);
+      const trendLast = trendValues[trendValues.length - 1];
+      [ "min " + formatCompactNumber(trendMin), "max " + formatCompactNumber(trendMax), "latest " + formatCompactNumber(trendLast) ].forEach((text) => {
+        const chip = document.createElement("span");
+        chip.textContent = text;
+        trendLegend.appendChild(chip);
+      });
+    } else {
+      const chip = document.createElement("span");
+      chip.textContent = "No trend source";
+      trendLegend.appendChild(chip);
+    }
+
+    const distCard = document.createElement("article");
+    distCard.className = "wolfbbs-dashboard-card";
+    const distTitle = document.createElement("h3");
+    distTitle.textContent = primary ? "Top Distribution" : "Secondary Distribution";
+    distCard.appendChild(distTitle);
+    const distSub = document.createElement("p");
+    distSub.className = "wolfbbs-dashboard-sub";
+    distSub.textContent = primary ? "Top rows by " + primary.column : "Waiting for tabular numeric data.";
+    distCard.appendChild(distSub);
+    const distShell = document.createElement("div");
+    distShell.className = "wolfbbs-chart-shell";
+    const distCanvas = document.createElement("canvas");
+    distCanvas.className = "wolfbbs-chart-canvas";
+    distShell.appendChild(distCanvas);
+    distCard.appendChild(distShell);
+    const distLegend = document.createElement("div");
+    distLegend.className = "wolfbbs-chart-legend";
+    distCard.appendChild(distLegend);
+    if (primary) {
+      const sorted = primary.values.map((value, index) => {
+        return {
+          value: value,
+          label: primary.labels[index] || ("row" + (index + 1))
+        };
+      }).sort((a, b) => b.value - a.value).slice(0, 8).reverse();
+      WolfCharts.bars(distCanvas, sorted.map((item) => item.value), sorted.map((item) => item.label), { barTop: "#2e87e8", barBottom: "#0f4f93" });
+      if (sorted.length) {
+        const top = sorted[sorted.length - 1];
+        const low = sorted[0];
+        [ "top " + top.label + " " + formatCompactNumber(top.value), "floor " + low.label + " " + formatCompactNumber(low.value) ].forEach((text) => {
+          const chip = document.createElement("span");
+          chip.textContent = text;
+          distLegend.appendChild(chip);
+        });
+      }
+    } else {
+      const chip = document.createElement("span");
+      chip.textContent = "No distribution source";
+      distLegend.appendChild(chip);
+    }
+
+    const metricCard = document.createElement("article");
+    metricCard.className = "wolfbbs-dashboard-card";
+    const metricTitle = document.createElement("h3");
+    metricTitle.textContent = "Ops Snapshot";
+    metricCard.appendChild(metricTitle);
+    const metricSub = document.createElement("p");
+    metricSub.className = "wolfbbs-dashboard-sub";
+    metricSub.textContent = "Live rollup from visible KPIs and data tables.";
+    metricCard.appendChild(metricSub);
+    const metricStack = document.createElement("div");
+    metricStack.className = "wolfbbs-dash-metrics";
+    metricCard.appendChild(metricStack);
+
+    const sourceValues = primary ? primary.values : [];
+    const avg = sourceValues.length ? average(sourceValues) : 0;
+    const latest = sourceValues.length ? sourceValues[sourceValues.length - 1] : 0;
+    const delta = sourceValues.length > 1 ? (sourceValues[sourceValues.length - 1] - sourceValues[0]) : 0;
+
+    [
+      { label: "Current", value: formatCompactNumber(latest) },
+      { label: "Average", value: formatCompactNumber(avg) },
+      { label: "Net Change", value: (delta >= 0 ? "+" : "") + formatCompactNumber(delta) }
+    ].forEach((item) => {
+      const row = document.createElement("div");
+      row.className = "wolfbbs-dash-metric";
+      const rowLabel = document.createElement("label");
+      rowLabel.textContent = item.label;
+      const rowValue = document.createElement("strong");
+      rowValue.textContent = item.value;
+      row.appendChild(rowLabel);
+      row.appendChild(rowValue);
+      metricStack.appendChild(row);
+    });
+
+    const mini = document.createElement("div");
+    mini.className = "wolfbbs-dash-mini";
+    (kpiRows.length ? kpiRows : [{ label: secondary ? secondary.column : "Data", value: secondary ? average(secondary.values) : 0 }]).slice(0, 4).forEach((item) => {
+      const chip = document.createElement("div");
+      chip.className = "wolfbbs-dash-chip";
+      const value = document.createElement("strong");
+      value.textContent = formatCompactNumber(item.value);
+      const label = document.createElement("span");
+      label.textContent = item.label || "kpi";
+      chip.appendChild(value);
+      chip.appendChild(label);
+      mini.appendChild(chip);
+    });
+    metricCard.appendChild(mini);
+
+    dashboard.appendChild(trendCard);
+    dashboard.appendChild(distCard);
+    dashboard.appendChild(metricCard);
+
+    const shellMain = document.querySelector("main.wolfbbs-main");
+    const firstTableWrap = document.querySelector(".wolfbbs-table-wrap");
+    if (firstTableWrap && firstTableWrap.parentNode) {
+      firstTableWrap.parentNode.insertBefore(dashboard, firstTableWrap);
+    } else if (shellMain && shellMain.firstChild) {
+      shellMain.insertBefore(dashboard, shellMain.firstChild);
+    } else if (shellMain) {
+      shellMain.appendChild(dashboard);
     }
   }
 
-  const firstTable = document.querySelector("table");
-  if (firstTable && firstTable.querySelectorAll("tr").length >= 6) {
-    const box = document.createElement("div");
-    box.className = "wolfbbs-inline-filter";
-    const label = document.createElement("label");
-    label.textContent = "Filter this page";
-    const input = document.createElement("input");
-    input.type = "search";
-    input.placeholder = "type to filter visible rows";
-    label.appendChild(input);
-    box.appendChild(label);
-    firstTable.parentNode.insertBefore(box, firstTable);
-    input.addEventListener("input", () => {
-      const q = input.value.trim().toLowerCase();
-      Array.from(document.querySelectorAll("table")).forEach((table) => {
-        const rows = Array.from(table.querySelectorAll("tr"));
-        rows.forEach((row, index) => {
-          if (index === 0) return;
-          row.style.display = !q || row.textContent.toLowerCase().includes(q) ? "" : "none";
+  mountDashboard();
+
+  function tableRows(table) {
+    const bodyRows = Array.from(table.querySelectorAll("tbody tr"));
+    if (bodyRows.length) {
+      return bodyRows;
+    }
+    const rows = Array.from(table.querySelectorAll("tr"));
+    if (rows.length <= 1) return [];
+    return rows.slice(1);
+  }
+
+  function ensureTableEmptyRow(table) {
+    let row = table.querySelector("tr.wolfbbs-empty-row");
+    if (row) return row;
+    const first = table.querySelector("tr");
+    const colCount = first ? Math.max(1, first.querySelectorAll("th,td").length) : 1;
+    row = document.createElement("tr");
+    row.className = "wolfbbs-empty-row";
+    const cell = document.createElement("td");
+    cell.colSpan = colCount;
+    cell.textContent = "No rows match this filter.";
+    row.appendChild(cell);
+    const targetParent = table.querySelector("tbody") || table;
+    targetParent.appendChild(row);
+    row.style.display = "none";
+    return row;
+  }
+
+  function tableCellValue(row, colIndex) {
+    const cells = row.querySelectorAll("th,td");
+    if (!cells.length || colIndex < 0 || colIndex >= cells.length) return "";
+    return (cells[colIndex].textContent || "").trim();
+  }
+
+  function updateTableCount(table, node) {
+    const rows = tableRows(table).filter((row) => !row.classList.contains("wolfbbs-empty-row"));
+    const visible = rows.filter((row) => row.style.display !== "none").length;
+    if (node) {
+      node.textContent = visible + " of " + rows.length + " rows";
+    }
+    const empty = ensureTableEmptyRow(table);
+    empty.style.display = visible ? "none" : "";
+  }
+
+  function sortTable(table, colIndex, direction) {
+    const rows = tableRows(table).filter((row) => !row.classList.contains("wolfbbs-empty-row"));
+    if (!rows.length) return;
+    const parent = rows[0].parentNode;
+    rows.sort((a, b) => {
+      const left = tableCellValue(a, colIndex);
+      const right = tableCellValue(b, colIndex);
+      const leftNum = parseNumericValue(left);
+      const rightNum = parseNumericValue(right);
+      if (leftNum !== null && rightNum !== null) {
+        return (leftNum - rightNum) * direction;
+      }
+      return left.localeCompare(right, undefined, { sensitivity: "base", numeric: true }) * direction;
+    });
+    rows.forEach((row) => parent.appendChild(row));
+  }
+
+  function downloadTableCSV(table, filename) {
+    const rows = Array.from(table.querySelectorAll("tr")).filter((row) => {
+      if (row.classList.contains("wolfbbs-empty-row")) return false;
+      return row.style.display !== "none";
+    });
+    const lines = rows.map((row) => {
+      return Array.from(row.querySelectorAll("th,td")).map((cell) => {
+        const text = (cell.textContent || "").replace(/\s+/g, " ").trim().replace(/"/g, "\"\"");
+        return "\"" + text + "\"";
+      }).join(",");
+    });
+    if (!lines.length) return;
+    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    window.setTimeout(() => {
+      URL.revokeObjectURL(link.href);
+      link.remove();
+    }, 0);
+  }
+
+  function tableViewKey(index) {
+    return tableViewPrefix + normalizePath(currentRoute || "/") + ":" + String(index || 0);
+  }
+
+  function loadTableView(index) {
+    return Object.assign({
+      query: "",
+      sortCol: -1,
+      sortDirection: 1
+    }, readJSON(tableViewKey(index), {}));
+  }
+
+  function saveTableView(index, view) {
+    const payload = Object.assign({
+      query: "",
+      sortCol: -1,
+      sortDirection: 1
+    }, view || {});
+    writeJSON(tableViewKey(index), payload);
+    return payload;
+  }
+
+  function enhanceTables() {
+    Array.from(document.querySelectorAll("table")).forEach((table, index) => {
+      if (table.dataset.wolfbbsEnhanced === "1") return;
+      table.dataset.wolfbbsEnhanced = "1";
+      const wrap = table.closest(".wolfbbs-table-wrap") || table.parentNode;
+      if (!wrap || !wrap.parentNode) return;
+      const toolbar = document.createElement("div");
+      toolbar.className = "wolfbbs-table-toolbar";
+      const heading = document.createElement("strong");
+      heading.textContent = "Table tools";
+      toolbar.appendChild(heading);
+      const count = document.createElement("span");
+      count.className = "wolfbbs-table-count";
+      toolbar.appendChild(count);
+      const search = document.createElement("input");
+      search.type = "search";
+      search.placeholder = "Filter rows";
+      toolbar.appendChild(search);
+      const exportButton = document.createElement("button");
+      exportButton.type = "button";
+      exportButton.textContent = "Export CSV";
+      exportButton.addEventListener("click", () => {
+        downloadTableCSV(table, "wolfbbs-table-" + (index + 1) + ".csv");
+        showToast("CSV exported", "ok");
+      });
+      toolbar.appendChild(exportButton);
+      const exportSelectedButton = document.createElement("button");
+      exportSelectedButton.type = "button";
+      exportSelectedButton.textContent = "Export selected";
+      toolbar.appendChild(exportSelectedButton);
+      const selectVisibleButton = document.createElement("button");
+      selectVisibleButton.type = "button";
+      selectVisibleButton.textContent = "Select visible";
+      toolbar.appendChild(selectVisibleButton);
+      const invertSelectionButton = document.createElement("button");
+      invertSelectionButton.type = "button";
+      invertSelectionButton.textContent = "Invert selected";
+      toolbar.appendChild(invertSelectionButton);
+      const clearSelectionButton = document.createElement("button");
+      clearSelectionButton.type = "button";
+      clearSelectionButton.textContent = "Clear selected";
+      toolbar.appendChild(clearSelectionButton);
+      const saveViewButton = document.createElement("button");
+      saveViewButton.type = "button";
+      saveViewButton.textContent = "Save view";
+      toolbar.appendChild(saveViewButton);
+      const restoreViewButton = document.createElement("button");
+      restoreViewButton.type = "button";
+      restoreViewButton.textContent = "Restore view";
+      toolbar.appendChild(restoreViewButton);
+      const copyJSONButton = document.createElement("button");
+      copyJSONButton.type = "button";
+      copyJSONButton.textContent = "Copy JSON";
+      toolbar.appendChild(copyJSONButton);
+      const copySelectedJSONButton = document.createElement("button");
+      copySelectedJSONButton.type = "button";
+      copySelectedJSONButton.textContent = "Copy selected JSON";
+      toolbar.appendChild(copySelectedJSONButton);
+      const columnToggle = document.createElement("div");
+      columnToggle.className = "wolfbbs-column-toggle";
+      const columnToggleButton = document.createElement("button");
+      columnToggleButton.type = "button";
+      columnToggleButton.textContent = "Columns";
+      const columnPanel = document.createElement("div");
+      columnPanel.className = "wolfbbs-column-toggle-panel";
+      columnToggle.appendChild(columnToggleButton);
+      columnToggle.appendChild(columnPanel);
+      toolbar.appendChild(columnToggle);
+      wrap.parentNode.insertBefore(toolbar, wrap);
+      const rows = tableRows(table).filter((row) => !row.classList.contains("wolfbbs-empty-row"));
+      rows.forEach((row) => {
+        row.addEventListener("click", (event) => {
+          if (event.metaKey || event.ctrlKey) {
+            row.classList.toggle("wolfbbs-selected-row");
+            trackTelemetry("table:select-row");
+            return;
+          }
+          rows.forEach((item) => item.classList.remove("wolfbbs-row-active"));
+          row.classList.add("wolfbbs-row-active");
         });
+      });
+
+      function selectedRows() {
+        return rows.filter((row) => row.classList.contains("wolfbbs-selected-row"));
+      }
+
+      const headerCells = Array.from(table.querySelectorAll("tr:first-child th"));
+      const sortState = {
+        col: -1,
+        direction: 1
+      };
+      headerCells.forEach((cell, colIndex) => {
+        const text = cell.textContent.trim();
+        if (!text) return;
+        const trigger = document.createElement("button");
+        trigger.type = "button";
+        trigger.className = "wolfbbs-table-sort";
+        trigger.innerHTML = "<span>" + text + "</span><span class=\"wolfbbs-table-sort-indicator\">↕</span>";
+        let direction = 1;
+        trigger.addEventListener("click", () => {
+          sortTable(table, colIndex, direction);
+          sortState.col = colIndex;
+          sortState.direction = direction;
+          direction = direction * -1;
+          trigger.querySelector(".wolfbbs-table-sort-indicator").textContent = direction > 0 ? "↑" : "↓";
+          updateTableCount(table, count);
+          trackTelemetry("table:sort");
+        });
+        cell.innerHTML = "";
+        cell.appendChild(trigger);
+
+        const toggleRow = document.createElement("label");
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = true;
+        cb.addEventListener("change", () => {
+          const visible = cb.checked;
+          Array.from(table.querySelectorAll("tr")).forEach((row) => {
+            const cells = row.querySelectorAll("th,td");
+            if (!cells[colIndex]) return;
+            cells[colIndex].style.display = visible ? "" : "none";
+          });
+          trackTelemetry("table:column-toggle");
+        });
+        toggleRow.appendChild(cb);
+        const labelText = document.createElement("span");
+        labelText.textContent = text;
+        toggleRow.appendChild(labelText);
+        columnPanel.appendChild(toggleRow);
+      });
+
+      columnToggleButton.addEventListener("click", () => {
+        columnPanel.classList.toggle("active");
+      });
+      document.addEventListener("click", (event) => {
+        if (!columnToggle.contains(event.target)) {
+          columnPanel.classList.remove("active");
+        }
+      });
+
+      search.addEventListener("input", () => {
+        const query = search.value.trim().toLowerCase();
+        const targetRows = tableRows(table).filter((row) => !row.classList.contains("wolfbbs-empty-row"));
+        targetRows.forEach((row) => {
+          const hit = !query || row.textContent.toLowerCase().includes(query);
+          row.style.display = hit ? "" : "none";
+          row.classList.toggle("wolfbbs-row-hit", Boolean(query) && hit);
+        });
+        updateTableCount(table, count);
+        trackTelemetry("table:filter");
+      });
+
+      saveViewButton.addEventListener("click", () => {
+        saveTableView(index, {
+          query: search.value || "",
+          sortCol: sortState.col,
+          sortDirection: sortState.direction
+        });
+        showToast("Table view saved", "ok");
+        trackTelemetry("table:view-save");
+      });
+
+      restoreViewButton.addEventListener("click", () => {
+        const view = loadTableView(index);
+        search.value = view.query || "";
+        search.dispatchEvent(new Event("input"));
+        if (view.sortCol >= 0) {
+          sortTable(table, view.sortCol, view.sortDirection || 1);
+          sortState.col = view.sortCol;
+          sortState.direction = view.sortDirection || 1;
+        }
+        showToast("Table view restored", "ok");
+        trackTelemetry("table:view-restore");
+      });
+
+      copyJSONButton.addEventListener("click", () => {
+        const header = Array.from(table.querySelectorAll("tr:first-child th, tr:first-child td")).map((cell) => (cell.textContent || "").trim());
+        const body = tableRows(table).filter((row) => !row.classList.contains("wolfbbs-empty-row") && row.style.display !== "none");
+        const rowsAsJSON = body.map((row) => {
+          const out = {};
+          Array.from(row.querySelectorAll("th,td")).forEach((cell, idx) => {
+            const key = header[idx] || ("col_" + idx);
+            out[key] = (cell.textContent || "").trim();
+          });
+          return out;
+        });
+        copyText(JSON.stringify(rowsAsJSON, null, 2)).then(() => {
+          showToast("Visible rows copied as JSON", "ok");
+          trackTelemetry("table:copy-json");
+        }).catch(() => {
+          showToast("JSON copy failed", "error");
+        });
+      });
+
+      exportSelectedButton.addEventListener("click", () => {
+        const selected = selectedRows();
+        if (!selected.length) {
+          showToast("No rows selected. Ctrl/Cmd+Click rows first.", "error");
+          return;
+        }
+        const header = Array.from(table.querySelectorAll("tr:first-child th, tr:first-child td")).map((cell) => (cell.textContent || "").trim());
+        const lines = [header.map((item) => "\"" + item.replace(/"/g, "\"\"") + "\"").join(",")];
+        selected.forEach((row) => {
+          const line = Array.from(row.querySelectorAll("th,td")).map((cell) => "\"" + ((cell.textContent || "").replace(/\s+/g, " ").trim().replace(/"/g, "\"\"")) + "\"").join(",");
+          lines.push(line);
+        });
+        const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = "wolfbbs-selected-" + (index + 1) + ".csv";
+        document.body.appendChild(link);
+        link.click();
+        window.setTimeout(() => {
+          URL.revokeObjectURL(link.href);
+          link.remove();
+        }, 0);
+        showToast("Selected rows exported", "ok");
+        trackTelemetry("table:export-selected");
+      });
+
+      selectVisibleButton.addEventListener("click", () => {
+        rows.forEach((row) => {
+          if (row.style.display !== "none") {
+            row.classList.add("wolfbbs-selected-row");
+          }
+        });
+        showToast("Visible rows selected", "ok");
+        trackTelemetry("table:select-visible");
+      });
+
+      invertSelectionButton.addEventListener("click", () => {
+        rows.forEach((row) => {
+          if (row.style.display !== "none") {
+            row.classList.toggle("wolfbbs-selected-row");
+          }
+        });
+        showToast("Selection inverted", "ok");
+        trackTelemetry("table:invert-selection");
+      });
+
+      clearSelectionButton.addEventListener("click", () => {
+        rows.forEach((row) => row.classList.remove("wolfbbs-selected-row"));
+        showToast("Selection cleared", "ok");
+        trackTelemetry("table:clear-selection");
+      });
+
+      copySelectedJSONButton.addEventListener("click", () => {
+        const selected = selectedRows();
+        if (!selected.length) {
+          showToast("No rows selected", "error");
+          return;
+        }
+        const header = Array.from(table.querySelectorAll("tr:first-child th, tr:first-child td")).map((cell) => (cell.textContent || "").trim());
+        const payload = selected.map((row) => {
+          const out = {};
+          Array.from(row.querySelectorAll("th,td")).forEach((cell, idx) => {
+            const key = header[idx] || ("col_" + idx);
+            out[key] = (cell.textContent || "").trim();
+          });
+          return out;
+        });
+        copyText(JSON.stringify(payload, null, 2)).then(() => {
+          showToast("Selected rows copied as JSON", "ok");
+          trackTelemetry("table:copy-selected-json");
+        }).catch(() => showToast("Selected JSON copy failed", "error"));
+      });
+
+      const bootView = loadTableView(index);
+      if (bootView.query) {
+        search.value = bootView.query;
+        search.dispatchEvent(new Event("input"));
+      }
+      if (bootView.sortCol >= 0) {
+        sortTable(table, bootView.sortCol, bootView.sortDirection || 1);
+        sortState.col = bootView.sortCol;
+        sortState.direction = bootView.sortDirection || 1;
+      }
+      updateTableCount(table, count);
+    });
+  }
+
+  function replayFormKey(form, index) {
+    const action = normalizePath(form.getAttribute("action") || currentRoute || "/");
+    const method = (form.getAttribute("method") || "get").toLowerCase();
+    return replayPrefix + normalizePath(currentRoute || "/") + ":" + method + ":" + action + ":" + String(index || 0);
+  }
+
+  function mountDraftRestoreBanner(form, key) {
+    const saved = readJSON(key, null);
+    if (!saved || !saved.values || form.querySelector(".wolfbbs-draft-banner")) return;
+    const row = document.createElement("div");
+    row.className = "wolfbbs-restore-banner wolfbbs-draft-banner";
+    const note = document.createElement("span");
+    note.textContent = "Draft autosave is available.";
+    row.appendChild(note);
+    const restore = document.createElement("button");
+    restore.type = "button";
+    restore.textContent = "Restore draft";
+    restore.addEventListener("click", () => {
+      applyDraftPayload(form, saved.values);
+      showToast("Draft restored", "ok");
+      trackTelemetry("draft:restore");
+    });
+    row.appendChild(restore);
+    const clear = document.createElement("button");
+    clear.type = "button";
+    clear.textContent = "Dismiss";
+    clear.addEventListener("click", () => {
+      row.remove();
+      localStorage.removeItem(key);
+      trackTelemetry("draft:dismiss");
+    });
+    row.appendChild(clear);
+    form.insertBefore(row, form.firstChild);
+  }
+
+  function captureReplayPayload(form) {
+    const fields = Array.from(form.querySelectorAll("input[name], textarea[name], select[name]"));
+    const payload = {};
+    fields.forEach((field) => {
+      const type = (field.getAttribute("type") || "").toLowerCase();
+      if (type === "hidden" || type === "password" || type === "file" || type === "submit" || type === "button") return;
+      if (type === "checkbox" || type === "radio") {
+        payload[field.name] = Boolean(field.checked);
+        return;
+      }
+      payload[field.name] = field.value || "";
+    });
+    return payload;
+  }
+
+  function mountReplayBanner(form, key) {
+    const saved = readJSON(key, null);
+    if (!saved || !saved.values || form.querySelector(".wolfbbs-restore-banner")) return;
+    const row = document.createElement("div");
+    row.className = "wolfbbs-restore-banner";
+    const note = document.createElement("span");
+    note.textContent = "Last submit snapshot available.";
+    row.appendChild(note);
+    const restore = document.createElement("button");
+    restore.type = "button";
+    restore.textContent = "Restore fields";
+    restore.addEventListener("click", () => {
+      const fields = Array.from(form.querySelectorAll("input[name], textarea[name], select[name]"));
+      fields.forEach((field) => {
+        const type = (field.getAttribute("type") || "").toLowerCase();
+        if (type === "hidden" || type === "password" || type === "file" || type === "submit" || type === "button") return;
+        if (!(field.name in saved.values)) return;
+        if (type === "checkbox" || type === "radio") {
+          field.checked = Boolean(saved.values[field.name]);
+          return;
+        }
+        field.value = saved.values[field.name];
+      });
+      showToast("Previous form values restored", "ok");
+      trackTelemetry("form:restore");
+    });
+    row.appendChild(restore);
+    const clear = document.createElement("button");
+    clear.type = "button";
+    clear.textContent = "Dismiss";
+    clear.addEventListener("click", () => {
+      row.remove();
+      localStorage.removeItem(key);
+    });
+    row.appendChild(clear);
+    form.insertBefore(row, form.firstChild);
+  }
+
+  function enhanceForms() {
+    Array.from(document.querySelectorAll("form")).forEach((form, index) => {
+      if (form.dataset.wolfbbsFormEnhanced === "1") return;
+      form.dataset.wolfbbsFormEnhanced = "1";
+      if (form.closest("table")) return;
+      const replayKey = replayFormKey(form, index);
+      const draftKey = draftFormKey(form, index);
+      mountReplayBanner(form, replayKey);
+      mountDraftRestoreBanner(form, draftKey);
+      let draftTimer = null;
+      const draftFields = Array.from(form.querySelectorAll("input[name], textarea[name], select[name]")).filter((field) => {
+        const type = (field.getAttribute("type") || "").toLowerCase();
+        return !(type === "hidden" || type === "password" || type === "file" || type === "submit" || type === "button");
+      });
+      function queueDraftSave() {
+        if (draftTimer) window.clearTimeout(draftTimer);
+        draftTimer = window.setTimeout(() => {
+          const values = captureDraftPayload(form);
+          const hasAny = Object.values(values).some((value) => {
+            if (typeof value === "boolean") return value;
+            return String(value || "").trim() !== "";
+          });
+          if (!hasAny) return;
+          writeJSON(draftKey, {
+            updatedAt: new Date().toISOString(),
+            route: currentRoute,
+            formIndex: index,
+            values: values
+          });
+          trackTelemetry("draft:autosave");
+        }, 220);
+      }
+      draftFields.forEach((field) => {
+        field.addEventListener("input", queueDraftSave);
+        field.addEventListener("change", queueDraftSave);
+      });
+      const submitter = form.querySelector('button[type="submit"], input[type="submit"]');
+      if (!submitter) return;
+      const dock = document.createElement("div");
+      dock.className = "wolfbbs-form-actions-sticky";
+      const action = document.createElement("button");
+      action.type = "button";
+      action.textContent = "Submit form";
+      action.title = "Primary action: " + (submitter.textContent || submitter.value || "Submit");
+      action.addEventListener("click", () => {
+        if (typeof form.requestSubmit === "function") {
+          form.requestSubmit(submitter);
+          return;
+        }
+        submitter.click();
+      });
+      dock.appendChild(action);
+      form.appendChild(dock);
+      form.addEventListener("submit", () => {
+        const values = captureReplayPayload(form);
+        const hasAny = Object.values(values).some((value) => {
+          if (typeof value === "boolean") return value;
+          return String(value || "").trim() !== "";
+        });
+        if (!hasAny) return;
+        writeJSON(replayKey, {
+          updatedAt: new Date().toISOString(),
+          values: values
+        });
+        trackTelemetry("form:snapshot");
       });
     });
   }
 
+  function tableRound3Key(index) {
+    return "wolfbbs:ui:table-round3:" + normalizePath(currentRoute || "/") + ":" + String(index || 0);
+  }
+
+  function enhanceTablesRound3() {
+    Array.from(document.querySelectorAll(".wolfbbs-table-wrap")).forEach((wrap, index) => {
+      if (wrap.dataset.wolfbbsRound3 === "1") return;
+      wrap.dataset.wolfbbsRound3 = "1";
+      const table = wrap.querySelector("table");
+      if (!table) return;
+      const state = Object.assign({ sticky: false, compact: false }, readJSON(tableRound3Key(index), {}));
+      const toolbar = document.createElement("div");
+      toolbar.className = "wolfbbs-inline-actions";
+      const sticky = document.createElement("button");
+      sticky.type = "button";
+      const compact = document.createElement("button");
+      compact.type = "button";
+      function sync() {
+        wrap.classList.toggle("wolfbbs-sticky-head", Boolean(state.sticky));
+        wrap.classList.toggle("wolfbbs-table-compact", Boolean(state.compact));
+        sticky.textContent = state.sticky ? "Sticky head: on" : "Sticky head: off";
+        compact.textContent = state.compact ? "Compact rows: on" : "Compact rows: off";
+        writeJSON(tableRound3Key(index), state);
+      }
+      sticky.addEventListener("click", () => {
+        state.sticky = !state.sticky;
+        sync();
+        trackTelemetry("table:sticky-toggle");
+      });
+      compact.addEventListener("click", () => {
+        state.compact = !state.compact;
+        sync();
+        trackTelemetry("table:compact-toggle");
+      });
+      toolbar.appendChild(sticky);
+      toolbar.appendChild(compact);
+      wrap.insertBefore(toolbar, wrap.firstChild);
+      const inspector = document.createElement("div");
+      inspector.className = "wolfbbs-row-inspector";
+      inspector.innerHTML = "<strong>Row inspector</strong><p class=\"wolfbbs-muted\">Click a row to inspect key values.</p>";
+      wrap.appendChild(inspector);
+      const headers = Array.from(table.querySelectorAll("tr:first-child th, tr:first-child td")).map((cell) => (cell.textContent || "").trim());
+      Array.from(table.querySelectorAll("tr")).slice(1).forEach((row) => {
+        row.addEventListener("click", (event) => {
+          if (event.metaKey || event.ctrlKey || row.classList.contains("wolfbbs-empty-row")) return;
+          const cells = Array.from(row.querySelectorAll("th,td"));
+          if (!cells.length) return;
+          const dl = document.createElement("dl");
+          cells.forEach((cell, idx) => {
+            const dt = document.createElement("dt");
+            dt.textContent = headers[idx] || ("Column " + (idx + 1));
+            const dd = document.createElement("dd");
+            dd.textContent = (cell.textContent || "").trim() || "—";
+            dl.appendChild(dt);
+            dl.appendChild(dd);
+          });
+          inspector.innerHTML = "<strong>Row inspector</strong>";
+          inspector.appendChild(dl);
+          trackTelemetry("table:inspect-row");
+        });
+      });
+      sync();
+    });
+  }
+
+  function enhanceFormsRound3() {
+    Array.from(document.querySelectorAll("form")).forEach((form, index) => {
+      if (form.dataset.wolfbbsRound3Form === "1") return;
+      form.dataset.wolfbbsRound3Form = "1";
+      if (form.closest("table")) return;
+      const fields = Array.from(form.querySelectorAll("input[name], textarea[name], select[name]")).filter((field) => {
+        const type = (field.getAttribute("type") || "").toLowerCase();
+        return !(type === "hidden" || type === "password" || type === "file" || type === "submit" || type === "button");
+      });
+      if (!fields.length) return;
+      const required = fields.filter((field) => field.hasAttribute("required"));
+      if (required.length && !form.querySelector(".wolfbbs-form-progress")) {
+        const row = document.createElement("div");
+        row.className = "wolfbbs-form-progress";
+        const meter = document.createElement("meter");
+        meter.min = 0;
+        meter.max = required.length;
+        const label = document.createElement("span");
+        row.appendChild(meter);
+        row.appendChild(label);
+        form.insertBefore(row, form.firstChild);
+        function syncRequired() {
+          const done = required.filter((field) => {
+            if ((field.getAttribute("type") || "").toLowerCase() === "checkbox") return field.checked;
+            return String(field.value || "").trim() !== "";
+          }).length;
+          meter.value = done;
+          label.textContent = "Required fields " + done + "/" + required.length;
+        }
+        required.forEach((field) => {
+          field.addEventListener("input", syncRequired);
+          field.addEventListener("change", syncRequired);
+        });
+        syncRequired();
+      }
+      const baseline = JSON.stringify(captureReplayPayload(form));
+      function syncDirtyState() {
+        const now = JSON.stringify(captureReplayPayload(form));
+        if (now !== baseline) {
+          dirtyForms.add(form);
+        } else {
+          dirtyForms.delete(form);
+        }
+        refreshDirtyTitle();
+      }
+      fields.forEach((field) => {
+        field.addEventListener("input", syncDirtyState);
+        field.addEventListener("change", syncDirtyState);
+      });
+      form.addEventListener("submit", () => {
+        dirtyForms.delete(form);
+        refreshDirtyTitle();
+      });
+      if (!form.querySelector(".wolfbbs-form-id")) {
+        const badge = document.createElement("small");
+        badge.className = "wolfbbs-form-id";
+        badge.textContent = "Form slot #" + (index + 1);
+        form.appendChild(badge);
+      }
+    });
+  }
+
+  function enhanceFieldValidation() {
+    const fields = Array.from(document.querySelectorAll('input[type="email"], input[type="url"], input[type="number"]'));
+    fields.forEach((field) => {
+      if (field.dataset.wolfbbsValidated === "1") return;
+      field.dataset.wolfbbsValidated = "1";
+      const hint = document.createElement("small");
+      hint.className = "wolfbbs-field-hint";
+      hint.style.display = "none";
+      field.insertAdjacentElement("afterend", hint);
+      function validate() {
+        if (!field.value.trim()) {
+          field.classList.remove("wolfbbs-invalid");
+          field.removeAttribute("aria-invalid");
+          hint.style.display = "none";
+          hint.textContent = "";
+          return;
+        }
+        if (field.checkValidity()) {
+          field.classList.remove("wolfbbs-invalid");
+          field.removeAttribute("aria-invalid");
+          hint.style.display = "none";
+          hint.textContent = "";
+          return;
+        }
+        field.classList.add("wolfbbs-invalid");
+        field.setAttribute("aria-invalid", "true");
+        hint.style.display = "block";
+        hint.textContent = field.validationMessage || "Please check this value.";
+      }
+      field.addEventListener("input", validate);
+      field.addEventListener("blur", validate);
+    });
+  }
+
+  function enhanceTextCounters() {
+    const fields = Array.from(document.querySelectorAll('textarea, input[type="text"], input[type="search"], input[type="email"], input[type="url"]'));
+    fields.forEach((field) => {
+      if (field.dataset.wolfbbsCounter === "1") return;
+      if (field.closest(".wolfbbs-template-strip")) return;
+      field.dataset.wolfbbsCounter = "1";
+      const counter = document.createElement("small");
+      counter.className = "wolfbbs-text-counter";
+      function sync() {
+        const value = field.value || "";
+        const max = Number(field.getAttribute("maxlength") || 0);
+        counter.textContent = max > 0 ? (value.length + " / " + max + " chars") : (value.length + " chars");
+      }
+      field.insertAdjacentElement("afterend", counter);
+      field.addEventListener("input", sync);
+      sync();
+    });
+  }
+
+  function composeTemplatesForRoute() {
+    if (currentRoute.indexOf("/admin/events") === 0) {
+      return [
+        { label: "Tournament invite", body: "Title: Friday Tournament Night\nWhen: Fri 20:00 local\nWhere: /tournaments\nWhy: Weekly bracket + score ladder." },
+        { label: "Social net", body: "Title: Lobby Net\nWhen: Weekday 21:00 local\nWhere: #lobby\nPrompt: Share one win and one thing you need help with." },
+        { label: "Ops review", body: "Title: Sysop Ops Review\nWhen: Weekly\nAgenda:\n- Launch blockers\n- Recent incidents\n- Next release goals" }
+      ];
+    }
+    if (currentRoute.indexOf("/mail") === 0 || currentRoute.indexOf("/boards") === 0) {
+      return [
+        { label: "Welcome reply", body: "Welcome aboard.\n\nGreat to have you here. If you want a quick start, begin with /today and /boards." },
+        { label: "Status update", body: "Quick update:\n- What changed\n- Why it matters\n- What is next\n\nReply if you want details." },
+        { label: "Follow-up ask", body: "Following up on this thread.\n\nCould you share:\n1) what worked\n2) what blocked you\n3) what we should improve next" }
+      ];
+    }
+    return [
+      { label: "Announcement", body: "Headline:\n\nWhat changed:\n\nHow to use it:\n\nWhere to give feedback:" },
+      { label: "Issue report", body: "Observed behavior:\nExpected behavior:\nSteps to reproduce:\nEnvironment:" },
+      { label: "Release note", body: "Release summary:\n- Feature 1\n- Feature 2\n- Fixes\nValidation: tests + e2e passed." }
+    ];
+  }
+
+  function enhanceComposeTemplates() {
+    const templates = composeTemplatesForRoute();
+    Array.from(document.querySelectorAll("form")).forEach((form) => {
+      if (form.dataset.wolfbbsTemplatesEnhanced === "1") return;
+      const textarea = form.querySelector('textarea[name="body"], textarea[name="description"], textarea[name="payload"]');
+      if (!textarea) return;
+      form.dataset.wolfbbsTemplatesEnhanced = "1";
+      const strip = document.createElement("div");
+      strip.className = "wolfbbs-template-strip";
+      templates.slice(0, 3).forEach((tpl) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = tpl.label;
+        button.addEventListener("click", () => {
+          if ((textarea.value || "").trim()) {
+            textarea.value = textarea.value + "\n\n" + tpl.body;
+          } else {
+            textarea.value = tpl.body;
+          }
+          textarea.dispatchEvent(new Event("input", { bubbles: true }));
+          textarea.focus();
+          showToast("Template inserted: " + tpl.label, "ok");
+          trackTelemetry("compose:template");
+        });
+        strip.appendChild(button);
+      });
+      textarea.insertAdjacentElement("beforebegin", strip);
+    });
+  }
+
+  enhanceTables();
+  enhanceTablesRound3();
+  enhanceForms();
+  enhanceFormsRound3();
+  enhanceFieldValidation();
+  enhanceTextCounters();
+  enhanceComposeTemplates();
+  mountUXRound20Pass();
+
   const overlay = document.createElement("div");
   overlay.id = "wolfbbsPaletteOverlay";
-  overlay.innerHTML = '<div id="wolfbbsPalette"><div id="wolfbbsPaletteHeader"><label style="display:block;margin:0"><span class="wolfbbs-muted">Command palette</span><input id="wolfbbsPaletteInput" type="search" placeholder="jump to boards, doors, status, admin..." style="width:100%;margin-top:8px"></label></div><div id="wolfbbsPaletteList"></div></div>';
+  overlay.innerHTML = '<div id="wolfbbsPalette"><div id="wolfbbsPaletteHeader"><label style="display:block;margin:0"><span class="wolfbbs-muted">Command palette</span><input id="wolfbbsPaletteInput" type="search" placeholder="jump to boards, doors, status, admin..." style="width:100%;margin-top:8px"></label><div id="wolfbbsPaletteHistory" class="wolfbbs-palette-history"></div></div><div id="wolfbbsPaletteList"></div></div>';
   document.body.appendChild(overlay);
 
   const paletteButton = document.createElement("button");
@@ -7162,7 +15078,19 @@ body.wolfbbs-compose-fullscreen-open{
 
   const paletteInput = overlay.querySelector("#wolfbbsPaletteInput");
   const paletteList = overlay.querySelector("#wolfbbsPaletteList");
-  const commands = navLinks.concat(headings.map((heading) => ({
+  const paletteHistory = overlay.querySelector("#wolfbbsPaletteHistory");
+  const commands = [
+    { href: "/start", label: "Start Center", meta: "core" },
+    { href: "/today", label: "Today Brief", meta: "core" },
+    { href: "/attention", label: "Attention Center", meta: "core" },
+    { href: "/boards", label: "Boards", meta: "core" },
+    { href: "/chat", label: "Live Chat", meta: "core" },
+    { href: "/mail", label: "Mail", meta: "core" }
+  ].concat(loadFavorites().map((item) => ({
+    href: item.href,
+    label: item.label,
+    meta: "favorite"
+  }))).concat(navLinks).concat(headings.map((heading) => ({
     href: "#" + heading.id,
     label: heading.textContent.trim(),
     meta: "section"
@@ -7189,14 +15117,47 @@ body.wolfbbs-compose-fullscreen-open{
     }
   }
 
+  function loadPaletteHistory() {
+    return readJSON(paletteHistoryKey, []).filter((item) => typeof item === "string" && item.trim() !== "").slice(0, 8);
+  }
+
+  function savePaletteHistoryEntry(raw) {
+    const value = String(raw || "").trim();
+    if (!value) return;
+    const next = [value].concat(loadPaletteHistory().filter((item) => item.toLowerCase() !== value.toLowerCase())).slice(0, 8);
+    writeJSON(paletteHistoryKey, next);
+  }
+
+  function renderPaletteHistory() {
+    if (!paletteHistory) return;
+    paletteHistory.innerHTML = "";
+    const entries = loadPaletteHistory();
+    if (!entries.length) return;
+    entries.forEach((entry) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = entry;
+      button.addEventListener("click", () => {
+        paletteInput.value = entry;
+        renderPalette(entry);
+        paletteInput.focus();
+      });
+      paletteHistory.appendChild(button);
+    });
+  }
+
   function openPalette() {
     overlay.classList.add("active");
     renderPalette("");
+    renderPaletteHistory();
     paletteInput.value = "";
+    trackTelemetry("palette:open");
     window.setTimeout(() => paletteInput.focus(), 10);
   }
 
   function closePalette() {
+    savePaletteHistoryEntry(paletteInput.value);
+    renderPaletteHistory();
     overlay.classList.remove("active");
   }
 
@@ -7204,6 +15165,9 @@ body.wolfbbs-compose-fullscreen-open{
   paletteInput.addEventListener("input", () => renderPalette(paletteInput.value));
   overlay.addEventListener("click", (event) => {
     if (event.target === overlay) closePalette();
+    if (event.target && event.target.closest(".wolfbbs-palette-item")) {
+      savePaletteHistoryEntry(paletteInput.value);
+    }
   });
     document.addEventListener("keydown", (event) => {
     const tag = event.target && event.target.tagName ? event.target.tagName.toLowerCase() : "";
@@ -7211,6 +15175,78 @@ body.wolfbbs-compose-fullscreen-open{
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
       event.preventDefault();
       openPalette();
+      return;
+    }
+    if (!editing && (event.metaKey || event.ctrlKey) && event.shiftKey && String(event.key).toLowerCase() === "w") {
+      event.preventDefault();
+      if (typeof window.wolfbbsOpenWorkspaceHub === "function") window.wolfbbsOpenWorkspaceHub();
+      return;
+    }
+    if (!editing && (event.metaKey || event.ctrlKey) && event.shiftKey && String(event.key).toLowerCase() === "a") {
+      event.preventDefault();
+      if (typeof window.wolfbbsOpenToastCenter === "function") window.wolfbbsOpenToastCenter();
+      return;
+    }
+    if (!editing && (event.metaKey || event.ctrlKey) && event.shiftKey && String(event.key).toLowerCase() === "c") {
+      event.preventDefault();
+      if (typeof window.wolfbbsOpenCheckpointHub === "function") window.wolfbbsOpenCheckpointHub();
+      return;
+    }
+    if (!editing && (event.metaKey || event.ctrlKey) && event.shiftKey && String(event.key).toLowerCase() === "d") {
+      event.preventDefault();
+      if (typeof window.wolfbbsOpenDraftCenter === "function") window.wolfbbsOpenDraftCenter();
+      return;
+    }
+    if (!editing && (event.metaKey || event.ctrlKey) && event.shiftKey && String(event.key).toLowerCase() === "i") {
+      event.preventDefault();
+      if (typeof window.wolfbbsOpenIncidentConsole === "function") window.wolfbbsOpenIncidentConsole();
+      return;
+    }
+    if (!editing && (event.metaKey || event.ctrlKey) && event.shiftKey && String(event.key).toLowerCase() === "p") {
+      event.preventDefault();
+      if (typeof window.wolfbbsOpenPlaybookRunner === "function") window.wolfbbsOpenPlaybookRunner();
+      return;
+    }
+    if (!editing && (event.metaKey || event.ctrlKey) && event.shiftKey && String(event.key).toLowerCase() === "m") {
+      event.preventDefault();
+      if (typeof window.wolfbbsOpenReminderScheduler === "function") window.wolfbbsOpenReminderScheduler();
+      return;
+    }
+    if (!editing && (event.metaKey || event.ctrlKey) && event.shiftKey && String(event.key).toLowerCase() === "g") {
+      event.preventDefault();
+      if (typeof window.wolfbbsOpenReleaseGate === "function") window.wolfbbsOpenReleaseGate();
+      return;
+    }
+    if (!editing && (event.metaKey || event.ctrlKey) && event.shiftKey && String(event.key).toLowerCase() === "y") {
+      event.preventDefault();
+      if (typeof window.wolfbbsOpenKPIWatchCenter === "function") window.wolfbbsOpenKPIWatchCenter();
+      return;
+    }
+    if (!editing && (event.metaKey || event.ctrlKey) && event.shiftKey && String(event.key).toLowerCase() === "b") {
+      event.preventDefault();
+      if (typeof window.wolfbbsOpenFeedbackPulse === "function") window.wolfbbsOpenFeedbackPulse();
+      return;
+    }
+    if (!editing && event.altKey) {
+      const macroRoutes = ["/start", "/today", "/attention", "/boards", "/chat", "/mail"];
+      const idx = Number(event.key) - 1;
+      if (Number.isInteger(idx) && idx >= 0 && idx < macroRoutes.length) {
+        event.preventDefault();
+        trackTelemetry("macro:route-jump");
+        location.href = macroRoutes[idx];
+        return;
+      }
+      if (event.key === "0" && typeof window.wolfbbsOpenMacroHelp === "function") {
+        event.preventDefault();
+        window.wolfbbsOpenMacroHelp();
+        return;
+      }
+    }
+    if (!editing && (event.metaKey || event.ctrlKey) && event.key === "/") {
+      event.preventDefault();
+      if (typeof window.wolfbbsOpenMacroHelp === "function") {
+        window.wolfbbsOpenMacroHelp();
+      }
       return;
     }
     if (event.key === "Escape" && overlay.classList.contains("active")) {
@@ -7398,7 +15434,8 @@ func (a *webApp) deliverPasswordReset(r *http.Request, handle, token string) err
 	if a.resetNotifier != nil {
 		return a.resetNotifier(handle, token, r)
 	}
-	if a.email == nil || !a.email.Enabled() {
+	emailGateway := a.activeEmailGateway()
+	if emailGateway == nil || !emailGateway.Enabled() {
 		return nil
 	}
 	recipient := passwordResetRecipient(handle)
@@ -7415,7 +15452,7 @@ func (a *webApp) deliverPasswordReset(r *http.Request, handle, token string) err
 	body := "A password reset was requested for your " + a.siteDisplayName() + " account.\n\n" +
 		"If this was you, open this link to set a new password:\n" + resetURL + "\n\n" +
 		"If you did not request this reset, you can ignore this message."
-	return a.email.SendOutbound("wolfbbs-reset", []string{recipient}, subject, body)
+	return emailGateway.SendOutbound("wolfbbs-reset", []string{recipient}, subject, body)
 }
 
 func passwordResetRecipient(handle string) string {
@@ -7444,6 +15481,12 @@ func (a *webApp) handleConnect(w http.ResponseWriter, r *http.Request) {
 	if wsURL == "" {
 		wsURL = "ws://localhost:6080/ws-login"
 	}
+	preset := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("preset")))
+	switch preset {
+	case "syncterm", "ftelnet", "vtx", "web":
+	default:
+		preset = "web"
+	}
 	termBlock := `<p>WebSocket terminal is configured for command-mode login server.</p>`
 	termBlock += `<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.5.0/css/xterm.min.css">
 <div id="termHost" style="max-width:820px; margin-top:10px;">
@@ -7457,6 +15500,14 @@ func (a *webApp) handleConnect(w http.ResponseWriter, r *http.Request) {
 const host = document.getElementById('xterm');
 const status = document.getElementById('termStatus');
 const wsURL = ` + fmt.Sprintf("%q", wsURL) + `;
+const preset = ` + fmt.Sprintf("%q", preset) + `;
+const presetMap = {
+  web: { fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace", fontSize: 14, background: "#0b0f14", foreground: "#b7f7c1", cursor: "#f4f4f4", selection: "#334455" },
+  syncterm: { fontFamily: "'IBM Plex Mono', 'Cascadia Mono', 'Courier New', monospace", fontSize: 15, background: "#050709", foreground: "#ffd27a", cursor: "#fff2c4", selection: "#5a3f1d" },
+  ftelnet: { fontFamily: "'Cascadia Mono', 'Consolas', 'Courier New', monospace", fontSize: 15, background: "#06101a", foreground: "#9bd3ff", cursor: "#e6f5ff", selection: "#284b63" },
+  vtx: { fontFamily: "'IBM Plex Mono', 'Consolas', 'Courier New', monospace", fontSize: 15, background: "#05080f", foreground: "#9be7c1", cursor: "#d6ffeb", selection: "#21523f" }
+};
+const presetConfig = presetMap[preset] || presetMap.web;
 function createFallbackTerminal(container) {
   container.innerHTML = "";
   const view = document.createElement('pre');
@@ -7469,9 +15520,9 @@ function createFallbackTerminal(container) {
   view.style.overflowY = 'auto';
   view.style.whiteSpace = 'pre-wrap';
   view.style.outline = 'none';
-  view.style.background = '#0b0f14';
-  view.style.color = '#b7f7c1';
-  view.style.font = "14px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace";
+  view.style.background = presetConfig.background;
+  view.style.color = presetConfig.foreground;
+  view.style.font = String(presetConfig.fontSize || 14) + "px/1.45 " + presetConfig.fontFamily;
   container.appendChild(view);
   let onData = function(){};
   view.addEventListener('keydown', function(evt) {
@@ -7519,13 +15570,13 @@ function createFallbackTerminal(container) {
 const term = window.Terminal ? new window.Terminal({
   cursorBlink: true,
   convertEol: true,
-  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
-  fontSize: 14,
+  fontFamily: presetConfig.fontFamily,
+  fontSize: presetConfig.fontSize,
   theme: {
-    background: "#0b0f14",
-    foreground: "#b7f7c1",
-    cursor: "#f4f4f4",
-    selectionBackground: "#334455"
+    background: presetConfig.background,
+    foreground: presetConfig.foreground,
+    cursor: presetConfig.cursor,
+    selectionBackground: presetConfig.selection
   },
   scrollback: 3000
 }) : createFallbackTerminal(host);
@@ -7705,6 +15756,15 @@ setTimeout(function(){ term.focus(); }, 0);
 	sshCommand := `ssh ` + connectHost + ` -p ` + strconv.Itoa(sshPort)
 	telnetCommand := `telnet ` + connectHost + ` ` + strconv.Itoa(telnetPort)
 	ircCommand := `irc://` + connectHost + `:` + strconv.Itoa(ircPort) + `/%23lobby`
+	presetLabel := map[string]string{
+		"web":      "Browser",
+		"syncterm": "SyncTERM",
+		"ftelnet":  "fTelnet",
+		"vtx":      "VTX",
+	}[preset]
+	if presetLabel == "" {
+		presetLabel = "Browser"
+	}
 
 	page := `<html><body>
 <h1>` + htmlEscape(a.siteDisplayName()) + ` Connect</h1>
@@ -7727,8 +15787,13 @@ setTimeout(function(){ term.focus(); }, 0);
 <li><strong>Host:</strong> ` + htmlEscape(connectHost) + `</li>
 <li><strong>SSH port:</strong> ` + strconv.Itoa(sshPort) + `</li>
 <li><strong>Telnet port:</strong> ` + strconv.Itoa(telnetPort) + `</li>
+<li><strong>Terminal preset:</strong> ` + htmlEscape(presetLabel) + `</li>
 <li><strong>Web terminal:</strong> reconnects automatically if the browser tab comes back into focus.</li>
 </ul></article>
+</section>
+<section class="wolfbbs-grid">
+<article class="wolfbbs-card"><h2>Terminal Profile Presets</h2><div class="wolfbbs-action-grid"><a class="wolfbbs-action-card" href="/connect?preset=web#xterm"><strong>Browser</strong><span>balanced default for most callers</span></a><a class="wolfbbs-action-card" href="/connect?preset=syncterm#xterm"><strong>SyncTERM</strong><span>warm amber CP437-style profile</span></a><a class="wolfbbs-action-card" href="/connect?preset=ftelnet#xterm"><strong>fTelnet</strong><span>bright cyan legacy-web profile</span></a><a class="wolfbbs-action-card" href="/connect?preset=vtx#xterm"><strong>VTX</strong><span>high-contrast green terminal profile</span></a></div></article>
+<article class="wolfbbs-card"><h2>Compatibility Notes</h2><ul class="wolfbbs-list-clean"><li><strong>SyncTERM style:</strong> best when you want classic CP437-era contrast and larger glyphs.</li><li><strong>fTelnet style:</strong> tuned for older browser terminal look-and-feel.</li><li><strong>VTX style:</strong> higher contrast for long sessions and smaller displays.</li><li><strong>Fallback:</strong> if JS terminal addons fail, keyboard input still works via a plain text fallback.</li></ul></article>
 </section>
 <section class="wolfbbs-grid">
 <article class="wolfbbs-card"><h2>Mobile-first connection picks</h2><div class="wolfbbs-action-grid"><a class="wolfbbs-action-card" href="#xterm"><strong>Browser Terminal</strong><span>best zero-install path on phones and tablets</span></a><a class="wolfbbs-action-card" href="ssh://` + htmlEscape(connectHost) + `:` + strconv.Itoa(sshPort) + `"><strong>SSH Client</strong><span>works best when your mobile terminal app supports ANSI</span></a><a class="wolfbbs-action-card" href="` + htmlEscape(ircCommand) + `"><strong>IRC Client</strong><span>use this when you only need the live lobby</span></a></div></article>
@@ -7876,7 +15941,12 @@ func (a *webApp) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	a.clearRateLimitedAction(loginKey)
 
-	if sid, ok := a.createSession(user.Handle); ok {
+	authFactor := 1
+	if strings.TrimSpace(user.TOTPSecret) != "" {
+		authFactor = 2
+	}
+	transport, secureConn := requestSecurityProfile(r)
+	if sid, ok := a.createSessionWithContext(user.Handle, authFactor, transport, secureConn); ok {
 		http.SetCookie(w, &http.Cookie{
 			Name:     "wolfbbs_session",
 			Value:    sid,
@@ -7973,16 +16043,16 @@ func (a *webApp) handleHelp(w http.ResponseWriter, r *http.Request) {
 	}
 	user, _ := a.currentUser(r)
 	roleLabel := "guest"
-	nav := `<a href="/start">start</a> | <a href="/login">login</a> | <a href="/connect">connect</a>`
+	nav := `<a href="/start">start</a> | <a href="/showcase">showcase</a> | <a href="/login">login</a> | <a href="/connect">connect</a>`
 	roleGuideTitle := "If you're visiting for the first time"
 	roleGuide := `<ol>` +
-		`<li>Start with <a href="/start">/start</a>, <a href="/connect">/connect</a>, or <a href="/tour">/tour</a> to understand the board before signing in.</li>` +
+		`<li>Start with <a href="/start">/start</a>, <a href="/showcase">/showcase</a>, <a href="/connect">/connect</a>, or <a href="/tour">/tour</a> to understand the board before signing in.</li>` +
 		`<li>Use <a href="/help">/help</a> to learn the route map and caller surface layout.</li>` +
 		`<li>When you want the real experience, sign in and try SSH plus <a href="/boards">/boards</a> and <a href="/chat">/chat</a>.</li>` +
 		`</ol>`
 	if user != nil {
 		roleLabel = rbac.NormalizeRole(user.Role)
-		nav = `<a href="/start">start</a> | <a href="/today">today</a> | <a href="/attention">attention</a> | <a href="/events">events</a> | <a href="/events/recaps">recaps</a> | <a href="/challenges">challenges</a> | <a href="/boards">boards</a> | <a href="/bulletins">bulletins</a> | <a href="/directory">directory</a> | <a href="/finder">finder</a> | <a href="/newfiles">newfiles</a> | <a href="/feedback">feedback</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/radar">radar</a> | <a href="/clubhouse">clubhouse</a> | <a href="/doors">doors</a> | <a href="/settings">settings</a> | <a href="/status">status</a> | <a href="/config">config</a>`
+		nav = `<a href="/start">start</a> | <a href="/showcase">showcase</a> | <a href="/today">today</a> | <a href="/attention">attention</a> | <a href="/events">events</a> | <a href="/events/recaps">recaps</a> | <a href="/challenges">challenges</a> | <a href="/boards">boards</a> | <a href="/bulletins">bulletins</a> | <a href="/directory">directory</a> | <a href="/finder">finder</a> | <a href="/newfiles">newfiles</a> | <a href="/feedback">feedback</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/radar">radar</a> | <a href="/clubhouse">clubhouse</a> | <a href="/doors">doors</a> | <a href="/settings">settings</a> | <a href="/status">status</a> | <a href="/config">config</a>`
 		if a.discover {
 			nav += ` | <a href="/discover">discover</a>`
 		}
@@ -8070,8 +16140,9 @@ func (a *webApp) handleHelp(w http.ResponseWriter, r *http.Request) {
 </ul>
 <h2>Web routes</h2>
 <ul>
-<li>/start, /today, /attention, /events, /events/recaps, /challenges, /boards, /bulletins, /directory, /finder, /newfiles, /feedback, /mail, /chat, /radar, /clubhouse, /doors, /settings, /gateway, /status, /config</li>
+<li>/start, /showcase, /today, /attention, /events, /events/recaps, /challenges, /boards, /bulletins, /directory, /finder, /newfiles, /feedback, /mail, /chat, /radar, /clubhouse, /doors, /settings, /gateway, /status, /config</li>
 <li>/start for the fastest guest/caller/sysop handoff into the right lane</li>
+<li>/showcase for a compact product walk-through and first-run checklist</li>
 <li>/today for the daily brief: watched boards, upcoming events, and the shortest responsible next step</li>
 <li>/attention for direct follow-up, unread mail, and board movement that actually needs response</li>
 <li>/events for the public community calendar and scheduled return hooks</li>
@@ -8114,6 +16185,7 @@ func (a *webApp) handleHelp(w http.ResponseWriter, r *http.Request) {
 <li><code>docs/help-guides.md</code></li>
 <li><code>docs/INSTALL.md</code></li>
 <li><code>docs/PRODUCT_GUIDE.md</code></li>
+<li><code>docs/EXTENSION_SDK.md</code></li>
 <li><code>docs/config-reference.md</code></li>
 <li><code>docs/feature-reference.md</code></li>
 </ul>
@@ -8690,7 +16762,17 @@ func (a *webApp) handleDirectory(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		staffNoteBlock := ``
+		riskSummaryBlock := ``
 		if a.hasRole(user, roleModerator) {
+			riskScore, riskLevel, riskSignals := a.buildCallerRiskSummary(profileTarget)
+			riskRows := strings.Builder{}
+			for _, row := range riskSignals {
+				riskRows.WriteString(`<li>` + htmlEscape(row) + `</li>`)
+			}
+			if riskRows.Len() == 0 {
+				riskRows.WriteString(`<li>No risk signals currently detected.</li>`)
+			}
+			riskSummaryBlock = `<article class="wolfbbs-card"><h2>Caller Risk Summary</h2><p><strong>Score:</strong> ` + strconv.Itoa(riskScore) + ` | <strong>Level:</strong> ` + htmlEscape(strings.ToUpper(riskLevel)) + `</p><ul>` + riskRows.String() + `</ul><p><a href="/admin/mod-center">Open moderation queue</a></p></article>`
 			staffNoteBlock = `<article class="wolfbbs-card"><h2>Staff Notes</h2><form method="POST" action="/directory"><input type="hidden" name="action" value="save_staff_note"><input type="hidden" name="target" value="` + htmlEscape(profile.Handle) + `"><input type="hidden" name="return_to" value="/directory?handle=` + url.QueryEscape(profile.Handle) + `">` + a.csrfHiddenInput(r) + `<textarea name="staff_note" rows="6" cols="48" placeholder="Internal moderation/support context only.">` + htmlEscape(profile.StaffNote) + `</textarea><br><label><input type="checkbox" name="escalate" value="1"> Queue for staff follow-through</label><br><button type="submit">Save Staff Note</button></form></article>`
 		}
 		statusLineBlock := ``
@@ -8717,7 +16799,7 @@ func (a *webApp) handleDirectory(w http.ResponseWriter, r *http.Request) {
 <article class="wolfbbs-card"><h2>Your Circles</h2><ul>` + circleRows.String() + `</ul><p><a href="/circles">Manage circles</a></p></article>
 <article class="wolfbbs-card"><h2>Relationship Timeline</h2><ul>` + relationshipRows.String() + `</ul></article>`
 		if a.hasRole(user, roleModerator) {
-			profileBlock += `<article class="wolfbbs-card"><h2>Incident Timeline</h2><ul>` + incidentRows.String() + `</ul></article>`
+			profileBlock += `<article class="wolfbbs-card"><h2>Incident Timeline</h2><ul>` + incidentRows.String() + `</ul></article>` + riskSummaryBlock
 		}
 		profileBlock += staffNoteBlock + `
 </section>`
@@ -9942,7 +18024,8 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 			}
 			recipient := toRaw
 			msg.ExternalTo = &recipient
-			if err := a.email.SendOutbound(user.Handle, []string{recipient}, subject, body); err != nil {
+			emailGateway := a.activeEmailGateway()
+			if err := emailGateway.SendOutbound(user.Handle, []string{recipient}, subject, body); err != nil {
 				redirectWithError(w, r, "/mail", "Email relay error: "+err.Error())
 				return
 			}
@@ -10328,6 +18411,207 @@ func (a *webApp) handleHandleSuggestions(w http.ResponseWriter, r *http.Request)
 	_ = writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
 }
 
+func defaultGatewaySettingsFromEnv() *domain.GatewaySettings {
+	return sanitizeGatewaySettings(&domain.GatewaySettings{
+		SMTPHost:        strings.TrimSpace(envFirst("SMTP_HOST", "WOLFBBS_SMTP_HOST")),
+		SMTPPort:        parseInt(envFirst("SMTP_PORT", "WOLFBBS_SMTP_PORT"), 587),
+		SMTPUser:        strings.TrimSpace(envFirst("SMTP_USER", "WOLFBBS_SMTP_USER")),
+		SMTPPass:        strings.TrimSpace(envFirst("SMTP_PASS", "WOLFBBS_SMTP_PASS")),
+		FromDomain:      strings.TrimSpace(envFirst("FROM_DOMAIN", "WOLFBBS_FROM_DOMAIN")),
+		MaxRecipients:   parseInt(os.Getenv("WOLFBBS_MAIL_MAX_RECIPIENTS"), 3),
+		MaxMessageBytes: parseInt(os.Getenv("WOLFBBS_MAIL_MAX_BYTES"), 65536),
+		WebTimeoutSec:   10,
+		WebMaxBytes:     2 * 1024 * 1024,
+	})
+}
+
+func sanitizeGatewaySettings(cfg *domain.GatewaySettings) *domain.GatewaySettings {
+	if cfg == nil {
+		cfg = &domain.GatewaySettings{}
+	}
+	out := *cfg
+	if out.SMTPPort <= 0 {
+		out.SMTPPort = 587
+	}
+	if out.MaxRecipients <= 0 {
+		out.MaxRecipients = 3
+	}
+	if out.MaxMessageBytes <= 0 {
+		out.MaxMessageBytes = 65536
+	}
+	if out.WebTimeoutSec <= 0 {
+		out.WebTimeoutSec = 10
+	}
+	if out.WebTimeoutSec > 120 {
+		out.WebTimeoutSec = 120
+	}
+	if out.WebMaxBytes <= 0 {
+		out.WebMaxBytes = 2 * 1024 * 1024
+	}
+	if out.WebMaxBytes > 8*1024*1024 {
+		out.WebMaxBytes = 8 * 1024 * 1024
+	}
+	return &out
+}
+
+func (a *webApp) activeGatewaySettings() *domain.GatewaySettings {
+	cfg := defaultGatewaySettingsFromEnv()
+	if a.adminRepo != nil {
+		if dbCfg, err := a.adminRepo.GetGatewaySettings(); err == nil && dbCfg != nil {
+			cfg = sanitizeGatewaySettings(dbCfg)
+		}
+	}
+	return cfg
+}
+
+func (a *webApp) activeWebFetchConfig() gateway.FetchConfig {
+	cfg := a.activeGatewaySettings()
+	out := gateway.DefaultFetchConfig
+	out.Timeout = time.Duration(cfg.WebTimeoutSec) * time.Second
+	out.MaxBodyBytes = int64(cfg.WebMaxBytes)
+	return out
+}
+
+func (a *webApp) activeEmailGateway() *gateway.EmailGateway {
+	cfg := a.activeGatewaySettings()
+	rateLimit := parseInt(strings.TrimSpace(os.Getenv("WOLFBBS_MAIL_RATE_PER_HOUR")), 20)
+	if rateLimit <= 0 {
+		rateLimit = 20
+	}
+	return gateway.NewEmailGateway(gateway.EmailConfig{
+		Host:             strings.TrimSpace(cfg.SMTPHost),
+		Port:             cfg.SMTPPort,
+		User:             strings.TrimSpace(cfg.SMTPUser),
+		Pass:             strings.TrimSpace(cfg.SMTPPass),
+		FromDomain:       strings.TrimSpace(cfg.FromDomain),
+		MaxRecipients:    cfg.MaxRecipients,
+		MaxMessageBytes:  cfg.MaxMessageBytes,
+		RateLimitPerHour: rateLimit,
+	})
+}
+
+func defaultAIGatewaySettingsFromEnv() aiGatewaySettings {
+	cfg := aiGatewaySettings{
+		BaseURL:      strings.TrimSpace(envFirst("WOLFBBS_GATEWAY_AI_BASE_URL", "WOLFBBS_AI_BASE_URL", "OPENAI_BASE_URL")),
+		Model:        strings.TrimSpace(envFirst("WOLFBBS_GATEWAY_AI_MODEL", "WOLFBBS_AI_MODEL", "OPENAI_MODEL")),
+		APIKey:       strings.TrimSpace(envFirst("WOLFBBS_GATEWAY_AI_API_KEY", "WOLFBBS_AI_API_KEY", "OPENAI_API_KEY")),
+		SystemPrompt: strings.TrimSpace(envFirst("WOLFBBS_GATEWAY_AI_SYSTEM_PROMPT", "WOLFBBS_AI_SYSTEM_PROMPT")),
+		TimeoutSec:   parseInt(envFirst("WOLFBBS_GATEWAY_AI_TIMEOUT_SEC", "WOLFBBS_AI_TIMEOUT_SEC"), 20),
+		MaxTokens:    parseInt(envFirst("WOLFBBS_GATEWAY_AI_MAX_TOKENS", "WOLFBBS_AI_MAX_TOKENS"), 400),
+		Enabled:      parseCheckbox(envFirst("WOLFBBS_GATEWAY_AI_ENABLED", "WOLFBBS_AI_ENABLED")),
+	}
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = "https://api.openai.com"
+	}
+	if cfg.Model == "" {
+		cfg.Model = "gpt-4.1-mini"
+	}
+	if cfg.TimeoutSec <= 0 {
+		cfg.TimeoutSec = 20
+	}
+	if cfg.TimeoutSec > 120 {
+		cfg.TimeoutSec = 120
+	}
+	if cfg.MaxTokens <= 0 {
+		cfg.MaxTokens = 400
+	}
+	if cfg.MaxTokens > 4000 {
+		cfg.MaxTokens = 4000
+	}
+	if cfg.APIKey != "" && !cfg.Enabled {
+		cfg.Enabled = true
+	}
+	return cfg
+}
+
+func (a *webApp) loadAIGatewaySettings() aiGatewaySettings {
+	cfg := defaultAIGatewaySettingsFromEnv()
+	if a.adminRepo == nil {
+		return cfg
+	}
+	applyString := func(key string, target *string) {
+		if target == nil {
+			return
+		}
+		value, err := a.adminRepo.GetSystemSetting(key)
+		if err != nil {
+			return
+		}
+		*target = strings.TrimSpace(value)
+	}
+	applyString(sysSettingGatewayAIBaseURL, &cfg.BaseURL)
+	applyString(sysSettingGatewayAIModel, &cfg.Model)
+	applyString(sysSettingGatewayAIAPIKey, &cfg.APIKey)
+	applyString(sysSettingGatewayAISystemPrompt, &cfg.SystemPrompt)
+	if value, err := a.adminRepo.GetSystemSetting(sysSettingGatewayAIEnabled); err == nil && strings.TrimSpace(value) != "" {
+		cfg.Enabled = parseCheckbox(value)
+	}
+	if value, err := a.adminRepo.GetSystemSetting(sysSettingGatewayAITimeoutSec); err == nil && strings.TrimSpace(value) != "" {
+		cfg.TimeoutSec = parseInt(value, cfg.TimeoutSec)
+	}
+	if value, err := a.adminRepo.GetSystemSetting(sysSettingGatewayAIMaxTokens); err == nil && strings.TrimSpace(value) != "" {
+		cfg.MaxTokens = parseInt(value, cfg.MaxTokens)
+	}
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = "https://api.openai.com"
+	}
+	if cfg.Model == "" {
+		cfg.Model = "gpt-4.1-mini"
+	}
+	if cfg.TimeoutSec <= 0 {
+		cfg.TimeoutSec = 20
+	}
+	if cfg.MaxTokens <= 0 {
+		cfg.MaxTokens = 400
+	}
+	if cfg.APIKey != "" && !cfg.Enabled {
+		cfg.Enabled = true
+	}
+	return cfg
+}
+
+func (a *webApp) persistAIGatewaySettings(next aiGatewaySettings) {
+	if a.adminRepo == nil {
+		return
+	}
+	if strings.TrimSpace(next.APIKey) == "" {
+		current := a.loadAIGatewaySettings()
+		next.APIKey = strings.TrimSpace(current.APIKey)
+	}
+	a.persistSystemSetting(sysSettingGatewayAIEnabled, strconv.FormatBool(next.Enabled))
+	a.persistSystemSetting(sysSettingGatewayAIBaseURL, strings.TrimSpace(next.BaseURL))
+	a.persistSystemSetting(sysSettingGatewayAIModel, strings.TrimSpace(next.Model))
+	a.persistSystemSetting(sysSettingGatewayAIAPIKey, strings.TrimSpace(next.APIKey))
+	a.persistSystemSetting(sysSettingGatewayAISystemPrompt, strings.TrimSpace(next.SystemPrompt))
+	a.persistSystemSetting(sysSettingGatewayAITimeoutSec, strconv.Itoa(next.TimeoutSec))
+	a.persistSystemSetting(sysSettingGatewayAIMaxTokens, strconv.Itoa(next.MaxTokens))
+}
+
+func (a *webApp) gatewayConfigured() bool {
+	cfg := a.activeGatewaySettings()
+	return strings.TrimSpace(cfg.SMTPHost) != "" && cfg.SMTPPort > 0 && strings.TrimSpace(cfg.FromDomain) != ""
+}
+
+func normalizeGatewayView(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "home", "hub":
+		return "home"
+	case "browser", "files", "email", "ai", "rss", "summarize", "json":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "home"
+	}
+}
+
+func isGatewayFileAction(action string) bool {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "rate_file", "save_filter", "queue_add", "queue_remove", "ticket", "request_file":
+		return true
+	default:
+		return false
+	}
+}
+
 func (a *webApp) handleGateway(w http.ResponseWriter, r *http.Request) {
 	user, ok := a.currentUser(r)
 	if !ok {
@@ -10336,6 +18620,11 @@ func (a *webApp) handleGateway(w http.ResponseWriter, r *http.Request) {
 	}
 	downloadToken := strings.TrimSpace(r.URL.Query().Get("download"))
 	fileView := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("view")), "files")
+	view := normalizeGatewayView(r.URL.Query().Get("view"))
+	if fileView {
+		view = "files"
+	}
+	gatewayNav := `<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/doors">doors</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>`
 	if r.Method == http.MethodGet {
 		if downloadToken != "" && !a.canReadFiles(user, "download") {
 			http.Error(w, "forbidden", http.StatusForbidden)
@@ -10357,23 +18646,114 @@ func (a *webApp) handleGateway(w http.ResponseWriter, r *http.Request) {
 		}
 		csrf := a.csrfHiddenInput(r)
 		messageBlock := pageMessageBlock(r)
-		page := `<html><body>
-	<h1>Gateway</h1>
-	<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
-	` + messageBlock + `
-	<p>Fetch readable text via text gateway (safety limits and SSRF blocks apply).</p>
-	<form method="POST" action="/gateway">
-		` + csrf + `
-		<input type="hidden" name="action" value="fetch">
-		<label>URL: <input name="url" size="60" value="https://"></label><br><br>
-		<label><input type="checkbox" name="save" value="1"> Save for offline reading</label><br><br>
-		<button type="submit">Fetch</button>
-	</form>
-	<p><a href="/gateway?view=files">FileBase browser + queue + temp links</a></p>
-	</body></html>`
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(page))
-		return
+		switch view {
+		case "browser":
+			startURL := strings.TrimSpace(r.URL.Query().Get("url"))
+			if startURL == "" {
+				startURL = "https://"
+			}
+			page := `<html><body><h1>Text Web Browser Door</h1>` + gatewayNav + messageBlock +
+				`<p>Fetch readable text through the safe gateway engine. Local/private hosts are blocked and limits are enforced.</p>` +
+				`<form method="POST" action="/gateway">` + csrf + `<input type="hidden" name="action" value="fetch">` +
+				`<label>URL <input name="url" size="72" value="` + htmlEscape(startURL) + `"></label><br><label><input type="checkbox" name="save" value="1"> Save offline copy</label><br><button type="submit">Open in reader</button></form>` +
+				`<p><a href="/gateway?view=summarize">Summarize article</a> | <a href="/gateway?view=rss">RSS feeds</a> | <a href="/gateway?view=json">JSON API explorer</a> | <a href="/gateway?view=ai">AI client</a> | <a href="/gateway?view=files">FileBase gateway</a></p>` +
+				`</body></html>`
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(page))
+			return
+		case "rss":
+			page := `<html><body><h1>RSS / Atom Feed Reader Door</h1>` + gatewayNav + messageBlock +
+				`<p>Load an RSS/Atom feed and read the newest items in a compact BBS-friendly format.</p>` +
+				`<form method="POST" action="/gateway">` + csrf + `<input type="hidden" name="action" value="rss_fetch">` +
+				`<label>Feed URL <input name="feed_url" size="72" value="https://hnrss.org/frontpage"></label><br><label>Items <input name="limit" size="4" value="10"></label><br><button type="submit">Load feed</button></form>` +
+				`<p><a href="/gateway?view=browser">Text browser</a> | <a href="/gateway?view=summarize">Summarizer</a> | <a href="/gateway?view=json">JSON explorer</a></p>` +
+				`</body></html>`
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(page))
+			return
+		case "summarize":
+			sourceURL := strings.TrimSpace(r.URL.Query().Get("url"))
+			if sourceURL == "" {
+				sourceURL = "https://"
+			}
+			page := `<html><body><h1>Article Summarizer Door</h1>` + gatewayNav + messageBlock +
+				`<p>Grab a web article and return fast bullets for callers who want the gist before diving in.</p>` +
+				`<form method="POST" action="/gateway">` + csrf + `<input type="hidden" name="action" value="summarize_fetch">` +
+				`<label>Article URL <input name="article_url" size="72" value="` + htmlEscape(sourceURL) + `"></label><br><label>Bullets <input name="max_bullets" size="4" value="5"></label><br><button type="submit">Summarize</button></form>` +
+				`<p><a href="/gateway?view=browser">Text browser</a> | <a href="/gateway?view=rss">Feed reader</a> | <a href="/gateway?view=json">JSON explorer</a></p>` +
+				`</body></html>`
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(page))
+			return
+		case "json":
+			page := `<html><body><h1>JSON API Explorer Door</h1>` + gatewayNav + messageBlock +
+				`<p>Fetch JSON endpoints through the gateway safety policy and render pretty output for quick operator checks.</p>` +
+				`<form method="POST" action="/gateway">` + csrf + `<input type="hidden" name="action" value="json_fetch">` +
+				`<label>JSON URL <input name="json_url" size="72" value="https://api.github.com/repos/golang/go"></label><br><button type="submit">Fetch JSON</button></form>` +
+				`<p><a href="/gateway?view=browser">Text browser</a> | <a href="/gateway?view=rss">Feed reader</a> | <a href="/gateway?view=summarize">Summarizer</a></p>` +
+				`</body></html>`
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(page))
+			return
+		case "ai":
+			aiCfg := a.loadAIGatewaySettings()
+			aiStatus := "disabled"
+			if aiCfg.Enabled && strings.TrimSpace(aiCfg.APIKey) != "" {
+				aiStatus = "ready"
+			} else if strings.TrimSpace(aiCfg.APIKey) != "" {
+				aiStatus = "configured but disabled"
+			}
+			modelText := htmlEscape(defaultIfBlank(aiCfg.Model, "n/a"))
+			baseText := htmlEscape(defaultIfBlank(aiCfg.BaseURL, "n/a"))
+			page := `<html><body><h1>Generative AI Door</h1>` + gatewayNav + messageBlock +
+				`<p>Use a provider-compatible chat completion endpoint from inside the BBS. Every response is clearly marked.</p>` +
+				`<p><strong>Status:</strong> ` + htmlEscape(aiStatus) + ` | <strong>Model:</strong> ` + modelText + ` | <strong>Endpoint:</strong> ` + baseText + `</p>` +
+				`<form method="POST" action="/gateway">` + csrf + `<input type="hidden" name="action" value="ai_prompt">` +
+				`<label>Prompt<br><textarea name="prompt" rows="8" cols="88" placeholder="Ask for a quick summary, draft, or idea list."></textarea></label><br><button type="submit">Send prompt</button></form>` +
+				`<p><a href="/admin/gateways">Configure AI gateway</a> | <a href="/gateway?view=browser">Text browser</a> | <a href="/gateway?view=summarize">Summarizer</a></p>` +
+				`</body></html>`
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(page))
+			return
+		case "email":
+			cfg := a.activeGatewaySettings()
+			emailGateway := a.activeEmailGateway()
+			status := "not configured"
+			if emailGateway.Enabled() {
+				status = "configured"
+			}
+			page := `<html><body><h1>Email Gateway Door</h1>` + gatewayNav + messageBlock +
+				`<p>Outbound relay sends from <code>handle@from-domain</code> through your configured SMTP host.</p>` +
+				`<table border="1"><tr><th>Check</th><th>Value</th></tr>` +
+				`<tr><td>Relay status</td><td>` + htmlEscape(status) + `</td></tr>` +
+				`<tr><td>SMTP host</td><td>` + htmlEscape(defaultIfBlank(cfg.SMTPHost, "not set")) + `:` + strconv.Itoa(cfg.SMTPPort) + `</td></tr>` +
+				`<tr><td>From domain</td><td>` + htmlEscape(defaultIfBlank(cfg.FromDomain, "not set")) + `</td></tr>` +
+				`<tr><td>Max recipients</td><td>` + strconv.Itoa(cfg.MaxRecipients) + `</td></tr>` +
+				`<tr><td>Max message bytes</td><td>` + strconv.Itoa(cfg.MaxMessageBytes) + `</td></tr>` +
+				`<tr><td>Verified required</td><td>` + boolToText(a.requireVerifiedEmail) + `</td></tr></table>` +
+				`<p><a href="/mail">Open private mail compose</a> | <a href="/admin/gateways">Configure gateway controls</a> | <a href="/admin/mail">Check outbound policy</a></p>` +
+				`</body></html>`
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(page))
+			return
+		default:
+			page := `<html><body><h1>Gateway Hub</h1>` + gatewayNav + messageBlock +
+				`<p>Modern internet utility doors with classic BBS flow.</p>` +
+				`<section class="wolfbbs-grid">` +
+				`<article class="wolfbbs-card"><h2>Text Web Browser</h2><p>Read web pages as clean text.</p><p><a href="/gateway?view=browser">Open browser door</a></p></article>` +
+				`<article class="wolfbbs-card"><h2>Email Gateway</h2><p>Check SMTP relay status and mail policy.</p><p><a href="/gateway?view=email">Open email door</a></p></article>` +
+				`<article class="wolfbbs-card"><h2>Generative AI</h2><p>Prompt an AI model from inside the board.</p><p><a href="/gateway?view=ai">Open AI door</a></p></article>` +
+				`<article class="wolfbbs-card"><h2>Feed Reader</h2><p>Pull RSS/Atom feeds into compact lists.</p><p><a href="/gateway?view=rss">Open feed door</a></p></article>` +
+				`<article class="wolfbbs-card"><h2>Article Summarizer</h2><p>Get quick bullets before deep reading.</p><p><a href="/gateway?view=summarize">Open summarizer door</a></p></article>` +
+				`<article class="wolfbbs-card"><h2>JSON Explorer</h2><p>Inspect JSON APIs safely.</p><p><a href="/gateway?view=json">Open JSON door</a></p></article>` +
+				`</section>` +
+				`<h2>Quick Fetch</h2><form method="POST" action="/gateway">` + csrf + `<input type="hidden" name="action" value="fetch"><label>URL <input name="url" size="72" value="https://"></label><label><input type="checkbox" name="save" value="1"> Save offline copy</label><button type="submit">Fetch</button></form>` +
+				`<p><a href="/gateway?view=files">FileBase browser + queue + temp links</a></p>` +
+				`</body></html>`
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(page))
+			return
+		}
 	}
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -10382,38 +18762,174 @@ func (a *webApp) handleGateway(w http.ResponseWriter, r *http.Request) {
 	if !a.requireCSRF(w, r) {
 		return
 	}
-	if strings.TrimSpace(strings.ToLower(r.FormValue("action"))) != "fetch" && !a.canReadFiles(user, "manage") {
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return
-	}
-	if a.handleGatewayFileAction(w, r, user) {
-		return
-	}
-	url := strings.TrimSpace(r.FormValue("url"))
-	if url == "" {
-		redirectWithError(w, r, "/gateway", "Enter a URL before fetching.")
-		return
-	}
-	result, err := gateway.FetchText(r.Context(), url, gateway.DefaultFetchConfig)
-	if err != nil {
-		redirectWithError(w, r, "/gateway", "Web gateway fetch failed: "+err.Error())
-		return
-	}
-	note := ""
-	if strings.TrimSpace(r.FormValue("save")) == "1" {
-		path, err := gateway.SaveOffline(a.offlineDir, user.Handle, url, result)
-		if err != nil {
-			note = "\n\nCould not save offline copy: " + err.Error()
-		} else {
-			note = "\n\nSaved to: " + path
+	action := strings.ToLower(strings.TrimSpace(r.FormValue("action")))
+	if isGatewayFileAction(action) {
+		if !a.canReadFiles(user, "manage") {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if a.handleGatewayFileAction(w, r, user) {
+			return
 		}
 	}
-	result = strings.TrimSpace(result + note)
-	escaped := strings.ReplaceAll(result, "&", "&amp;")
-	escaped = strings.ReplaceAll(escaped, "<", "&lt;")
-	escaped = strings.ReplaceAll(escaped, ">", "&gt;")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(`<html><body><h1>Gateway Reader</h1><p><a href="/gateway">back</a> | <a href="/help">help</a></p><pre>` + escaped + `</pre></body></html>`))
+	fetchCfg := a.activeWebFetchConfig()
+	switch action {
+	case "", "fetch", "browser_fetch":
+		targetURL := strings.TrimSpace(r.FormValue("url"))
+		if targetURL == "" {
+			targetURL = strings.TrimSpace(r.FormValue("browser_url"))
+		}
+		if targetURL == "" {
+			redirectWithError(w, r, "/gateway?view=browser", "Enter a URL before fetching.")
+			return
+		}
+		result, err := gateway.FetchText(r.Context(), targetURL, fetchCfg)
+		if err != nil {
+			redirectWithError(w, r, "/gateway?view=browser", "Web gateway fetch failed: "+err.Error())
+			return
+		}
+		note := ""
+		if strings.TrimSpace(r.FormValue("save")) == "1" {
+			path, err := gateway.SaveOffline(a.offlineDir, user.Handle, targetURL, result)
+			if err != nil {
+				note = "\n\nCould not save offline copy: " + err.Error()
+			} else {
+				note = "\n\nSaved to: " + path
+			}
+		}
+		result = strings.TrimSpace(result + note)
+		escaped := strings.ReplaceAll(result, "&", "&amp;")
+		escaped = strings.ReplaceAll(escaped, "<", "&lt;")
+		escaped = strings.ReplaceAll(escaped, ">", "&gt;")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`<html><body><h1>Gateway Reader</h1>` + gatewayNav + `<p><a href="/gateway?view=browser">back to browser</a> | <a href="/gateway?view=summarize&url=` + url.QueryEscape(targetURL) + `">summarize</a> | <a href="/help">help</a></p><pre>` + escaped + `</pre></body></html>`))
+		return
+	case "rss_fetch":
+		feedURL := strings.TrimSpace(r.FormValue("feed_url"))
+		if feedURL == "" {
+			redirectWithError(w, r, "/gateway?view=rss", "Feed URL is required.")
+			return
+		}
+		limit := parseInt(r.FormValue("limit"), 10)
+		if limit <= 0 {
+			limit = 10
+		}
+		if limit > 25 {
+			limit = 25
+		}
+		feed, err := gateway.FetchFeed(r.Context(), feedURL, fetchCfg, limit)
+		if err != nil {
+			redirectWithError(w, r, "/gateway?view=rss", "Feed fetch failed: "+err.Error())
+			return
+		}
+		rows := strings.Builder{}
+		for _, item := range feed.Items {
+			title := defaultIfBlank(strings.TrimSpace(item.Title), "untitled")
+			link := strings.TrimSpace(item.Link)
+			published := strings.TrimSpace(item.Published)
+			if published == "" {
+				published = "n/a"
+			}
+			summary := strings.TrimSpace(item.Summary)
+			if summary == "" {
+				summary = "No summary."
+			}
+			rows.WriteString(`<li><strong>` + htmlEscape(title) + `</strong> <span class="wolfbbs-muted">` + htmlEscape(published) + `</span><br>`)
+			if link != "" {
+				rows.WriteString(`<a href="` + htmlEscape(link) + `">` + htmlEscape(link) + `</a><br>`)
+			}
+			rows.WriteString(htmlEscape(summary) + `</li>`)
+		}
+		if rows.Len() == 0 {
+			rows.WriteString(`<li>No feed items returned.</li>`)
+		}
+		page := `<html><body><h1>Feed Reader Results</h1>` + gatewayNav +
+			`<p><a href="/gateway?view=rss">back to feed door</a> | <a href="/gateway?view=browser">text browser</a></p>` +
+			`<p><strong>Feed:</strong> ` + htmlEscape(defaultIfBlank(feed.Title, feedURL)) + `</p><ol>` + rows.String() + `</ol></body></html>`
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(page))
+		return
+	case "summarize_fetch":
+		articleURL := strings.TrimSpace(r.FormValue("article_url"))
+		if articleURL == "" {
+			redirectWithError(w, r, "/gateway?view=summarize", "Article URL is required.")
+			return
+		}
+		maxBullets := parseInt(r.FormValue("max_bullets"), 5)
+		if maxBullets <= 0 {
+			maxBullets = 5
+		}
+		if maxBullets > 12 {
+			maxBullets = 12
+		}
+		summary, err := gateway.SummarizeURL(r.Context(), articleURL, fetchCfg, maxBullets)
+		if err != nil {
+			redirectWithError(w, r, "/gateway?view=summarize", "Summarizer failed: "+err.Error())
+			return
+		}
+		bullets := strings.Builder{}
+		for _, row := range summary.Bullets {
+			bullets.WriteString(`<li>` + htmlEscape(row) + `</li>`)
+		}
+		page := `<html><body><h1>Summary</h1>` + gatewayNav +
+			`<p><a href="/gateway?view=summarize">back to summarizer</a> | <a href="/gateway?view=browser">text browser</a></p>` +
+			`<p><strong>Source:</strong> <a href="` + htmlEscape(articleURL) + `">` + htmlEscape(articleURL) + `</a><br><strong>Title guess:</strong> ` + htmlEscape(summary.Title) + `<br><strong>Word count:</strong> ` + strconv.Itoa(summary.WordCount) + `</p>` +
+			`<h2>Key bullets</h2><ul>` + bullets.String() + `</ul><h3>Excerpt</h3><pre>` + htmlEscape(summary.Excerpt) + `</pre></body></html>`
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(page))
+		return
+	case "json_fetch":
+		jsonURL := strings.TrimSpace(r.FormValue("json_url"))
+		if jsonURL == "" {
+			redirectWithError(w, r, "/gateway?view=json", "JSON URL is required.")
+			return
+		}
+		pretty, err := gateway.FetchJSON(r.Context(), jsonURL, fetchCfg)
+		if err != nil {
+			redirectWithError(w, r, "/gateway?view=json", "JSON fetch failed: "+err.Error())
+			return
+		}
+		page := `<html><body><h1>JSON Explorer Result</h1>` + gatewayNav +
+			`<p><a href="/gateway?view=json">back to JSON door</a> | <a href="/gateway?view=browser">text browser</a></p>` +
+			`<p><strong>Source:</strong> <a href="` + htmlEscape(jsonURL) + `">` + htmlEscape(jsonURL) + `</a></p><pre>` + htmlEscape(pretty) + `</pre></body></html>`
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(page))
+		return
+	case "ai_prompt":
+		prompt := strings.TrimSpace(r.FormValue("prompt"))
+		if prompt == "" {
+			redirectWithError(w, r, "/gateway?view=ai", "Prompt is required.")
+			return
+		}
+		aiCfg := a.loadAIGatewaySettings()
+		if !aiCfg.Enabled {
+			redirectWithError(w, r, "/gateway?view=ai", "AI gateway is disabled. Enable it in /admin/gateways.")
+			return
+		}
+		client := gateway.NewAIClient(gateway.AIConfig{
+			BaseURL:      aiCfg.BaseURL,
+			APIKey:       aiCfg.APIKey,
+			Model:        aiCfg.Model,
+			SystemPrompt: aiCfg.SystemPrompt,
+			Timeout:      time.Duration(aiCfg.TimeoutSec) * time.Second,
+			MaxTokens:    aiCfg.MaxTokens,
+		})
+		reply, err := client.Complete(r.Context(), prompt)
+		if err != nil {
+			redirectWithError(w, r, "/gateway?view=ai", "AI request failed: "+err.Error())
+			return
+		}
+		page := `<html><body><h1>AI Door Reply</h1>` + gatewayNav +
+			`<p><a href="/gateway?view=ai">back to AI door</a> | <a href="/gateway?view=summarize">summarizer</a></p>` +
+			`<p><strong>Prompt</strong></p><pre>` + htmlEscape(prompt) + `</pre>` +
+			`<p><strong>Reply [AI-LABEL]</strong></p><pre>` + htmlEscape(reply) + `</pre></body></html>`
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(page))
+		return
+	default:
+		redirectWithError(w, r, "/gateway", "Unsupported gateway action.")
+		return
+	}
 }
 
 func (a *webApp) handleSettings(w http.ResponseWriter, r *http.Request) {
@@ -10606,7 +19122,7 @@ func (a *webApp) handleSettings(w http.ResponseWriter, r *http.Request) {
 		`<label>Attention cadence <select name="digest_attention_cadence">` + digestCadenceOptionRows(digestPref.AttentionCadence) + `</select></label><br>` +
 		`<label>Bulletin cadence <select name="digest_bulletin_cadence">` + digestCadenceOptionRows(digestPref.BulletinCadence) + `</select></label><br>` +
 		`<label>Event cadence <select name="digest_event_cadence">` + digestCadenceOptionRows(digestPref.EventCadence) + `</select></label><br>` +
-		`<button type="submit">Save Digest Preferences</button></form><p><a href="/digest">Open Daily Digest</a> | <a href="/attention/export">Export notification state JSON</a></p>` +
+		`<button type="submit">Save Digest Preferences</button></form><p><a href="/digest">Open Daily Digest</a> | <a href="/digest/preferences">Weekday digest tuning</a> | <a href="/attention/export">Export notification state JSON</a></p>` +
 		`<h2>Public Profile Card</h2><form method="POST" action="/settings"><input type="hidden" name="action" value="update_profile">` + csrf +
 		`<label>Status line <input name="status_line" size="72" value="` + htmlEscape(profileSettings.StatusLine) + `" placeholder="night owl, door fiend, building cool stuff"></label><br>` +
 		`<label>Bio<br><textarea name="bio" rows="6" cols="80" placeholder="Short caller bio for the directory card.">` + htmlEscape(profileSettings.Bio) + `</textarea></label><br>` +
@@ -11329,10 +19845,10 @@ func (a *webApp) handleDoors(w http.ResponseWriter, r *http.Request) {
 	}
 
 	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Door Cockpit</title></head><body>
-<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/radar">radar</a> | <a href="/clubhouse">clubhouse</a> | <a href="/doors">doors</a> | <a href="/scores">scores</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
+<p><a href="/boards">boards</a> | <a href="/mail">mail</a> | <a href="/chat">chat</a> | <a href="/radar">radar</a> | <a href="/clubhouse">clubhouse</a> | <a href="/doors">doors</a> | <a href="/gateway">gateway doors</a> | <a href="/scores">scores</a> | <a href="/status">status</a> | <a href="/config">config</a> | <a href="/help">help</a> | <a href="/logout">logout</a></p>
 ` + messageBlock + `
 <h1>Door Cockpit</h1>
-<p>One place for favorites, recommendations, trophies, turn budgets, and the full policy-aware door directory.</p>
+<p>One place for favorites, recommendations, trophies, turn budgets, policy-aware door directory, and modern internet gateway doors.</p>
 <section class="wolfbbs-kpi-grid">
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(catalog)) + `</strong><span>doors loaded</span></article>
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(totalFavorites) + `</strong><span>favorites</span></article>
@@ -11378,12 +19894,7 @@ func (a *webApp) buildStatusSnapshot(user *domain.User) statusSnapshot {
 	if a.doorRegistry != nil {
 		doorCount = len(a.doorRegistry.Doors())
 	}
-	gatewayConfigured := false
-	if a.adminRepo != nil {
-		if cfg, err := a.adminRepo.GetGatewaySettings(); err == nil && cfg != nil {
-			gatewayConfigured = strings.TrimSpace(cfg.SMTPHost) != "" || strings.TrimSpace(cfg.FromDomain) != ""
-		}
-	}
+	gatewayConfigured := a.gatewayConfigured()
 	netState := "n/a"
 	netEnabled := false
 	if a.networkSvc != nil {
@@ -11765,11 +20276,11 @@ func (a *webApp) handleAdmin(w http.ResponseWriter, r *http.Request) {
 	if adminActions.Len() == 0 {
 		adminActions.WriteString(`<li>No launch blockers detected. Walk the caller path once more, then announce the board.</li>`)
 	}
-	adminActionGrid := `<section class="wolfbbs-action-grid"><a class="wolfbbs-action-card" href="/admin/launch"><strong>Launch Center</strong><span>go-live verdict, next-best actions, operator commands</span></a><a class="wolfbbs-action-card" href="/admin/ops"><strong>Ops Center</strong><span>errors, sessions, audits, and triage</span></a><a class="wolfbbs-action-card" href="/admin/setup"><strong>Setup Wizard</strong><span>identity, safety, bootstrap, launch checklist</span></a><a class="wolfbbs-action-card" href="/admin/users"><strong>User Ops</strong><span>create callers, role changes, bans, resets</span></a><a class="wolfbbs-action-card" href="/admin/challenges"><strong>Challenges</strong><span>season engine + clubhouse shared goals</span></a><a class="wolfbbs-action-card" href="/admin/upgrade-safety"><strong>Upgrade Safety</strong><span>change-risk checks before rollout</span></a><a class="wolfbbs-action-card" href="/admin/backups"><strong>Backup Browser</strong><span>artifact validation and recovery confidence</span></a><a class="wolfbbs-action-card" href="/admin/release"><strong>Release Dashboard</strong><span>roadmap, QA, docs, and artifact cockpit</span></a><a class="wolfbbs-action-card" href="/admin/system"><strong>System</strong><span>runtime health, service state, deeper operator detail</span></a></section>`
+	adminActionGrid := `<section class="wolfbbs-action-grid"><a class="wolfbbs-action-card" href="/admin/launch"><strong>Launch Center</strong><span>go-live verdict, next-best actions, operator commands</span></a><a class="wolfbbs-action-card" href="/admin/ops"><strong>Ops Center</strong><span>errors, sessions, audits, and triage</span></a><a class="wolfbbs-action-card" href="/admin/setup"><strong>Setup Wizard</strong><span>identity, safety, bootstrap, launch checklist</span></a><a class="wolfbbs-action-card" href="/admin/users"><strong>User Ops</strong><span>create callers, role changes, bans, resets</span></a><a class="wolfbbs-action-card" href="/admin/challenges"><strong>Challenges</strong><span>season engine + clubhouse shared goals</span></a><a class="wolfbbs-action-card" href="/admin/missions"><strong>Missions</strong><span>seasonal mission templates + completion loops</span></a><a class="wolfbbs-action-card" href="/admin/plugins"><strong>Plugins</strong><span>manifest/capability/sandbox contracts</span></a><a class="wolfbbs-action-card" href="/admin/themes"><strong>Themes</strong><span>marketplace import + apply workflow</span></a><a class="wolfbbs-action-card" href="/admin/webhooks"><strong>Webhooks</strong><span>external board event bridge with retries</span></a><a class="wolfbbs-action-card" href="/admin/analytics"><strong>Analytics</strong><span>daily/weekly/monthly product KPIs</span></a><a class="wolfbbs-action-card" href="/admin/upgrade-safety"><strong>Upgrade Safety</strong><span>change-risk checks before rollout</span></a><a class="wolfbbs-action-card" href="/admin/backups"><strong>Backup Browser</strong><span>artifact validation and recovery confidence</span></a><a class="wolfbbs-action-card" href="/admin/release"><strong>Release Dashboard</strong><span>roadmap, QA, docs, and artifact cockpit</span></a><a class="wolfbbs-action-card" href="/admin/system"><strong>System</strong><span>runtime health, service state, deeper operator detail</span></a></section>`
 	page := `<html><body><h1>Sysop Control Panel</h1><p>Logged in as ` + user.Handle + `</p>` +
 		`<p><a href="/admin/users">Users</a> | <a href="/admin/boards">Boards</a> | <a href="/admin/mail">Mail</a> | ` +
 		`<a href="/admin/files">Files</a> | <a href="/admin/gateways">Gateways</a> | <a href="/admin/chat">Chat</a> | ` +
-		`<a href="/admin/doors">Doors</a> | <a href="/admin/bulletins">Bulletins</a> | <a href="/admin/challenges">Challenges</a> | <a href="/admin/launch">Launch Center</a> | <a href="/admin/ops">Ops Center</a> | <a href="/admin/upgrade-safety">Upgrade Safety</a> | <a href="/admin/backups">Backups</a> | <a href="/admin/release">Release</a> | <a href="/admin/setup">Setup</a> | <a href="/admin/config">Config</a> | ` +
+		`<a href="/admin/doors">Doors</a> | <a href="/admin/bulletins">Bulletins</a> | <a href="/admin/challenges">Challenges</a> | <a href="/admin/missions">Missions</a> | <a href="/admin/plugins">Plugins</a> | <a href="/admin/themes">Themes</a> | <a href="/admin/webhooks">Webhooks</a> | <a href="/admin/analytics">Analytics</a> | <a href="/admin/launch">Launch Center</a> | <a href="/admin/ops">Ops Center</a> | <a href="/admin/upgrade-safety">Upgrade Safety</a> | <a href="/admin/backups">Backups</a> | <a href="/admin/release">Release</a> | <a href="/admin/setup">Setup</a> | <a href="/admin/config">Config</a> | ` +
 		`<a href="/admin/system">System</a> | <a href="/admin/errors">Errors</a> | <a href="/admin/audit">Audit Log</a> | <a href="/help">Help</a></p>` +
 		`<h2>Launch Digest</h2>` +
 		`<p><strong>Verdict:</strong> ` + htmlEscape(launchVerdictText(readiness)) + ` | ` + strconv.Itoa(readiness.Summary.Pass) + `/` + strconv.Itoa(readiness.Summary.Total) + ` launch checks PASS | ` + strconv.Itoa(statusSnapshot.Summary.Warn) + ` runtime warnings | ` + strconv.Itoa(errorCount) + ` runtime errors logged</p>` +
@@ -11781,7 +20292,9 @@ func (a *webApp) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		`<li>Mail: audit, limit controls</li>` +
 		`<li>Chat: channel state, kicks, mutes</li>` +
 		`<li>Doors: per-door enable/disable, turn rules, logs, and score reset</li>` +
-		`<li>Challenges: seasonal scoring and clubhouse shared goals</li>` +
+		`<li>Challenges + missions: seasonal scoring, shared goals, and completion tracks</li>` +
+		`<li>Extension plane: plugin manifests, theme marketplace, and webhook bridge</li>` +
+		`<li>Product analytics: daily/weekly/monthly KPI snapshots in admin analytics</li>` +
 		`<li>Message networks: spool import/export via oputil + status in WFC</li>` +
 		`<li>Built-in mods: onelinerz, rumorz, bbs list, who's online lifecycle</li>` +
 		`<li>Gateway controls, setup checks, runtime config, and server health</li>` +
@@ -12011,12 +20524,7 @@ func (a *webApp) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
 	if boardsErr != nil {
 		a.addAppError("admin.setup", fmt.Errorf("list boards: %w", boardsErr))
 	}
-	gatewayConfigured := false
-	if a.adminRepo != nil {
-		if cfg, err := a.adminRepo.GetGatewaySettings(); err == nil && cfg != nil {
-			gatewayConfigured = strings.TrimSpace(cfg.SMTPHost) != "" || strings.TrimSpace(cfg.FromDomain) != ""
-		}
-	}
+	gatewayConfigured := a.gatewayConfigured()
 
 	sysopCount := 0
 	moderatorCount := 0
@@ -12617,15 +21125,27 @@ func (a *webApp) handleAdminBoards(w http.ResponseWriter, r *http.Request) {
 			conference := strings.TrimSpace(r.FormValue("conference"))
 			readACS := strings.TrimSpace(r.FormValue("read_acs"))
 			writeACS := strings.TrimSpace(r.FormValue("write_acs"))
-			_ = a.boardRepo.Create(&domain.Board{
+			board := &domain.Board{
 				Name:        title,
 				Description: desc,
 				Conference:  conference,
 				ReadACS:     readACS,
 				WriteACS:    writeACS,
 				CreatedBy:   user.ID,
-			})
-			a.recordAdminAction(user.Handle, title, "create_board", "")
+			}
+			if err := a.boardRepo.Create(board); err != nil {
+				a.addAppError("admin.boards", fmt.Errorf("create board %s: %w", title, err))
+			} else {
+				a.recordAdminAction(user.Handle, title, "create_board", "")
+				if a.eventBus != nil {
+					a.eventBus.Publish("board.created", map[string]string{
+						"board_id":   strconv.FormatInt(board.ID, 10),
+						"board":      board.Name,
+						"conference": defaultConferenceValue(board.Conference),
+						"actor":      user.Handle,
+					})
+				}
+			}
 		case "delete":
 			id := strings.TrimSpace(r.FormValue("id"))
 			if boardID, err := strconv.ParseInt(id, 10, 64); err == nil {
@@ -12636,6 +21156,13 @@ func (a *webApp) handleAdminBoards(w http.ResponseWriter, r *http.Request) {
 						target = board.Name
 					}
 					a.recordAdminAction(user.Handle, target, "delete_board", "")
+					if a.eventBus != nil {
+						a.eventBus.Publish("board.deleted", map[string]string{
+							"board_id": strconv.FormatInt(boardID, 10),
+							"board":    target,
+							"actor":    user.Handle,
+						})
+					}
 				} else {
 					a.addAppError("admin.boards", fmt.Errorf("delete board %s: %w", id, err))
 				}
@@ -12664,6 +21191,14 @@ func (a *webApp) handleAdminBoards(w http.ResponseWriter, r *http.Request) {
 						a.addAppError("admin.boards", fmt.Errorf("update board %s: %w", id, err))
 					} else {
 						a.recordAdminAction(user.Handle, board.Name, "update_board", "description/title/acs updated")
+						if a.eventBus != nil {
+							a.eventBus.Publish("board.updated", map[string]string{
+								"board_id":   strconv.FormatInt(board.ID, 10),
+								"board":      board.Name,
+								"conference": defaultConferenceValue(board.Conference),
+								"actor":      user.Handle,
+							})
+						}
 					}
 				}
 			}
@@ -13453,6 +21988,9 @@ func (a *webApp) handleAdminFiles(w http.ResponseWriter, r *http.Request) {
 			if ttlMinutes <= 0 {
 				ttlMinutes = 15
 			}
+			if ttlMinutes > 1440 {
+				ttlMinutes = 1440
+			}
 			if targetUserID <= 0 {
 				targetUserID = user.ID
 			}
@@ -13462,7 +22000,7 @@ func (a *webApp) handleAdminFiles(w http.ResponseWriter, r *http.Request) {
 					a.addAppError("admin.files", fmt.Errorf("create download ticket: %w", err))
 				} else {
 					a.recordAdminAction(user.Handle, strconv.FormatInt(fileID, 10), "issue_download_ticket", fmt.Sprintf("user=%d ttl=%dm", targetUserID, ttlMinutes))
-					redirectURL = "/admin/files?queue_user=" + strconv.FormatInt(targetUserID, 10) + "&issued_token=" + url.QueryEscape(ticket.Token)
+					redirectURL = "/admin/files?queue_user=" + strconv.FormatInt(targetUserID, 10) + "&issued_token=" + url.QueryEscape(ticket.Token) + "&issued_file=" + strconv.FormatInt(fileID, 10) + "&issued_expires=" + url.QueryEscape(ticket.ExpiresAt.UTC().Format(time.RFC3339))
 				}
 			}
 		case "review_file":
@@ -13516,6 +22054,8 @@ func (a *webApp) handleAdminFiles(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	issuedToken := strings.TrimSpace(r.URL.Query().Get("issued_token"))
+	issuedFileID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("issued_file")), 10, 64)
+	issuedExpiresRaw := strings.TrimSpace(r.URL.Query().Get("issued_expires"))
 	appliedFilterName := ""
 	if a.adminRepo != nil {
 		areas, _ = a.adminRepo.ListFileAreas()
@@ -13635,7 +22175,29 @@ func (a *webApp) handleAdminFiles(w http.ResponseWriter, r *http.Request) {
 
 	var ticketNotice string
 	if issuedToken != "" {
-		ticketNotice = `<p><strong>Issued ticket:</strong> <code>` + htmlEscape(issuedToken) + `</code><br><a href="/gateway?download=` + url.QueryEscape(issuedToken) + `">/gateway?download=` + url.QueryEscape(issuedToken) + `</a></p>`
+		fileLabel := "selected queue file"
+		if a.adminRepo != nil && issuedFileID > 0 {
+			if entry, err := a.adminRepo.GetFileEntry(issuedFileID); err == nil && entry != nil && strings.TrimSpace(entry.Name) != "" {
+				fileLabel = entry.Name
+			} else {
+				fileLabel = "file #" + strconv.FormatInt(issuedFileID, 10)
+			}
+		}
+		expiresLabel := "expiry not provided"
+		if issuedExpiresRaw != "" {
+			if expiresAt, err := time.Parse(time.RFC3339, issuedExpiresRaw); err == nil {
+				remaining := time.Until(expiresAt)
+				remainingLabel := "expired"
+				if remaining > 0 {
+					minutes := int((remaining + time.Minute - time.Second) / time.Minute)
+					remainingLabel = strconv.Itoa(minutes) + "m remaining"
+				}
+				expiresLabel = expiresAt.Local().Format("2006-01-02 15:04 MST") + " (" + remainingLabel + ")"
+			} else {
+				expiresLabel = issuedExpiresRaw
+			}
+		}
+		ticketNotice = `<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Issued Ticket</h2><ul class="wolfbbs-list-clean"><li><strong>Token:</strong> <code>` + htmlEscape(issuedToken) + `</code></li><li><strong>File:</strong> ` + htmlEscape(fileLabel) + `</li><li><strong>Expires:</strong> ` + htmlEscape(expiresLabel) + `</li><li><strong>Link:</strong> <a href="/gateway?download=` + url.QueryEscape(issuedToken) + `">/gateway?download=` + url.QueryEscape(issuedToken) + `</a></li></ul></article></section>`
 	}
 	activeFilters := make([]string, 0, 4)
 	if fileAreaID > 0 {
@@ -13682,7 +22244,7 @@ func (a *webApp) handleAdminGateways(w http.ResponseWriter, r *http.Request) {
 		if !a.requireAdminWrite(w, r) {
 			return
 		}
-		cfg := &domain.GatewaySettings{
+		cfg := sanitizeGatewaySettings(&domain.GatewaySettings{
 			SMTPHost:        strings.TrimSpace(r.FormValue("smtp_host")),
 			SMTPPort:        parseInt(r.FormValue("smtp_port"), 587),
 			SMTPUser:        strings.TrimSpace(r.FormValue("smtp_user")),
@@ -13692,6 +22254,32 @@ func (a *webApp) handleAdminGateways(w http.ResponseWriter, r *http.Request) {
 			MaxMessageBytes: parseInt(r.FormValue("max_message_bytes"), 65536),
 			WebTimeoutSec:   parseInt(r.FormValue("web_timeout_sec"), 10),
 			WebMaxBytes:     parseInt(r.FormValue("web_max_bytes"), 2*1024*1024),
+		})
+		if a.adminRepo != nil && strings.TrimSpace(cfg.SMTPPass) == "" {
+			if existing, err := a.adminRepo.GetGatewaySettings(); err == nil && existing != nil {
+				cfg.SMTPPass = strings.TrimSpace(existing.SMTPPass)
+			}
+		}
+		aiCfg := aiGatewaySettings{
+			Enabled:      parseCheckbox(r.FormValue("ai_enabled")),
+			BaseURL:      strings.TrimSpace(r.FormValue("ai_base_url")),
+			Model:        strings.TrimSpace(r.FormValue("ai_model")),
+			APIKey:       strings.TrimSpace(r.FormValue("ai_api_key")),
+			SystemPrompt: strings.TrimSpace(r.FormValue("ai_system_prompt")),
+			TimeoutSec:   parseInt(r.FormValue("ai_timeout_sec"), 20),
+			MaxTokens:    parseInt(r.FormValue("ai_max_tokens"), 400),
+		}
+		if aiCfg.BaseURL == "" {
+			aiCfg.BaseURL = "https://api.openai.com"
+		}
+		if aiCfg.Model == "" {
+			aiCfg.Model = "gpt-4.1-mini"
+		}
+		if aiCfg.TimeoutSec <= 0 {
+			aiCfg.TimeoutSec = 20
+		}
+		if aiCfg.MaxTokens <= 0 {
+			aiCfg.MaxTokens = 400
 		}
 		if a.adminRepo != nil {
 			if err := a.adminRepo.UpsertGatewaySettings(cfg); err == nil {
@@ -13700,38 +22288,48 @@ func (a *webApp) handleAdminGateways(w http.ResponseWriter, r *http.Request) {
 				a.addAppError("admin.gateways", fmt.Errorf("save gateway settings: %w", err))
 			}
 		}
-		http.Redirect(w, r, "/admin/gateways", http.StatusFound)
+		a.persistAIGatewaySettings(aiCfg)
+		redirectWithNotice(w, r, "/admin/gateways", "Gateway settings saved.")
 		return
 	}
-	cfg := &domain.GatewaySettings{
-		SMTPHost:        strings.TrimSpace(envFirst("SMTP_HOST", "WOLFBBS_SMTP_HOST")),
-		SMTPPort:        parseInt(envFirst("SMTP_PORT", "WOLFBBS_SMTP_PORT"), 587),
-		SMTPUser:        strings.TrimSpace(envFirst("SMTP_USER", "WOLFBBS_SMTP_USER")),
-		SMTPPass:        strings.TrimSpace(envFirst("SMTP_PASS", "WOLFBBS_SMTP_PASS")),
-		FromDomain:      strings.TrimSpace(envFirst("FROM_DOMAIN", "WOLFBBS_FROM_DOMAIN")),
-		MaxRecipients:   parseInt(os.Getenv("WOLFBBS_MAIL_MAX_RECIPIENTS"), 3),
-		MaxMessageBytes: parseInt(os.Getenv("WOLFBBS_MAIL_MAX_BYTES"), 65536),
-		WebTimeoutSec:   10,
-		WebMaxBytes:     2 * 1024 * 1024,
-	}
-	if a.adminRepo != nil {
-		if dbCfg, err := a.adminRepo.GetGatewaySettings(); err == nil && dbCfg != nil {
-			cfg = dbCfg
-		}
-	}
+	cfg := a.activeGatewaySettings()
+	aiCfg := a.loadAIGatewaySettings()
+	emailGateway := a.activeEmailGateway()
 	csrf := a.csrfHiddenInput(r)
-	page := `<html><body><h1>Gateway Controls</h1><p><a href="/admin">back</a> | <a href="/help">help</a></p>` +
+	messageBlock := pageMessageBlock(r)
+	maskedAIKey := "missing"
+	if strings.TrimSpace(aiCfg.APIKey) != "" {
+		maskedAIKey = "configured"
+	}
+	page := `<html><body><h1>Gateway Controls</h1><p><a href="/admin">back</a> | <a href="/gateway">gateway hub</a> | <a href="/help">help</a></p>` +
+		messageBlock +
+		`<h2>Email + Web Safety</h2>` +
 		`<form method="POST">` + csrf +
+		`<input type="hidden" name="action" value="save_gateway">` +
 		`<label>SMTP Host <input name="smtp_host" value="` + htmlEscape(cfg.SMTPHost) + `"></label><br>` +
 		`<label>SMTP Port <input name="smtp_port" value="` + strconv.Itoa(cfg.SMTPPort) + `"></label><br>` +
 		`<label>SMTP User <input name="smtp_user" value="` + htmlEscape(cfg.SMTPUser) + `"></label><br>` +
-		`<label>SMTP Pass <input type="password" name="smtp_pass" value="` + htmlEscape(cfg.SMTPPass) + `"></label><br>` +
+		`<label>SMTP Pass <input type="password" name="smtp_pass" value=""></label> <span class="wolfbbs-muted">leave blank to keep existing secret</span><br>` +
 		`<label>From Domain <input name="from_domain" value="` + htmlEscape(cfg.FromDomain) + `"></label><br>` +
 		`<label>Max Recipients <input name="max_recipients" value="` + strconv.Itoa(cfg.MaxRecipients) + `"></label><br>` +
 		`<label>Max Message Bytes <input name="max_message_bytes" value="` + strconv.Itoa(cfg.MaxMessageBytes) + `"></label><br>` +
 		`<label>Web Timeout Sec <input name="web_timeout_sec" value="` + strconv.Itoa(cfg.WebTimeoutSec) + `"></label><br>` +
 		`<label>Web Max Bytes <input name="web_max_bytes" value="` + strconv.Itoa(cfg.WebMaxBytes) + `"></label><br>` +
+		`<h2>AI Gateway</h2>` +
+		`<label><input type="checkbox" name="ai_enabled"` + checkedIf(aiCfg.Enabled) + `> Enable AI gateway door</label><br>` +
+		`<label>AI Base URL <input name="ai_base_url" size="50" value="` + htmlEscape(aiCfg.BaseURL) + `"></label><br>` +
+		`<label>AI Model <input name="ai_model" value="` + htmlEscape(aiCfg.Model) + `"></label><br>` +
+		`<label>AI API Key <input type="password" name="ai_api_key" value=""></label> <span class="wolfbbs-muted">status: ` + htmlEscape(maskedAIKey) + `</span><br>` +
+		`<label>AI Timeout Sec <input name="ai_timeout_sec" value="` + strconv.Itoa(aiCfg.TimeoutSec) + `"></label><br>` +
+		`<label>AI Max Tokens <input name="ai_max_tokens" value="` + strconv.Itoa(aiCfg.MaxTokens) + `"></label><br>` +
+		`<label>AI System Prompt<br><textarea name="ai_system_prompt" rows="4" cols="84">` + htmlEscape(aiCfg.SystemPrompt) + `</textarea></label><br>` +
 		`<button type="submit">Save</button></form>` +
+		`<h2>Diagnostics</h2><table border="1"><tr><th>Check</th><th>Status</th></tr>` +
+		`<tr><td>Email relay configured</td><td>` + boolToText(emailGateway.Enabled()) + `</td></tr>` +
+		`<tr><td>External email verification gate</td><td>` + boolToText(a.requireVerifiedEmail) + `</td></tr>` +
+		`<tr><td>AI gateway enabled</td><td>` + boolToText(aiCfg.Enabled) + `</td></tr>` +
+		`<tr><td>AI API key configured</td><td>` + boolToText(strings.TrimSpace(aiCfg.APIKey) != "") + `</td></tr>` +
+		`</table><p><a href="/gateway?view=email">Email door</a> | <a href="/gateway?view=ai">AI door</a> | <a href="/gateway?view=browser">Web browser door</a></p>` +
 		`<p>Use docs/web-gateway.md and docs/email-gateway.md for full policy.</p></body></html>`
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -14017,6 +22615,19 @@ func (a *webApp) handleScores(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *webApp) handleAdminSystem(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/admin/login", http.StatusFound)
+		return
+	}
+	if !a.enforceWFCAccess(w, r, user) {
+		return
+	}
+
 	a.Lock()
 	webSessions := len(a.sessions)
 	a.Unlock()
@@ -14177,6 +22788,14 @@ func (a *webApp) handleAdminNodeState(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	user, ok := a.currentUser(r)
+	if !ok {
+		http.Redirect(w, r, "/admin/login", http.StatusFound)
+		return
+	}
+	if !a.enforceWFCAccess(w, r, user) {
+		return
+	}
 	sessions := []domain.NodeSession{}
 	callers := []domain.CallerHistory{}
 	if a.adminRepo != nil {
@@ -14333,14 +22952,95 @@ func (a *webApp) evalACS(expr string, user *domain.User, attrs map[string]string
 	attrs["verified"] = boolToText(verified)
 	attrs["handle"] = handle
 	allowed, err := acs.Evaluate(expr, acs.Context{
-		Role:     role,
-		Verified: verified,
-		Attrs:    attrs,
+		Role:       role,
+		Verified:   verified,
+		Secure:     false,
+		Transport:  "http",
+		AuthFactor: 1,
+		Groups:     roleGroups(role),
+		Attrs:      attrs,
 	})
 	if err != nil {
 		return !envEnabledDefault("WOLFBBS_ACS_STRICT", false)
 	}
 	return allowed
+}
+
+func (a *webApp) evalACSWithSession(expr string, user *domain.User, session sessionState, attrs map[string]string) bool {
+	expr = strings.TrimSpace(expr)
+	if expr == "" {
+		return true
+	}
+	if attrs == nil {
+		attrs = map[string]string{}
+	}
+	role := roleUser
+	verified := false
+	handle := ""
+	if user != nil {
+		role = rbac.NormalizeRole(user.Role)
+		verified = user.Verified
+		handle = strings.TrimSpace(user.Handle)
+	}
+	attrs["role"] = role
+	attrs["verified"] = boolToText(verified)
+	attrs["handle"] = handle
+	attrs["transport"] = strings.TrimSpace(session.transport)
+	attrs["secure"] = boolToText(session.secure)
+	attrs["auth_factor"] = strconv.Itoa(maxInt(session.authFactor, 1))
+	allowed, err := acs.Evaluate(expr, acs.Context{
+		Role:       role,
+		Verified:   verified,
+		Secure:     session.secure,
+		Transport:  strings.TrimSpace(session.transport),
+		AuthFactor: maxInt(session.authFactor, 1),
+		Groups:     roleGroups(role),
+		Attrs:      attrs,
+	})
+	if err != nil {
+		return !envEnabledDefault("WOLFBBS_ACS_STRICT", false)
+	}
+	return allowed
+}
+
+func roleGroups(role string) []string {
+	role = rbac.NormalizeRole(role)
+	switch role {
+	case roleAdmin:
+		return []string{"staff", "ops", "wfc", "sysop"}
+	case roleModerator:
+		return []string{"staff", "moderator"}
+	default:
+		return []string{"users"}
+	}
+}
+
+func wfcRequiredACS() string {
+	expr := strings.TrimSpace(os.Getenv("WOLFBBS_WFC_REQUIRED_ACS"))
+	if expr != "" {
+		return expr
+	}
+	if envEnabledDefault("WOLFBBS_WFC_STRICT", false) {
+		return "role=sysop and secure and auth_factor>=2 and group=wfc"
+	}
+	return "role=sysop"
+}
+
+func (a *webApp) enforceWFCAccess(w http.ResponseWriter, r *http.Request, user *domain.User) bool {
+	expr := strings.TrimSpace(wfcRequiredACS())
+	if expr == "" {
+		return true
+	}
+	session, ok := currentSessionState(r, a)
+	if !ok {
+		http.Redirect(w, r, "/admin/login", http.StatusFound)
+		return false
+	}
+	if a.evalACSWithSession(expr, user, session, map[string]string{"area": "admin", "path": "/admin/system", "mode": "wfc"}) {
+		return true
+	}
+	http.Error(w, "wfc access policy denied", http.StatusForbidden)
+	return false
 }
 
 func boardReadRuleForBoard(board *domain.Board) string {
@@ -14629,6 +23329,7 @@ func (a *webApp) loadPersistedAdminSettings() {
 	applyText(sysSettingConnectorTelnetCmd, &a.runtimeCfg.Connectors.Telnet.Command)
 	applyText(sysSettingConnectorTelnetArgs, &a.runtimeCfg.Connectors.Telnet.Args)
 	a.loadLockedChannels(settings[sysSettingLockedChannels])
+	a.applyPersistedThemeBundle(settings)
 }
 
 func (a *webApp) loadLockedChannels(raw string) {
@@ -14711,10 +23412,14 @@ func (a *webApp) addAppError(area string, err error) {
 		a.errorLog = append([]appErrorEntry{}, a.errorLog[len(a.errorLog)-maxAdminErrorEntries:]...)
 	}
 	a.Unlock()
+	a.appendSharedRuntimeError(entry)
 	log.Printf("area=%s error=%s", entry.Area, entry.Message)
 }
 
 func (a *webApp) latestErrors(limit int) []appErrorEntry {
+	if shared := a.loadSharedRuntimeErrors(); len(shared) > 0 {
+		return reverseSharedRuntimeErrors(shared, limit)
+	}
 	if limit <= 0 {
 		limit = 50
 	}
@@ -14737,9 +23442,10 @@ func (a *webApp) latestErrors(limit int) []appErrorEntry {
 
 func (a *webApp) clearAppErrors() int {
 	a.Lock()
-	defer a.Unlock()
 	cleared := len(a.errorLog)
 	a.errorLog = nil
+	a.Unlock()
+	a.persistSharedRuntimeErrors(nil)
 	return cleared
 }
 
@@ -17891,6 +26597,7 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	csrfJSON := fmt.Sprintf("%q", csrf)
 	canModerateJSON := "false"
+	currentHandleJSON := fmt.Sprintf("%q", strings.ToLower(strings.TrimSpace(user.Handle)))
 	if a.hasRole(user, roleModerator) {
 		canModerateJSON = "true"
 	}
@@ -17951,6 +26658,10 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 						<button type="submit">Open Channel</button>
 					</form>
 					<button type="button" id="chatReconnect">Reconnect Stream</button>
+					<div class="wolfbbs-chat-toolbar-meta">
+						<span id="chatStatePill" class="wolfbbs-chat-status-pill" data-state="idle">idle</span>
+						<span id="chatMessageCount">0 lines</span>
+					</div>
 				</div>
 				<div id="chat" class="wolfbbs-chat-pane" aria-live="polite"></div>
 				<p id="chatStatus" style="font-family: monospace;">Ready.</p>
@@ -17982,22 +26693,98 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 		<script>
 			const csrf = ` + csrfJSON + `;
 			const canModerate = ` + canModerateJSON + `;
+			const currentHandle = ` + currentHandleJSON + `;
 			const streamState = {
 				es: null,
 				channel: '#lobby',
 				lastSeenId: 0,
 				reconnectTimer: null,
 				locked: new Set(),
+				statusHoldUntil: 0,
+				statusHoldTimer: null,
 			};
-			function setStatus(msg) {
+			function liveStatusText() {
+				const readOnly = streamState.locked.has(streamState.channel) && !canModerate;
+				if (readOnly) {
+					return {msg: 'Live on ' + streamState.channel + ' (read-only)', state: 'warn'};
+				}
+				return {msg: 'Live on ' + streamState.channel, state: 'live'};
+			}
+			function setStatus(msg, state, opts) {
+				const options = opts || {};
+				const now = Date.now();
+				const holdActive = streamState.statusHoldUntil > now;
+				if (holdActive && !options.force) {
+					const resolved = state || (String(msg || '').toLowerCase().includes('failed') ? 'error' : 'ready');
+					if (resolved === 'live' || resolved === 'ready') {
+						return;
+					}
+				}
 				const el = document.getElementById('chatStatus');
 				if (el) el.textContent = msg;
+				const pill = document.getElementById('chatStatePill');
+				if (pill) {
+					const resolved = state || (String(msg || '').toLowerCase().includes('failed') ? 'error' : 'ready');
+					pill.dataset.state = resolved;
+					pill.textContent = resolved;
+				}
+				if (streamState.statusHoldTimer && options.clearHold) {
+					window.clearTimeout(streamState.statusHoldTimer);
+					streamState.statusHoldTimer = null;
+					streamState.statusHoldUntil = 0;
+				}
+				if (options.stickyMs) {
+					streamState.statusHoldUntil = now + options.stickyMs;
+					if (streamState.statusHoldTimer) {
+						window.clearTimeout(streamState.statusHoldTimer);
+					}
+					streamState.statusHoldTimer = window.setTimeout(() => {
+						streamState.statusHoldUntil = 0;
+						streamState.statusHoldTimer = null;
+						const live = liveStatusText();
+						setStatus(live.msg, live.state, {force: true});
+					}, options.stickyMs);
+				}
 			}
 
 			function msgValue(m, primary, legacy, fallback) {
 				if (m && m[primary] !== undefined && m[primary] !== null && m[primary] !== '') return m[primary];
 				if (m && legacy && m[legacy] !== undefined && m[legacy] !== null && m[legacy] !== '') return m[legacy];
 				return fallback;
+			}
+
+			function presenceValue(m, primary, legacy, fallback) {
+				if (m && m[primary] !== undefined && m[primary] !== null && m[primary] !== '') return m[primary];
+				if (m && legacy && m[legacy] !== undefined && m[legacy] !== null && m[legacy] !== '') return m[legacy];
+				return fallback;
+			}
+
+			function normalizeIncomingMessage(raw) {
+				let m = raw;
+				if (!m) return null;
+				if (typeof m === 'string') {
+					return {id: 0, from: 'system', body: m, created_at: '--:--:--', channel: streamState.channel};
+				}
+				if (typeof m.message === 'object' && m.message) m = m.message;
+				if (typeof m.data === 'object' && m.data) m = m.data;
+				if (typeof m.payload === 'object' && m.payload) m = m.payload;
+				const from = msgValue(m, 'from', 'From', 'system');
+				const body = msgValue(m, 'body', 'Body', msgValue(m, 'message', 'Message', ''));
+				const createdAt = msgValue(m, 'created_at', 'CreatedAt', '--:--:--');
+				const channel = msgValue(m, 'channel', 'Channel', streamState.channel);
+				const id = Number(msgValue(m, 'id', 'ID', 0)) || 0;
+				if (!from && !body) {
+					return null;
+				}
+				return {id: id, from: from, body: body, created_at: createdAt, channel: channel};
+			}
+
+			function updateMessageCount() {
+				const box = document.getElementById('chat');
+				const counter = document.getElementById('chatMessageCount');
+				if (!box || !counter) return;
+				const count = box.querySelectorAll('.wolfbbs-chat-line').length;
+				counter.textContent = count + (count === 1 ? ' line' : ' lines');
 			}
 
 			function formatLine(m) {
@@ -18031,6 +26818,10 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 				} else {
 					message.placeholder = 'Say something in the room...';
 				}
+				const modChannel = document.querySelector('#modForm input[name="channel"]');
+				if (modChannel) {
+					modChannel.value = streamState.channel;
+				}
 			}
 
 			function noteSync() {
@@ -18038,29 +26829,44 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 			}
 
 			function appendMessage(m) {
+				const row = normalizeIncomingMessage(m);
+				if (!row) return;
 				const box = document.getElementById('chat');
 				const stick = isNearBottom(box);
 				const line = document.createElement('div');
 				line.className = 'wolfbbs-chat-line';
 				const meta = document.createElement('div');
 				meta.className = 'wolfbbs-chat-line-meta';
-				meta.textContent = '[' + msgValue(m, 'created_at', 'CreatedAt', '--:--:--') + ']';
+				meta.textContent = '[' + msgValue(row, 'created_at', 'CreatedAt', '--:--:--') + ']';
 				const body = document.createElement('div');
 				body.className = 'wolfbbs-chat-line-body';
 				const from = document.createElement('strong');
-				from.textContent = msgValue(m, 'from', 'From', 'system') + ': ';
+				const fromValue = String(msgValue(row, 'from', 'From', 'system') || 'system');
+				from.textContent = fromValue + ': ';
 				body.appendChild(from);
-				body.appendChild(document.createTextNode(msgValue(m, 'body', 'Body', '')));
+				const bodyText = String(msgValue(row, 'body', 'Body', ''));
+				body.appendChild(document.createTextNode(bodyText));
 				line.appendChild(meta);
 				line.appendChild(body);
+				const fromLower = fromValue.toLowerCase();
+				if (fromLower === currentHandle) {
+					line.classList.add('wolfbbs-chat-line-self');
+				}
+				if (fromLower === 'system' || fromLower === 'server') {
+					line.classList.add('wolfbbs-chat-line-system');
+				}
+				if (currentHandle && bodyText.toLowerCase().includes('@' + currentHandle)) {
+					line.classList.add('wolfbbs-chat-line-mention');
+				}
 				box.appendChild(line);
-				const id = Number(msgValue(m, 'id', 'ID', 0)) || 0;
+				const id = Number(msgValue(row, 'id', 'ID', 0)) || 0;
 				if (id > streamState.lastSeenId) {
 					streamState.lastSeenId = id;
 				}
 				if (stick) {
 					box.scrollTop = box.scrollHeight;
 				}
+				updateMessageCount();
 			}
 
 			function ensureChannelOption(channel) {
@@ -18102,19 +26908,20 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 				list.forEach((row) => {
 					const card = document.createElement('div');
 					card.className = 'wolfbbs-presence-card';
-					const nickValue = row.nick || 'caller';
+					const nickValue = String(presenceValue(row, 'nick', 'Nick', 'caller'));
 					const nick = document.createElement('strong');
 					nick.textContent = nickValue;
 					card.appendChild(nick);
 					const meta1 = document.createElement('span');
-					meta1.textContent = (row.area || streamState.channel) + ' • ' + (row.node || 'web');
+					meta1.textContent = String(presenceValue(row, 'area', 'Area', streamState.channel)) + ' • ' + String(presenceValue(row, 'node', 'Node', 'web'));
 					card.appendChild(meta1);
 					const meta2 = document.createElement('span');
-					meta2.textContent = 'idle ' + String(row.idle_sec || 0) + 's';
+					meta2.textContent = 'idle ' + String(presenceValue(row, 'idle_sec', 'IdleSec', 0)) + 's';
 					card.appendChild(meta2);
-					if (row.login_at) {
+					const loginAt = presenceValue(row, 'login_at', 'LoginAt', '');
+					if (loginAt) {
 						const meta3 = document.createElement('span');
-						meta3.textContent = 'since ' + row.login_at;
+						meta3.textContent = 'since ' + loginAt;
 						card.appendChild(meta3);
 					}
 					const actions = document.createElement('div');
@@ -18138,7 +26945,7 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 			async function loadChannels() {
 				const res = await fetch('/chat/channels', {credentials: 'same-origin'});
 				if (!res.ok) {
-					setStatus('Failed to load channels.');
+					setStatus('Failed to load channels.', 'error');
 					return;
 				}
 				const payload = await res.json();
@@ -18156,13 +26963,14 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 				select.value = streamState.channel;
 				renderChannelBadges(channels);
 				updateComposerState();
+				setStatus('Channels loaded.', 'ready');
 			}
 
 			async function loadHistory() {
 				const ch = streamState.channel;
 				const res = await fetch('/chat/history?channel=' + encodeURIComponent(ch) + '&limit=100', {credentials: 'same-origin'});
 				if (!res.ok) {
-					setStatus('Could not load history for ' + ch);
+					setStatus('Could not load history for ' + ch, 'error');
 					return;
 				}
 				const payload = await res.json();
@@ -18178,13 +26986,14 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 				noteSync();
 				renderPresenceList(payload.online || []);
 				box.scrollTop = box.scrollHeight;
+				updateMessageCount();
 			}
 
 			async function loadOnline() {
 				const ch = streamState.channel;
 				const res = await fetch('/chat/online?channel=' + encodeURIComponent(ch), {credentials: 'same-origin'});
 				if (!res.ok) {
-					setStatus('Could not load online list.');
+					setStatus('Could not load online list.', 'error');
 					return;
 				}
 				const payload = await res.json();
@@ -18207,15 +27016,24 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 				stopStream();
 				const es = new EventSource('/chat/stream?channel=' + encodeURIComponent(streamState.channel) + '&after_id=' + encodeURIComponent(String(streamState.lastSeenId || 0)));
 				streamState.es = es;
+				es.onopen = function() {
+					setStatus('Live on ' + streamState.channel, 'live');
+				};
 				es.onmessage = function(evt){
-					const msg = JSON.parse(evt.data);
+					let msg = null;
+					try {
+						msg = JSON.parse(evt.data);
+					} catch (err) {
+						setStatus('Malformed stream event ignored.', 'warn');
+						return;
+					}
 					appendMessage(msg);
-					setStatus('Live on ' + streamState.channel);
+					setStatus('Live on ' + streamState.channel, 'live');
 					noteSync();
 				};
 				es.onerror = function() {
 					es.close();
-					setStatus('Realtime disconnected; retrying...');
+					setStatus('Realtime disconnected; retrying...', 'warn');
 					streamState.reconnectTimer = window.setTimeout(watch, 1200);
 				};
 			}
@@ -18231,8 +27049,8 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 				await loadOnline();
 				watch();
 				updateComposerState();
-				const readOnly = streamState.locked.has(streamState.channel) && !canModerate;
-				setStatus(readOnly ? ('Live on ' + streamState.channel + ' (read-only)') : ('Live on ' + streamState.channel));
+				const live = liveStatusText();
+				setStatus(live.msg, live.state);
 				document.getElementById('message').focus();
 			}
 
@@ -18253,6 +27071,7 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 				evt.preventDefault();
 				const message = document.getElementById('message').value.trim();
 				if (!message) return;
+				setStatus('Sending message...', 'working');
 				const sendRes = await fetch('/chat/send', {
 					method:'POST',
 					headers:{'Content-Type':'application/json','X-CSRF-Token': csrf},
@@ -18260,11 +27079,11 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 				});
 				if (!sendRes.ok) {
 					const body = await sendRes.text();
-					setStatus('Send failed: ' + body);
+					setStatus('Send failed: ' + body, 'error');
 					return;
 				}
 				document.getElementById('message').value = '';
-				setStatus('Sent to ' + streamState.channel);
+				setStatus('Sent to ' + streamState.channel, 'live');
 			});
 
 			document.getElementById('message').addEventListener('keydown', function(evt){
@@ -18294,10 +27113,10 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 						body: JSON.stringify(payload),
 					});
 					if (!res.ok) {
-						setStatus('Moderation failed.');
+						setStatus('Moderation failed.', 'error');
 						return;
 					}
-					setStatus('Moderation applied to ' + payload.channel);
+					setStatus('Moderation applied to ' + payload.channel, 'ready', {stickyMs: 2500});
 					if (payload.channel === streamState.channel) {
 						await loadOnline();
 					}
@@ -18624,16 +27443,54 @@ func (a *webApp) handleChatModeration(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *webApp) createSession(handle string) (string, bool) {
+	return a.createSessionWithContext(handle, 1, "http", false)
+}
+
+func (a *webApp) createSessionWithContext(handle string, authFactor int, transport string, secure bool) (string, bool) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		return "", false
 	}
 	sid := hex.EncodeToString(b)
 	csrf := randomToken(32)
+	if authFactor <= 0 {
+		authFactor = 1
+	}
+	transport = strings.ToLower(strings.TrimSpace(transport))
+	if transport == "" {
+		transport = "http"
+	}
 	a.Lock()
-	a.sessions[sid] = sessionState{handle: handle, expire: time.Now().Add(2 * time.Hour), csrf: csrf}
+	a.sessions[sid] = sessionState{
+		handle:     handle,
+		expire:     time.Now().Add(2 * time.Hour),
+		csrf:       csrf,
+		transport:  transport,
+		secure:     secure,
+		authFactor: authFactor,
+	}
 	a.Unlock()
 	return sid, true
+}
+
+func requestSecurityProfile(r *http.Request) (string, bool) {
+	if r == nil {
+		return "http", false
+	}
+	transport := "http"
+	secure := false
+	if r.TLS != nil {
+		transport = "https"
+		secure = true
+	}
+	if forwarded := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))); forwarded != "" {
+		transport = forwarded
+		switch forwarded {
+		case "https", "wss", "ssh":
+			secure = true
+		}
+	}
+	return transport, secure
 }
 
 func parseLimit(raw string, defaultVal int) int {
@@ -19369,12 +28226,16 @@ func webQuickJumpPath(raw string) string {
 	switch target {
 	case "start", "home", "onramp":
 		return "/start"
+	case "showcase", "demo", "walkthrough":
+		return "/showcase"
 	case "attention", "attn", "queue":
 		return "/attention"
 	case "today", "brief", "daily", "t":
 		return "/today"
 	case "digest", "daily-digest":
 		return "/digest"
+	case "digest-prefs", "digest-weekday", "weekday-digest":
+		return "/digest/preferences"
 	case "events", "calendar", "event", "e":
 		return "/events"
 	case "tournaments", "tourney", "bracket":
@@ -19407,6 +28268,24 @@ func webQuickJumpPath(raw string) string {
 		return "/feedback"
 	case "radar", "mission", "r":
 		return "/radar"
+	case "streaks", "streak":
+		return "/streaks"
+	case "next", "next-best", "nba":
+		return "/next"
+	case "spotlights", "spotlight", "returners":
+		return "/spotlights"
+	case "missions", "season-missions":
+		return "/missions"
+	case "resume", "re-entry", "reentry":
+		return "/resume"
+	case "comeback", "door-comeback", "streak-comeback":
+		return "/doors/comeback"
+	case "mentorship", "mentor", "onboarding":
+		return "/mentorship"
+	case "milestones", "celebrate":
+		return "/milestones"
+	case "time-lane", "timelane", "lane":
+		return "/time-lane"
 	case "clubhouse", "community", "club":
 		return "/clubhouse"
 	case "gateway", "g":
@@ -19429,6 +28308,20 @@ func webQuickJumpPath(raw string) string {
 		return "/admin/events"
 	case "admin-challenges", "season-admin":
 		return "/admin/challenges"
+	case "admin-missions", "missions-admin":
+		return "/admin/missions"
+	case "admin-mentorship", "mentor-admin":
+		return "/admin/mentorship"
+	case "mod-center", "moderation", "reports-queue":
+		return "/admin/mod-center"
+	case "plugins", "admin-plugins":
+		return "/admin/plugins"
+	case "themes", "admin-themes":
+		return "/admin/themes"
+	case "webhooks", "hooks", "admin-webhooks":
+		return "/admin/webhooks"
+	case "analytics", "admin-analytics", "metrics":
+		return "/admin/analytics"
 	case "upgrade", "upgrade-safety", "rollout":
 		return "/admin/upgrade-safety"
 	case "backup", "backups":

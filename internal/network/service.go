@@ -201,13 +201,31 @@ func (s *Service) QueueNetmail(fromUserID int64, toHandle, subject, body string)
 }
 
 func (s *Service) ImportPacket(path string, defaultBoardID, defaultAuthorID int64) (int, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return 0, err
-	}
 	var p Packet
-	if err := json.Unmarshal(raw, &p); err != nil {
-		return 0, err
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return 0, errors.New("packet path is required")
+	}
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext == ".qwk" || ext == ".rep" || ext == ".zip" {
+		packet, err := readQWKBundle(path)
+		if err != nil {
+			return 0, err
+		}
+		p = packet
+	} else {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return 0, err
+		}
+		if err := json.Unmarshal(raw, &p); err != nil {
+			// Allow QWK bundle parsing even with non-standard extension.
+			packet, qwkErr := readQWKBundle(path)
+			if qwkErr != nil {
+				return 0, err
+			}
+			p = packet
+		}
 	}
 	format, err := normalizeFormat(p.Format)
 	if err != nil {
@@ -243,7 +261,7 @@ func (s *Service) ImportInboundQueue(defaultBoardID, defaultAuthorID int64) (int
 		}
 		sort.Slice(files, func(i, j int) bool { return files[i].Name() < files[j].Name() })
 		for _, file := range files {
-			if file.IsDir() || !strings.HasSuffix(strings.ToLower(file.Name()), ".json") {
+			if file.IsDir() || !isPacketFile(format, file.Name()) {
 				continue
 			}
 			path := filepath.Join(inboundRoot, format, file.Name())
@@ -354,8 +372,18 @@ func (s *Service) writePacket(direction, format string, p Packet) (string, error
 	if err != nil {
 		return "", err
 	}
-	filename := fmt.Sprintf("%s_%s_%d.json", format, time.Now().UTC().Format("20060102T150405Z"), time.Now().UTC().UnixNano())
+	ext := ".json"
+	if format == FormatQWK {
+		ext = ".qwk"
+	}
+	filename := fmt.Sprintf("%s_%s_%d%s", format, time.Now().UTC().Format("20060102T150405Z"), time.Now().UTC().UnixNano(), ext)
 	path := filepath.Join(dir, filename)
+	if format == FormatQWK {
+		if err := writeQWKBundle(path, p); err != nil {
+			return "", err
+		}
+		return path, nil
+	}
 	raw, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
 		return "", err
@@ -368,11 +396,11 @@ func (s *Service) writePacket(direction, format string, p Packet) (string, error
 
 func (s *Service) Status() (Status, error) {
 	status := Status{SpoolDir: s.spoolDir}
-	inbound, err := s.countJSON("inbound")
+	inbound, err := s.countPackets("inbound")
 	if err != nil {
 		return status, err
 	}
-	outbound, err := s.countJSON("outbound")
+	outbound, err := s.countPackets("outbound")
 	if err != nil {
 		return status, err
 	}
@@ -416,7 +444,7 @@ func (s *Service) runExternal(ctx context.Context, command, mode string) error {
 	return nil
 }
 
-func (s *Service) countJSON(root string) (int, error) {
+func (s *Service) countPackets(root string) (int, error) {
 	base, err := s.ensureDir(root)
 	if err != nil {
 		return 0, err
@@ -429,12 +457,27 @@ func (s *Service) countJSON(root string) (int, error) {
 		if d.IsDir() {
 			return nil
 		}
-		if strings.HasSuffix(strings.ToLower(d.Name()), ".json") {
+		name := strings.ToLower(strings.TrimSpace(d.Name()))
+		if strings.HasSuffix(name, ".json") || strings.HasSuffix(name, ".qwk") || strings.HasSuffix(name, ".rep") || strings.HasSuffix(name, ".zip") {
 			count++
 		}
 		return nil
 	})
 	return count, err
+}
+
+func isPacketFile(format, name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		return false
+	}
+	if strings.HasSuffix(name, ".json") {
+		return true
+	}
+	if format == FormatQWK {
+		return strings.HasSuffix(name, ".qwk") || strings.HasSuffix(name, ".rep") || strings.HasSuffix(name, ".zip")
+	}
+	return false
 }
 
 func (s *Service) resolveBoardID(row PacketMessage) int64 {

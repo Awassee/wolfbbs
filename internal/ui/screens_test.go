@@ -43,17 +43,17 @@ func TestRenderHelpPanels(t *testing.T) {
 		{
 			name:     "gateway",
 			rendered: RenderGatewayHelp(80),
-			wants:    []string{"Help: Gateways", "Gateway Commands", "Web gateway", "Press any key to return."},
+			wants:    []string{"Help: Gateways", "Gateway Commands", "Web browser", "Feed reader", "JSON explorer", "Caller pulse", "AI assistant", "Press any key to return."},
 		},
 		{
 			name:     "files",
 			rendered: RenderFilesHelp(80),
-			wants:    []string{"Help: Files", "Files Commands", "newer than your last login", "Press any key to return."},
+			wants:    []string{"Help: Files", "Files Commands", "newer than your last login", "/collections", "/offline", "Press any key to return."},
 		},
 		{
 			name:     "login",
 			rendered: RenderLoginHelp(80, true),
-			wants:    []string{"Help: Login", "Login Screen Commands", "Type GUEST", "Press any key to return."},
+			wants:    []string{"Help: Login", "Login Screen Commands", "Type GUEST", "Type RESET", "Press any key to return."},
 		},
 		{
 			name:     "doors",
@@ -63,7 +63,7 @@ func TestRenderHelpPanels(t *testing.T) {
 		{
 			name:     "settings",
 			rendered: RenderSettingsHelp(80),
-			wants:    []string{"Help: Settings", "Settings Screen Commands", "save preferences", "Press any key to return."},
+			wants:    []string{"Help: Settings", "Settings Screen Commands", "profile export JSON", "save preferences", "Press any key to return."},
 		},
 	}
 
@@ -85,16 +85,23 @@ func TestRenderBoardAndMailMenus(t *testing.T) {
 	}
 
 	mail := RenderMailOverview(80, []string{"   1  Hello                 01-01 12:00  new"}, []string{"   2  Re: Hello             uid:1"})
-	for _, want := range []string{"Private Mail", "Inbox:", "Outbox:", "Commands: (C)ompose, (R)ead, Re(P)ly, (D)elete, (Q)uit, (?)help"} {
+	for _, want := range []string{"Private Mail", "Inbox:", "Outbox:", "Commands: (C)ompose, (R)ead, Re(P)ly, (D)elete, (H)andles, (Q)uit, (?)help"} {
 		if !strings.Contains(mail, want) {
 			t.Fatalf("mail menu missing %q", want)
 		}
 	}
 
 	files := RenderFilesMenu(80, []string{"  1 Uploads           /bbs/files                    Default area"})
-	for _, want := range []string{"Files", "[R]ecent files", "[N]ew since last call", "Uploads"} {
+	for _, want := range []string{"Files", "[R]ecent files", "[N]ew since last call", "[C]ollections", "[O]ffline center", "Uploads"} {
 		if !strings.Contains(files, want) {
 			t.Fatalf("files menu missing %q", want)
+		}
+	}
+
+	gateway := RenderGatewayMenu(80)
+	for _, want := range []string{"Gateway Menu", "[W]eb browser", "[F]eed reader", "[S]ummarizer", "[J]SON explorer", "[X] Caller pulse", "[A]I assistant"} {
+		if !strings.Contains(gateway, want) {
+			t.Fatalf("gateway menu missing %q", want)
 		}
 	}
 
@@ -111,6 +118,31 @@ func TestRenderBoardAndMailMenus(t *testing.T) {
 	for _, want := range []string{"Favorites only", "Category=RPG", "Spotlight:", "Dragon Tavern Legends", "Favorite Toggle"} {
 		if !strings.Contains(doorMenu, want) {
 			t.Fatalf("door menu missing %q", want)
+		}
+	}
+}
+
+func TestRenderConfiguredMainMenuResponsive(t *testing.T) {
+	menu := RenderConfiguredMainMenu(80, "Custom Ops", "Operator shortcuts from menu file", []ActionMenuEntry{
+		{Key: "M", Label: "Message Boards", Target: "boards.open"},
+		{Key: "X", Label: "Config Center", Target: "system.config_center"},
+		{Key: "U", Label: "Upgrade App", Target: "system.app_upgrade"},
+	})
+	for _, want := range []string{"Custom Ops", "Custom Command Deck", "Operator shortcuts", "[M]", "boards.open"} {
+		if !strings.Contains(menu, want) {
+			t.Fatalf("configured menu missing %q", want)
+		}
+	}
+
+	narrow := RenderConfiguredMainMenu(32, "Ops", "Narrow terminal should still wrap details cleanly", []ActionMenuEntry{
+		{Key: "A", Label: "Admin", Target: "admin.open"},
+		{Key: "W", Label: "Who Online", Target: "system.who_online"},
+	})
+	plain := stripANSIEscapes(narrow)
+	lines := strings.Split(strings.TrimSuffix(strings.ReplaceAll(plain, "\r\n", "\n"), "\n"), "\n")
+	for _, line := range lines {
+		if got := runeLen(line); got > 32 {
+			t.Fatalf("configured narrow line width %d exceeds 32: %q", got, line)
 		}
 	}
 }
@@ -137,9 +169,15 @@ func TestRenderLoginPromptWithGuestToggle(t *testing.T) {
 	if !strings.Contains(withGuest, "Type GUEST for a read-only guided tour.") {
 		t.Fatalf("expected guest tour hint when enabled")
 	}
+	if !strings.Contains(withGuest, "Type RESET for password reset.") {
+		t.Fatalf("expected password reset hint when enabled")
+	}
 	withoutGuest := RenderLoginPromptWithGuest(80, false)
 	if strings.Contains(withoutGuest, "Type GUEST for a read-only guided tour.") {
 		t.Fatalf("expected no guest tour hint when disabled")
+	}
+	if !strings.Contains(withoutGuest, "Type RESET for password reset.") {
+		t.Fatalf("expected password reset hint when guest tour disabled")
 	}
 }
 
@@ -163,9 +201,11 @@ func TestResponsiveScreensFitCommonWidths(t *testing.T) {
 		width    int
 		rendered string
 	}{
+		{name: "main-32", width: 32, rendered: RenderMainMenu(32)},
 		{name: "welcome-40", width: 40, rendered: RenderWelcome(40)},
 		{name: "welcome-72", width: 72, rendered: RenderWelcome(72)},
 		{name: "main-40", width: 40, rendered: RenderMainMenu(40)},
+		{name: "files-32", width: 32, rendered: RenderFilesMenu(32, []string{"  1 Uploads   /bbs/files"})},
 		{name: "mail-54", width: 54, rendered: RenderMailOverview(54, []string{"  1  Hello there         01-01 12:00  new"}, []string{"  2  Re: Hello           uid:1"})},
 		{name: "files-54", width: 54, rendered: RenderFilesMenu(54, []string{"  1 Uploads           /bbs/files            Default area"})},
 		{name: "doors-54", width: 54, rendered: RenderDoorMenu(54, []DoorMenuItem{{Hotkey: "D", Name: "Dragon Tavern Legends", Category: "rpg", TurnsRemaining: 3, Favorite: true}}, []string{"DRAGON"}, []string{"SPACE"}, DoorMenuSummary{Total: 12, Visible: 1, Category: "rpg", FavoritesOnly: true, Spotlight: "Dragon Tavern Legends [D]"})},
@@ -184,7 +224,7 @@ func TestResponsiveScreensFitCommonWidths(t *testing.T) {
 }
 
 func TestResponsiveScreensMapCleanlyToASCII(t *testing.T) {
-	rendered := RenderMainMenu(54) + RenderFilesMenu(54, []string{"  1 Uploads           /bbs/files            Default area"})
+	rendered := RenderMainMenu(32) + RenderFilesMenu(32, []string{"  1 Uploads           /bbs/files            Default area"})
 	plain := ApplyOutputProfile(rendered, false, "ascii")
 	if strings.Contains(plain, "\x1b[") {
 		t.Fatalf("expected ascii output without ANSI escapes")
@@ -194,7 +234,7 @@ func TestResponsiveScreensMapCleanlyToASCII(t *testing.T) {
 			t.Fatalf("expected no unicode box drawing in ascii output: %q", plain)
 		}
 	}
-	for _, want := range []string{"Main Menu", "Files", "Quick Jump", "Uploads"} {
+	for _, want := range []string{"Main Menu", "Files", "Quick Jump", "Uploads", "[ID] Open area", "[Q] Return"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("ascii output missing %q", want)
 		}

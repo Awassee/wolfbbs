@@ -8,9 +8,13 @@ import (
 )
 
 type Context struct {
-	Role     string
-	Verified bool
-	Attrs    map[string]string
+	Role       string
+	Verified   bool
+	Transport  string
+	Secure     bool
+	AuthFactor int
+	Groups     []string
+	Attrs      map[string]string
 }
 
 func Evaluate(expr string, ctx Context) (bool, error) {
@@ -124,46 +128,184 @@ func evalPredicate(token string, ctx Context) bool {
 		return ctx.Verified
 	case "unverified":
 		return !ctx.Verified
+	case "secure":
+		return ctx.Secure
+	case "insecure":
+		return !ctx.Secure
 	}
 
-	if strings.HasPrefix(lowerToken, "role=") {
-		return rbac.NormalizeRole(strings.TrimPrefix(lowerToken, "role=")) == rbac.NormalizeRole(ctx.Role)
-	}
-	if strings.HasPrefix(lowerToken, "role:") {
-		return rbac.NormalizeRole(strings.TrimPrefix(lowerToken, "role:")) == rbac.NormalizeRole(ctx.Role)
-	}
-
-	key, value, hasKV := splitPredicate(lowerToken)
-	if hasKV {
-		switch key {
-		case "role":
-			return rbac.NormalizeRole(value) == rbac.NormalizeRole(ctx.Role)
-		case "verified":
-			want := parseBool(value)
-			return ctx.Verified == want
-		default:
-			return strings.EqualFold(strings.TrimSpace(ctx.Attrs[key]), value)
-		}
+	// Comparator expressions:
+	// role=sysop, auth_factor>=2, transport=ssh|wss, group~wfc
+	if key, op, rhs, ok := splitComparator(lowerToken); ok {
+		return evalComparator(key, op, rhs, ctx)
 	}
 
+	if value, ok := contextValue(lowerToken, ctx); ok {
+		return parseBool(value)
+	}
 	if ctx.Attrs == nil {
 		return false
 	}
-	raw := strings.ToLower(strings.TrimSpace(ctx.Attrs[lowerToken]))
+	raw := strings.TrimSpace(ctx.Attrs[lowerToken])
 	if raw == "" {
 		return false
 	}
 	return parseBool(raw)
 }
 
-func splitPredicate(value string) (key string, rhs string, ok bool) {
-	if idx := strings.Index(value, "="); idx > 0 {
-		return strings.TrimSpace(value[:idx]), strings.TrimSpace(value[idx+1:]), true
+func splitComparator(value string) (key string, op string, rhs string, ok bool) {
+	for _, candidate := range []string{">=", "<=", "!=", "==", ">", "<", "~", "=", ":"} {
+		if idx := strings.Index(value, candidate); idx > 0 {
+			return strings.TrimSpace(value[:idx]), candidate, strings.TrimSpace(value[idx+len(candidate):]), true
+		}
 	}
-	if idx := strings.Index(value, ":"); idx > 0 {
-		return strings.TrimSpace(value[:idx]), strings.TrimSpace(value[idx+1:]), true
+	return "", "", "", false
+}
+
+func evalComparator(key, op, rhs string, ctx Context) bool {
+	key = strings.ToLower(strings.TrimSpace(key))
+	rhs = strings.ToLower(strings.TrimSpace(rhs))
+	if key == "" || rhs == "" {
+		return false
 	}
-	return "", "", false
+	lhs, ok := contextValue(key, ctx)
+	if !ok {
+		return false
+	}
+	lhs = strings.ToLower(strings.TrimSpace(lhs))
+	switch op {
+	case "=", "==", ":":
+		return matchesValue(key, lhs, rhs)
+	case "!=":
+		return !matchesValue(key, lhs, rhs)
+	case "~":
+		return strings.Contains(lhs, rhs)
+	case ">", "<", ">=", "<=":
+		return compareNumeric(lhs, rhs, op)
+	default:
+		return false
+	}
+}
+
+func matchesValue(key, lhs, rhs string) bool {
+	if rhs == "*" || rhs == "any" {
+		return true
+	}
+	if key == "role" {
+		return rbac.NormalizeRole(lhs) == rbac.NormalizeRole(rhs)
+	}
+	if key == "group" || key == "groups" {
+		return listContains(lhs, rhs)
+	}
+	if strings.Contains(rhs, "|") {
+		for _, row := range strings.Split(rhs, "|") {
+			if strings.EqualFold(strings.TrimSpace(lhs), strings.TrimSpace(row)) {
+				return true
+			}
+		}
+		return false
+	}
+	if strings.Contains(rhs, ",") {
+		for _, row := range strings.Split(rhs, ",") {
+			if strings.EqualFold(strings.TrimSpace(lhs), strings.TrimSpace(row)) {
+				return true
+			}
+		}
+		return false
+	}
+	return strings.EqualFold(lhs, rhs)
+}
+
+func listContains(csv, value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	for _, row := range strings.FieldsFunc(csv, func(r rune) bool {
+		return r == ',' || r == ';' || r == '|' || r == ' '
+	}) {
+		if strings.EqualFold(strings.TrimSpace(row), value) {
+			return true
+		}
+	}
+	return false
+}
+
+func compareNumeric(lhs, rhs, op string) bool {
+	leftVal, leftOK := parseNumber(lhs)
+	rightVal, rightOK := parseNumber(rhs)
+	if !leftOK || !rightOK {
+		return false
+	}
+	switch op {
+	case ">":
+		return leftVal > rightVal
+	case "<":
+		return leftVal < rightVal
+	case ">=":
+		return leftVal >= rightVal
+	case "<=":
+		return leftVal <= rightVal
+	default:
+		return false
+	}
+}
+
+func parseNumber(value string) (float64, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
+	}
+	var out float64
+	if _, err := fmt.Sscan(value, &out); err != nil {
+		return 0, false
+	}
+	return out, true
+}
+
+func contextValue(key string, ctx Context) (string, bool) {
+	key = strings.ToLower(strings.TrimSpace(key))
+	switch key {
+	case "role":
+		return rbac.NormalizeRole(ctx.Role), true
+	case "verified":
+		return boolString(ctx.Verified), true
+	case "secure":
+		return boolString(ctx.Secure), true
+	case "transport":
+		return strings.ToLower(strings.TrimSpace(ctx.Transport)), true
+	case "auth_factor", "authfactor", "mfa":
+		if ctx.AuthFactor > 0 {
+			return fmt.Sprintf("%d", ctx.AuthFactor), true
+		}
+		return "1", true
+	case "group", "groups":
+		if len(ctx.Groups) == 0 {
+			return "", true
+		}
+		clean := make([]string, 0, len(ctx.Groups))
+		for _, row := range ctx.Groups {
+			row = strings.ToLower(strings.TrimSpace(row))
+			if row == "" {
+				continue
+			}
+			clean = append(clean, row)
+		}
+		return strings.Join(clean, ","), true
+	default:
+		if ctx.Attrs == nil {
+			return "", false
+		}
+		value, ok := ctx.Attrs[key]
+		return strings.TrimSpace(value), ok
+	}
+}
+
+func boolString(v bool) string {
+	if v {
+		return "true"
+	}
+	return "false"
 }
 
 func parseBool(value string) bool {

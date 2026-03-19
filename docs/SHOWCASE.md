@@ -5,8 +5,14 @@ Use this page for a quick product walk-through when introducing WolfBBS on GitHu
 Launch links:
 - [Install Guide](INSTALL.md)
 - [Start Here](START_HERE.md)
+- [Feature Datasheet](DATASHEET.md)
 - [Documentation Hub](README.md)
+- [Release v1.1.20 notes](releases/v1.1.20.md)
 - [GitHub Releases](https://github.com/Awassee/wolfbbs/releases)
+
+## Release v1.1.20 Snapshot
+
+This showcase tracks the `v1.1.20` distribution target: SSH-first caller flow, full admin parity, modern gateway surfaces, and turnkey install/upgrade lifecycle ready for GitHub delivery.
 
 ## Product Description
 
@@ -16,6 +22,23 @@ WolfBBS is a self-hosted community platform that blends a classic ANSI BBS exper
 - `Modern access`: browser companion, admin console, account recovery, and live chat
 - `Cross-client community`: IRC bridge with shared channel state
 - `Operator-ready`: setup wizard, config center, diagnostics, upgrades, and repair workflows
+
+## Gallery Wall
+
+<table>
+  <tr>
+    <td width="50%"><a href="assets/screenshots/connect.png"><img src="assets/screenshots/connect.png" alt="Connect hub"></a></td>
+    <td width="50%"><a href="assets/screenshots/boards.png"><img src="assets/screenshots/boards.png" alt="Message boards"></a></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="assets/screenshots/chat.png"><img src="assets/screenshots/chat.png" alt="Live chat"></a></td>
+    <td width="50%"><a href="assets/screenshots/doors.png"><img src="assets/screenshots/doors.png" alt="Doors"></a></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="assets/screenshots/today.png"><img src="assets/screenshots/today.png" alt="Today Brief"></a></td>
+    <td width="50%"><a href="assets/screenshots/admin-setup.png"><img src="assets/screenshots/admin-setup.png" alt="Admin setup"></a></td>
+  </tr>
+</table>
 
 ## Screenshot Tour
 

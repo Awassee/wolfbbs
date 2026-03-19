@@ -253,12 +253,13 @@ if [[ "$MODE" == "auto" ]]; then
 fi
 
 mkdir -p "$(dirname "$REPORT_PATH")"
+repo_label="$(basename "$ROOT_DIR")"
 {
   echo "# WolfBBS Manual Acceptance Report"
   echo
   echo "- Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
   echo "- Mode: $MODE"
-  echo "- Repo: $ROOT_DIR"
+  echo "- Repo: $repo_label"
   echo
   echo "| ID | Result | Description | Notes |"
   echo "|---|---|---|---|"

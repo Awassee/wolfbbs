@@ -9,11 +9,18 @@ import (
 const (
 	DefaultWidth  = 80
 	DefaultHeight = 25
+	MinWidth      = 32
 )
 
 type menuEntry struct {
 	Key   string
 	Label string
+}
+
+type ActionMenuEntry struct {
+	Key    string
+	Label  string
+	Target string
 }
 
 type Theme struct {
@@ -74,7 +81,11 @@ func RenderWelcome(width int) string {
 }
 
 func RenderMainMenu(width int) string {
-	lines := []string{sectionLabel("Caller Command Deck")}
+	lines := []string{
+		"Retro flow, modern rails. Choose a lane and jump fast.",
+		"",
+		sectionLabel("Comms + Content"),
+	}
 	lines = append(lines, renderMenuGrid(width, []menuEntry{
 		{Key: "M", Label: "Message Boards"},
 		{Key: "P", Label: "Private Mail"},
@@ -83,9 +94,10 @@ func RenderMainMenu(width int) string {
 		{Key: "G", Label: "Gateways"},
 		{Key: "D", Label: "Doors"},
 	}, 3)...)
-	lines = append(lines, "", sectionLabel("Caller Intel"))
+	lines = append(lines, "", sectionLabel("Caller Intel + System"))
 	lines = append(lines, renderMenuGrid(width, []menuEntry{
 		{Key: "N", Label: "Newscan"},
+		{Key: "R", Label: "Caller Pulse"},
 		{Key: "L", Label: "Last Callers"},
 		{Key: "W", Label: "Who's Online"},
 		{Key: "S", Label: "Settings"},
@@ -98,8 +110,40 @@ func RenderMainMenu(width int) string {
 		{Key: "A", Label: "Admin"},
 		{Key: "Q", Label: "Quit to prompt"},
 	}, 3)...)
-	lines = append(lines, "", "Single-letter hotkeys only. Esc = Back. ? = Help.")
+	lines = append(lines, "", sectionLabel("Global Shortcuts"))
+	lines = append(lines, commandStripLines(width, []string{
+		"Single-letter hotkeys only",
+		"Esc = Back",
+		"? = Help",
+		"/ = Quick Jump",
+	})...)
 	return renderPanel(width, "Main Menu", lines, FgCyan)
+}
+
+func RenderConfiguredMainMenu(width int, title, help string, entries []ActionMenuEntry) string {
+	menuTitle := strings.TrimSpace(title)
+	if menuTitle == "" {
+		menuTitle = "Main Menu"
+	}
+	lines := []string{
+		sectionLabel("Custom Command Deck"),
+	}
+	lines = append(lines, renderConfiguredMenuRows(width, entries)...)
+	if len(entries) == 0 {
+		lines = append(lines, "No menu options are currently available.")
+	}
+	if trimmedHelp := strings.TrimSpace(help); trimmedHelp != "" {
+		lines = append(lines, "")
+		lines = append(lines, sectionLabel("Menu Note"))
+		lines = append(lines, trimmedHelp)
+	}
+	lines = append(lines, "")
+	lines = append(lines, commandStripLines(width, []string{
+		"Single-letter hotkeys only",
+		"? = Help",
+		"Q = Quit",
+	})...)
+	return renderPanel(width, menuTitle, lines, FgCyan)
 }
 
 func RenderMainMenuHelp(width int, menuHint string) string {
@@ -109,11 +153,13 @@ func RenderMainMenuHelp(width int, menuHint string) string {
 		"M  Message Boards        P  Private Mail",
 		"F  Files                 C  Chat",
 		"G  Gateways              D  Doors",
-		"N  Newscan Digest        S  Settings",
+		"N  Newscan Digest        R  Caller Pulse",
+		"S  Settings",
 		"A  Sysop/Admin",
 		"L  Last Callers          W  Who's Online",
 		"X  Config Center         Y  Status Center",
 		"/  Quick Jump prompt",
+		"   - Includes bookmarks/circles/showcase/statusz aliases",
 		"   - Includes app-upgrade (/app upgrade) for sysop",
 		"Q  Quit to sign-off      Esc = Back",
 		"?  Show this help panel",
@@ -179,7 +225,7 @@ func RenderLoginPromptWithGuest(width int, guestTour bool) string {
 			"Type GUEST for a read-only guided tour.",
 		}, lines[1:]...)
 	}
-	lines = append(lines, "Type ? for login help.")
+	lines = append(lines, "Type RESET for password reset.", "Type ? for login help.")
 	return renderPanel(width, "Login", lines, FgGreen) + "\r\n"
 }
 
@@ -189,6 +235,7 @@ func RenderLoginHelp(width int, guestTour bool) string {
 		"",
 		"Enter your handle, then your password.",
 		"Unknown handles can be registered from the same flow.",
+		"Type RESET to request or complete a password reset.",
 		"ESC or Ctrl-C exits to sign-off.",
 		"",
 		"Security:",
@@ -243,9 +290,9 @@ func RenderSinceLastCall(width int, titles []string, since time.Time) string {
 func RenderMessageBoardList(width int, boards []string) string {
 	lines := []string{
 		sectionLabel("Board Command Bar"),
-		commandStrip(width, []string{"[ID] Open board", "[Q] Return", "[C] Conference", "[?] Help"}),
-		"",
 	}
+	lines = append(lines, commandStripLines(width, []string{"[ID] Open board", "[Q] Return", "[C] Conference", "[?] Help"})...)
+	lines = append(lines, "")
 	for i, b := range boards {
 		lines = append(lines, fmt.Sprintf("%3d  %s", i+1, b))
 	}
@@ -328,20 +375,24 @@ func RenderPostEditor(width int, subject string) string {
 func RenderGatewayMenu(width int) string {
 	lines := []string{
 		sectionLabel("Gateway Desk"),
+		"[W]eb browser     Read URL in ANSI pager + offline save",
 		"[E]mail gateway   Send external mail via SMTP relay",
-		"[W]eb gateway     Read URL in ANSI pager + offline save",
-		commandStrip(width, []string{"[R]eturn", "[Q]uit", "[?] Help"}),
+		"[F]eed reader     Parse RSS/Atom into compact headlines",
+		"[S]ummarizer      Build quick bullets from article URL",
+		"[J]SON explorer   Pretty-print JSON API responses",
+		"[X] Caller pulse  Terminal parity for next/streaks/events/challenges",
+		"[A]I assistant    Prompt configured AI model",
 	}
+	lines = append(lines, commandStripLines(width, []string{"[R]eturn", "[Q]uit", "[?] Help"})...)
 	return renderPanel(width, "Gateway Menu", lines, FgCyan) + "\r\n"
 }
 
 func RenderMailOverview(width int, inboxRows []string, outboxRows []string) string {
 	lines := []string{
 		sectionLabel("Mail Command Bar"),
-		commandStrip(width, []string{"[C] Compose", "[R] Read", "Re[P]ly", "[D] Delete", "[Q] Quit", "[?] Help"}),
-		"",
-		sectionLabel("Inbox:"),
 	}
+	lines = append(lines, commandStripLines(width, []string{"[C] Compose", "[R] Read", "Re[P]ly", "[D] Delete", "[H] Handles", "[Q] Quit", "[?] Help"})...)
+	lines = append(lines, "", sectionLabel("Inbox:"))
 	if len(inboxRows) == 0 {
 		lines = append(lines, "  (empty)")
 	} else {
@@ -354,7 +405,7 @@ func RenderMailOverview(width int, inboxRows []string, outboxRows []string) stri
 	} else {
 		lines = append(lines, outboxRows...)
 	}
-	lines = append(lines, "", "Commands: (C)ompose, (R)ead, Re(P)ly, (D)elete, (Q)uit, (?)help", "Selection:")
+	lines = append(lines, "", "Commands: (C)ompose, (R)ead, Re(P)ly, (D)elete, (H)andles, (Q)uit, (?)help", "Selection:")
 	return renderPanel(width, "Private Mail", lines, FgCyan) + "\r\n"
 }
 
@@ -362,14 +413,34 @@ func RenderGatewayHelp(width int) string {
 	lines := []string{
 		"Gateway Commands",
 		"",
+		"W  Web browser",
+		"   - Fetches URL with timeout, size caps, SSRF blocks",
+		"   - Displays text in ANSI pager",
+		"   - Optional offline save per user",
+		"",
 		"E  Email gateway",
 		"   - Sends through configured SMTP relay",
 		"   - Verified accounts only (policy controlled)",
 		"",
-		"W  Web gateway",
-		"   - Fetches URL with timeout, size caps, SSRF blocks",
-		"   - Displays text in ANSI pager",
-		"   - Optional offline save per user",
+		"F  Feed reader",
+		"   - Pull RSS/Atom feeds through gateway safety policy",
+		"   - Renders newest items in compact terminal view",
+		"",
+		"S  Summarizer",
+		"   - Builds headline + bullets + excerpt from URL",
+		"",
+		"J  JSON explorer",
+		"   - Fetches JSON endpoints and pretty-prints output",
+		"",
+		"X  Caller pulse",
+		"   - Terminal parity snapshot for /next, /streaks, /topx,",
+		"     /missions, /tournaments, /events, /events/recaps,",
+		"     /challenges, /spotlights, /digest/preferences,",
+		"     /mentorship, /milestones, /time-lane, /resume,",
+		"     /doors/comeback",
+		"",
+		"A  AI assistant",
+		"   - Uses configured OpenAI-compatible gateway settings",
 		"",
 		"R/Q/Esc return to Main Menu",
 		"",
@@ -381,11 +452,9 @@ func RenderGatewayHelp(width int) string {
 func RenderFilesMenu(width int, areas []string) string {
 	lines := []string{
 		sectionLabel("File Command Bar"),
-		commandStrip(width, []string{"[ID] Open area", "[R]ecent files", "[N]ew since last call", "[S]earch", "[I]ndexed search", "[D]ownload queue", "[Q] Return", "[?] Help"}),
-		"",
-		filesHeader(width),
-		filesDivider(width),
 	}
+	lines = append(lines, commandStripLines(width, []string{"[ID] Open area", "[R]ecent files", "[N]ew since last call", "[S]earch", "[I]ndexed search", "[D]ownload queue", "[C]ollections", "[O]ffline center", "[Q] Return", "[?] Help"})...)
+	lines = append(lines, "", filesHeader(width), filesDivider(width))
 	if len(areas) == 0 {
 		lines = append(lines, "No file areas configured yet.")
 	} else {
@@ -407,6 +476,8 @@ func RenderFilesHelp(width int) string {
 		"- S searches filenames across all areas",
 		"- I uses indexed FileBase search + queue add by file ID",
 		"- D manages your download queue and one-time tickets",
+		"- C opens featured collections parity for /collections",
+		"- O opens offline packet export/import parity for /offline",
 		"- Q or Esc returns to Main Menu",
 		"",
 		"Inside an area:",
@@ -437,9 +508,9 @@ type DoorMenuSummary struct {
 func RenderDoorMenu(width int, items []DoorMenuItem, favoriteIDs []string, recentIDs []string, summary DoorMenuSummary) string {
 	lines := []string{
 		sectionLabel("Door Command Bar"),
-		commandStrip(width, []string{"[R]eturn", "[Q]uit", "[!] Favorite Toggle", "[F]avorites", "[V]Recent", "[C]ategory", "[T] Trophies", "[?] Help"}),
-		"",
 	}
+	lines = append(lines, commandStripLines(width, []string{"[R]eturn", "[Q]uit", "[!] Favorite Toggle", "[F]avorites", "[V]Recent", "[C]ategory", "[T] Trophies", "[?] Help"})...)
+	lines = append(lines, "")
 	filterParts := []string{fmt.Sprintf("Showing %d of %d", summary.Visible, summary.Total)}
 	if summary.Category != "" {
 		filterParts = append(filterParts, "Category="+strings.ToUpper(summary.Category))
@@ -513,10 +584,12 @@ func RenderMailHelp(width int) string {
 		"R  Read message by ID",
 		"P  Reply to message by ID",
 		"D  Delete message by ID",
+		"H  Search recipient handles",
 		"Q  Return to Main Menu",
 		"",
 		"Compose details:",
 		"- Recipient can be local handle or external email",
+		"- Type ?prefix in recipient prompt to search handles",
 		"- Body entry ends with single period on its own line",
 		"",
 		"Reader details:",
@@ -553,6 +626,10 @@ func RenderSettingsHelp(width int) string {
 		"A  toggle ANSI on/off",
 		"P  toggle pager on/off",
 		"C  toggle 24-hour clock",
+		"B  open bookmarks manager",
+		"O  open caller circles manager",
+		"X  profile export JSON (/profile/export parity)",
+		"E  attention export JSON (/attention/export parity)",
 		"S  save preferences",
 		"Q/Esc return without saving changes",
 		"",
@@ -632,8 +709,8 @@ func normalizeScreenWidth(width int) int {
 	if width <= 0 {
 		return DefaultWidth
 	}
-	if width < 40 {
-		return 40
+	if width < MinWidth {
+		return MinWidth
 	}
 	return width
 }
@@ -659,27 +736,42 @@ func fitPanelLine(width int, line string) []string {
 	if line == "" {
 		return []string{strings.Repeat(" ", width)}
 	}
-	if strings.Contains(line, Esc) || strings.HasPrefix(line, " ") || strings.Contains(line, "  ") {
+	if strings.Contains(line, Esc) || strings.HasPrefix(line, " ") {
 		return []string{padOrTrim(line, width, " ")}
 	}
 	if visibleRuneLen(line) <= width {
 		return []string{padOrTrim(line, width, " ")}
 	}
+	raw := wrapWordsToWidth(line, width)
+	if len(raw) == 0 {
+		return []string{padOrTrim(line, width, " ")}
+	}
+	lines := make([]string, 0, len(raw))
+	for _, row := range raw {
+		lines = append(lines, padOrTrim(row, width, " "))
+	}
+	return lines
+}
+
+func wrapWordsToWidth(line string, width int) []string {
+	if width <= 0 {
+		return []string{""}
+	}
 	words := strings.Fields(line)
 	if len(words) <= 1 {
-		return []string{padOrTrim(line, width, " ")}
+		return []string{trimANSIVisible(line, width)}
 	}
 	lines := make([]string, 0, 4)
 	current := words[0]
 	for _, word := range words[1:] {
 		if visibleRuneLen(current)+1+visibleRuneLen(word) > width {
-			lines = append(lines, padOrTrim(current, width, " "))
+			lines = append(lines, current)
 			current = word
 			continue
 		}
 		current += " " + word
 	}
-	lines = append(lines, padOrTrim(current, width, " "))
+	lines = append(lines, current)
 	return lines
 }
 
@@ -731,16 +823,89 @@ func renderMenuCell(entry menuEntry) string {
 	if key == "" {
 		return label
 	}
-	return "[" + key + "] " + label
+	return Bold + FgYellow + "[" + key + "]" + Reset + " " + label
 }
 
-func commandStrip(width int, items []string) string {
+func commandStripLines(width int, items []string) []string {
 	innerWidth := normalizeScreenWidth(width) - 2
-	line := strings.Join(items, "  ")
-	if visibleRuneLen(line) <= innerWidth {
-		return line
+	if innerWidth <= 0 {
+		return []string{}
 	}
-	return strings.Join(items, " | ")
+	filtered := make([]string, 0, len(items))
+	for _, row := range items {
+		trimmed := strings.TrimSpace(row)
+		if trimmed != "" {
+			filtered = append(filtered, trimmed)
+		}
+	}
+	if len(filtered) == 0 {
+		return []string{}
+	}
+	lines := make([]string, 0, 2)
+	current := ""
+	for _, item := range filtered {
+		candidate := item
+		if current != "" {
+			candidate = current + "  " + item
+		}
+		if visibleRuneLen(candidate) <= innerWidth {
+			current = candidate
+			continue
+		}
+		if current != "" {
+			lines = append(lines, current)
+			current = ""
+		}
+		if visibleRuneLen(item) <= innerWidth {
+			current = item
+			continue
+		}
+		lines = append(lines, wrapWordsToWidth(item, innerWidth)...)
+	}
+	if current != "" {
+		lines = append(lines, current)
+	}
+	return lines
+}
+
+func renderConfiguredMenuRows(width int, entries []ActionMenuEntry) []string {
+	innerWidth := normalizeScreenWidth(width) - 2
+	if len(entries) == 0 {
+		return []string{}
+	}
+	lines := make([]string, 0, len(entries)*2)
+	if innerWidth >= 58 {
+		commandWidth := 26
+		if commandWidth > innerWidth-10 {
+			commandWidth = innerWidth - 10
+		}
+		if commandWidth < 16 {
+			commandWidth = 16
+		}
+		targetWidth := innerWidth - commandWidth - 2
+		if targetWidth < 8 {
+			targetWidth = 8
+		}
+		for _, entry := range entries {
+			cell := renderMenuCell(menuEntry{Key: entry.Key, Label: entry.Label})
+			target := strings.TrimSpace(entry.Target)
+			if target == "" {
+				target = "(internal)"
+			}
+			lines = append(lines, padOrTrim(cell, commandWidth, " ")+"  "+padOrTrim(trimANSIVisible(target, targetWidth), targetWidth, " "))
+		}
+		return lines
+	}
+	for _, entry := range entries {
+		lines = append(lines, renderMenuCell(menuEntry{Key: entry.Key, Label: entry.Label}))
+		target := strings.TrimSpace(entry.Target)
+		if target != "" {
+			for _, row := range wrapWordsToWidth("-> "+target, innerWidth-2) {
+				lines = append(lines, "  "+row)
+			}
+		}
+	}
+	return lines
 }
 
 func sectionLabel(title string) string {

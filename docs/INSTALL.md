@@ -62,7 +62,12 @@ Interactive menu mode (no flags):
 git clone https://github.com/Awassee/wolfbbs.git wolfbbs && cd wolfbbs && bash install.sh
 ```
 
-The guided menu path is the recommended consumer install flow. It opens a menu first, then an easy-install screen where you can accept defaults or edit install directory, ports, and source repo without remembering flags.
+The guided menu path is the recommended consumer install flow. It opens the Installer Command Center first, then a guided install plan where you can:
+
+- accept recommended defaults
+- tune install directory, ports, and source repo
+- open advanced install options (profile/name/hostname/toggles)
+- open Troubleshooting Center (doctor/status/logs/port audit/debug bundle/repair)
 
 What the bootstrap does:
 
@@ -128,6 +133,14 @@ If HTTPS clone is blocked in your environment, use SSH clone instead:
 git clone git@github.com:Awassee/wolfbbs.git wolfbbs && cd wolfbbs && bash install.sh --yes
 ```
 
+Build clean distro artifacts for `v1.1.20`:
+
+```bash
+scripts/package-dist.sh --clean --version v1.1.20 \
+  --platform linux/amd64 --platform linux/arm64 \
+  --platform darwin/amd64 --platform darwin/arm64
+```
+
 ## Optional Quick Install (`curl | bash`)
 
 Use this only when the repo's raw GitHub URL is publicly reachable:
@@ -155,6 +168,8 @@ When the product is up but not trustworthy, use this order:
 ```bash
 bash install.sh --status
 bash install.sh --doctor
+bash install.sh --port-audit
+bash install.sh --debug-bundle
 bash install.sh --repair
 bash install.sh --logs
 ```
@@ -203,12 +218,17 @@ Use this sequence:
 | first install without cloning first | bootstrap command from `README.md` |
 | show endpoints and current state | `bash install.sh --status` |
 | check health without changing anything | `bash install.sh --doctor` |
+| audit listener ownership on core ports | `bash install.sh --port-audit` |
+| capture a support-ready diagnostics file | `bash install.sh --debug-bundle` |
 | repair a broken install | `bash install.sh --repair` |
 | pull latest shipped images | `bash install.sh --upgrade` |
 | rebuild local source changes quickly | `bash install.sh --rapid-upgrade` |
-| fully remove the running install | `bash install.sh --uninstall --purge --yes` |
+| uninstall services but keep files | `bash install.sh --uninstall --purge --yes` |
+| fully reset install for retesting | `bash install.sh --clean-uninstall --yes` |
 
-## New Operator Surfaces (v1.1.19+)
+## Release v1.1.20 Surface Set
+
+These operator surfaces are part of the `v1.1.20` distro baseline:
 
 - `/admin/events`: schedule events and post event recaps.
 - `/events/recaps`: public recap feed with attendance outcomes.
@@ -259,6 +279,8 @@ When run without flags in an interactive terminal, `install.sh` opens an action 
 - `--repo-url <url>`: alias for `--repo`
 - `--status`: show current install status/endpoints
 - `--doctor`: run non-mutating diagnostics (preflight + current install health)
+- `--port-audit`: inspect configured ports (SSH/Web/IRC/Mail) and show listener ownership
+- `--debug-bundle`: write a deep diagnostics report to `<prefix>/WOLFBBS_DIAGNOSTICS_<timestamp>.txt`
 - `--start`: start existing WolfBBS services
 - `--stop`: stop existing WolfBBS services
 - `--restart`: restart existing WolfBBS services
@@ -268,6 +290,7 @@ When run without flags in an interactive terminal, `install.sh` opens an action 
 - `--upgrade`: pull/rebuild/restart stack in existing install
 - `--rapid-upgrade`: rebuild/restart from local source (no image pull) for fast iteration
 - `--uninstall`: stop services and optionally remove data
+- `--clean-uninstall`: stop services, purge volumes, and remove install directory (git checkout requires `--force`)
 - `--purge`: with uninstall, remove volumes/data
 - `--help`: show flag summary
 
@@ -286,6 +309,8 @@ Important generated values include:
 - `WOLFBBS_BBS_NAME`, `WOLFBBS_HOSTNAME`, `WOLFBBS_SETUP_PROFILE` (automation overrides; prefer UI setup)
 - `WOLFBBS_SSH_PORT`, `WOLFBBS_WEB_PORT`, `WOLFBBS_IRC_PORT`, `WOLFBBS_IRC_TLS_PORT`, `WOLFBBS_MAILIN_PORT`
 - `WOLFBBS_BOOTSTRAP_ADMIN_HANDLE`, `WOLFBBS_BOOTSTRAP_ADMIN_PASSWORD`
+- `WOLFBBS_INSTALL_PREFIX`, `WOLFBBS_INSTALL_WORKDIR`, `WOLFBBS_DOCKER_SOCKET`
+- `WOLFBBS_APP_UPGRADE_COMMAND`, `WOLFBBS_APP_UPGRADE_WORKDIR`, `WOLFBBS_APP_UPGRADE_TIMEOUT_SECONDS`
 
 ## Post-Install Commands
 
@@ -355,14 +380,13 @@ Rapid local upgrade (while iterating on code):
 bash install.sh --rapid-upgrade
 ```
 
-Optional in-BBS quick upgrade hook (sysop):
+In-BBS quick upgrade (sysop):
 
 ```bash
-export WOLFBBS_APP_UPGRADE_COMMAND="bash install.sh --rapid-upgrade --yes"
-export WOLFBBS_APP_UPGRADE_WORKDIR="/path/to/wolfbbs"
+bash install.sh --repair
 ```
 
-Then in SSH main menu press `/` and enter `/app upgrade`.
+`--repair` backfills the in-app upgrade env wiring on older installs. Then in SSH main menu press `/` and enter `/app upgrade`.
 
 Uninstall (interactive):
 
@@ -376,7 +400,13 @@ Uninstall + purge (non-interactive):
 bash install.sh --uninstall --purge --yes
 ```
 
-Note: if install prefix is a git checkout, the installer now keeps that directory and only removes running services/volumes.
+Clean uninstall (non-interactive, removes install directory):
+
+```bash
+bash install.sh --clean-uninstall --yes
+```
+
+Note: if install prefix is a git checkout, directory deletion is blocked unless you also pass `--force`.
 
 ## Verify Running Services
 

@@ -477,6 +477,9 @@ func (a *webApp) handleGatewayFileAction(w http.ResponseWriter, r *http.Request,
 		if ttlMinutes <= 0 {
 			ttlMinutes = 15
 		}
+		if ttlMinutes > 1440 {
+			ttlMinutes = 1440
+		}
 		if fileID > 0 {
 			if !a.fileVisibleToCallers(fileID) {
 				errMsg = "File is still in review."
@@ -485,7 +488,13 @@ func (a *webApp) handleGatewayFileAction(w http.ResponseWriter, r *http.Request,
 			ticket, err := a.createDownloadTicket(user.ID, fileID, time.Duration(ttlMinutes)*time.Minute)
 			if err == nil && ticket != nil {
 				redirectURL = appendRedirectQuery(redirectURL, "issued_token", ticket.Token)
-				notice = "Download ticket issued."
+				redirectURL = appendRedirectQuery(redirectURL, "issued_file", strconv.FormatInt(fileID, 10))
+				redirectURL = appendRedirectQuery(redirectURL, "issued_expires", ticket.ExpiresAt.UTC().Format(time.RFC3339))
+				unit := "minutes"
+				if ttlMinutes == 1 {
+					unit = "minute"
+				}
+				notice = "Download ticket issued (expires in " + strconv.Itoa(ttlMinutes) + " " + unit + ")."
 			} else {
 				errMsg = "Could not issue download ticket."
 			}
@@ -601,6 +610,8 @@ func (a *webApp) renderGatewayFiles(w http.ResponseWriter, r *http.Request, user
 		}
 	}
 	issuedToken := strings.TrimSpace(r.URL.Query().Get("issued_token"))
+	issuedFileID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("issued_file")), 10, 64)
+	issuedExpiresRaw := strings.TrimSpace(r.URL.Query().Get("issued_expires"))
 	csrf := a.csrfHiddenInput(r)
 	messageBlock := pageMessageBlock(r)
 	returnTo := "/gateway?view=files"
@@ -647,7 +658,29 @@ func (a *webApp) renderGatewayFiles(w http.ResponseWriter, r *http.Request, user
 
 	issuedBlock := ""
 	if issuedToken != "" {
-		issuedBlock = `<p><strong>Ticket issued:</strong> <code>` + htmlEscape(issuedToken) + `</code><br><a href="/gateway?download=` + url.QueryEscape(issuedToken) + `">/gateway?download=` + url.QueryEscape(issuedToken) + `</a></p>`
+		fileLabel := "current selection"
+		if issuedFileID > 0 {
+			if entry, err := a.adminRepo.GetFileEntry(issuedFileID); err == nil && entry != nil && strings.TrimSpace(entry.Name) != "" {
+				fileLabel = entry.Name
+			} else {
+				fileLabel = "file #" + strconv.FormatInt(issuedFileID, 10)
+			}
+		}
+		expiresLabel := "expiry not provided"
+		if issuedExpiresRaw != "" {
+			if expiresAt, err := time.Parse(time.RFC3339, issuedExpiresRaw); err == nil {
+				remaining := time.Until(expiresAt)
+				remainingLabel := "expired"
+				if remaining > 0 {
+					minutes := int((remaining + time.Minute - time.Second) / time.Minute)
+					remainingLabel = strconv.Itoa(minutes) + "m remaining"
+				}
+				expiresLabel = expiresAt.Local().Format("2006-01-02 15:04 MST") + " (" + remainingLabel + ")"
+			} else {
+				expiresLabel = issuedExpiresRaw
+			}
+		}
+		issuedBlock = `<section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Download Ticket Issued</h2><ul class="wolfbbs-list-clean"><li><strong>Token:</strong> <code>` + htmlEscape(issuedToken) + `</code></li><li><strong>File:</strong> ` + htmlEscape(fileLabel) + `</li><li><strong>Expires:</strong> ` + htmlEscape(expiresLabel) + `</li><li><strong>Link:</strong> <a href="/gateway?download=` + url.QueryEscape(issuedToken) + `">/gateway?download=` + url.QueryEscape(issuedToken) + `</a></li></ul></article></section>`
 	}
 
 	previewBlock := ``

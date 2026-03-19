@@ -13,11 +13,31 @@ WolfBBS gives you classic BBS texture with a modern operator control plane and t
 
 Quick links:
 - [Install now](#quick-install-linux)
+- [Release v1.1.20 notes](docs/releases/v1.1.20.md)
 - [Screenshot showcase](docs/SHOWCASE.md)
+- [Feature datasheet](docs/DATASHEET.md)
 - [Documentation hub](docs/README.md)
 - [Releases](https://github.com/Awassee/wolfbbs/releases)
 
 ![WolfBBS Getting Started in 60 seconds](docs/assets/screenshots/getting-started.gif)
+
+## Current Release Status
+
+WolfBBS is currently prepared for a `v1.1.20` distribution release with:
+
+- clean package generation via `scripts/package-dist.sh --clean --version v1.1.20`
+- checksum + manifest output per bundle under `dist/v1.1.20/`
+- full acceptance validation (`go test`, verifier fast/smoke, automated manual acceptance)
+- updated GitHub-facing product pages (`README`, `docs/SHOWCASE.md`, `docs/DATASHEET.md`, `docs/PRODUCT_GUIDE.md`)
+
+## Product Snapshot
+
+| Lane | Primary surfaces | Why this lane exists |
+| --- | --- | --- |
+| Caller | SSH ANSI, `/today`, `/boards`, `/chat`, `/doors` | keeps daily interaction fast, social, and game-friendly |
+| Sysop | `/admin/setup`, `/admin/launch`, `/admin/config`, `/admin/ops` | gives operators a direct launch and maintenance control plane |
+| Community | `/events`, `/challenges`, `/clubhouse`, IRC bridge | creates repeat visit loops and shared momentum |
+| Distribution | `bootstrap.sh`, `install.sh`, release tarballs | supports quick install, upgrade, repair, and uninstall lifecycle |
 
 ## Start In 3 Minutes
 
@@ -45,6 +65,17 @@ WolfBBS is built for operators who want the feel of a classic board without the 
 | File base and doors | Uploads, indexing, queue management, scores, trophies, and integrated games | Gives the board depth beyond message threads |
 | Packaging and lifecycle | Bootstrap installer, release tarballs, repair, doctor, upgrade, uninstall | Makes the product practical to deploy and maintain |
 
+## Datasheet Highlights
+
+| Highlight area | Core features | What this gives you |
+| --- | --- | --- |
+| Terminal-first caller UX | ANSI menus, message boards, private mail, doors, score surfaces | classic BBS feel with modern reliability |
+| Multi-surface access | SSH + web companion + IRC bridge | one community layer across different clients |
+| Sysop operations | setup wizard, launch center, config, audits, diagnostics | lower friction on day one and day two |
+| Release and lifecycle | bootstrap installer, package artifacts, upgrade/repair/uninstall commands | practical deployment path for non-developer operators |
+
+Full product datasheet: [docs/DATASHEET.md](docs/DATASHEET.md)
+
 ## Best Fit
 
 WolfBBS is a good fit if you want to:
@@ -70,36 +101,60 @@ curl -fsSL https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh |
 
 This path also works without a preinstalled `git` client.
 
-## Screenshots
+## Screenshot Gallery
 
-### Connect hub with built-in web terminal
+<table>
+  <tr>
+    <td width="50%">
+      <a href="docs/assets/screenshots/connect.png"><img src="docs/assets/screenshots/connect.png" alt="WolfBBS Connect hub"></a><br>
+      <strong>Connect Hub</strong><br>
+      <sub>SSH, web terminal, and IRC onboarding from one screen.</sub>
+    </td>
+    <td width="50%">
+      <a href="docs/assets/screenshots/boards.png"><img src="docs/assets/screenshots/boards.png" alt="WolfBBS message boards"></a><br>
+      <strong>Message Boards</strong><br>
+      <sub>Threaded discussion, filtering, and caller-focused board flow.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <a href="docs/assets/screenshots/chat.png"><img src="docs/assets/screenshots/chat.png" alt="WolfBBS live chat"></a><br>
+      <strong>Live Chat</strong><br>
+      <sub>Real-time room timeline shared with IRC bridge users.</sub>
+    </td>
+    <td width="50%">
+      <a href="docs/assets/screenshots/doors.png"><img src="docs/assets/screenshots/doors.png" alt="WolfBBS doors"></a><br>
+      <strong>Doors & Scores</strong><br>
+      <sub>Door discovery, replay loops, and score-first game surfaces.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <a href="docs/assets/screenshots/today.png"><img src="docs/assets/screenshots/today.png" alt="WolfBBS Today Brief"></a><br>
+      <strong>Today Brief</strong><br>
+      <sub>Daily summary route for callers and operators.</sub>
+    </td>
+    <td width="50%">
+      <a href="docs/assets/screenshots/admin-setup.png"><img src="docs/assets/screenshots/admin-setup.png" alt="WolfBBS admin setup"></a><br>
+      <strong>Admin Setup</strong><br>
+      <sub>Launch wizard for identity, safety baseline, and bootstrap checks.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <a href="docs/assets/screenshots/admin-config.png"><img src="docs/assets/screenshots/admin-config.png" alt="WolfBBS admin config"></a><br>
+      <strong>Admin Config Center</strong><br>
+      <sub>Runtime controls and feature flags from one operations panel.</sub>
+    </td>
+    <td width="50%">
+      <a href="docs/assets/screenshots/connect-mobile.png"><img src="docs/assets/screenshots/connect-mobile.png" alt="WolfBBS connect mobile"></a><br>
+      <strong>Mobile Connect</strong><br>
+      <sub>Phone-first connection instructions and browser terminal path.</sub>
+    </td>
+  </tr>
+</table>
 
-![WolfBBS Connect hub](docs/assets/screenshots/connect.png)
-
-### Boards and threaded discussion flow
-
-![WolfBBS Message Boards](docs/assets/screenshots/boards.png)
-
-### Shared live chat (web + IRC bridge)
-
-![WolfBBS Live Chat](docs/assets/screenshots/chat.png)
-
-### Door cockpit and score-first game discovery
-
-![WolfBBS Doors](docs/assets/screenshots/doors.png)
-
-### Daily briefing surface for regular callers
-
-![WolfBBS Today Brief](docs/assets/screenshots/today.png)
-
-### Sysop setup and runtime configuration center
-
-![WolfBBS Admin Setup](docs/assets/screenshots/admin-setup.png)
-![WolfBBS Admin Config](docs/assets/screenshots/admin-config.png)
-
-### Mobile-friendly connect experience
-
-![WolfBBS Connect (Mobile)](docs/assets/screenshots/connect-mobile.png)
+More visuals and route-level notes: [docs/SHOWCASE.md](docs/SHOWCASE.md)
 
 ## Choose Your Path
 
@@ -125,6 +180,14 @@ If you want packaged downloads instead of cloning source, use [GitHub Releases](
 tar -xzf wolfbbs_<version>_<os>_<arch>.tar.gz
 cd wolfbbs_<version>_<os>_<arch>
 bash install.sh --yes
+```
+
+Build clean `v1.1.20` distro bundles locally:
+
+```bash
+scripts/package-dist.sh --clean --version v1.1.20 \
+  --platform linux/amd64 --platform linux/arm64 \
+  --platform darwin/amd64 --platform darwin/arm64
 ```
 
 ## Which Surface Should You Use?
@@ -179,16 +242,16 @@ bash install.sh --logs
 bash install.sh --upgrade
 bash install.sh --rapid-upgrade
 bash install.sh --uninstall --purge --yes
+bash install.sh --clean-uninstall --yes
 ```
 
-Optional in-BBS upgrade hook:
+In-BBS upgrade:
 
 ```bash
-export WOLFBBS_APP_UPGRADE_COMMAND="bash install.sh --rapid-upgrade --yes"
-export WOLFBBS_APP_UPGRADE_WORKDIR="/path/to/wolfbbs"
+bash install.sh --repair
 ```
 
-Then in the SSH main menu press `/` and enter `/app upgrade`.
+`--repair` backfills in-app upgrade env wiring on older installs. Then in the SSH main menu press `/` and enter `/app upgrade`.
 
 ## Documentation
 
@@ -198,6 +261,7 @@ Full doc hub: [docs/README.md](docs/README.md)
 - [Quickstart](docs/QUICKSTART.md): fast path from download to first login
 - [Install Guide](docs/INSTALL.md): install modes, lifecycle commands, and packaging
 - [Product Guide](docs/PRODUCT_GUIDE.md): positioning, use cases, and operator workflow
+- [Datasheet](docs/DATASHEET.md): concise feature and deployment profile
 - [Showcase](docs/SHOWCASE.md): GitHub-facing feature highlights and screenshot tour
 - [Operator Playbook](docs/OPERATOR_PLAYBOOK.md): which operator surface to use, and when
 - [Troubleshooting](docs/TROUBLESHOOTING.md): symptom-driven fixes and recovery path

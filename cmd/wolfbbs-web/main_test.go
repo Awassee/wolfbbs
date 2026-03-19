@@ -1,10 +1,12 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -25,6 +27,7 @@ import (
 	"wolfbbs/internal/gateway"
 	"wolfbbs/internal/mods"
 	"wolfbbs/internal/repository"
+	"wolfbbs/internal/ui"
 )
 
 func TestMustBeRoleAdminBlocksNonAdmin(t *testing.T) {
@@ -123,6 +126,44 @@ func TestMustBeRoleAdminAppliesACSRule(t *testing.T) {
 	protected.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected allowed sysop to pass ACS, got %d", rr.Code)
+	}
+}
+
+func TestWFCDashboardStrictPolicy(t *testing.T) {
+	t.Setenv("WOLFBBS_WFC_STRICT", "true")
+	app := &webApp{
+		authSvc:  auth.NewService(repository.NewInMemoryUserRepository()),
+		sessions: map[string]sessionState{},
+	}
+	_, _ = app.authSvc.Register("sysop", "password123")
+	if err := app.authSvc.SetRole("sysop", roleAdmin); err != nil {
+		t.Fatalf("set role: %v", err)
+	}
+	insecureSID, ok := app.createSession("sysop")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+	secureSID, ok := app.createSessionWithContext("sysop", 2, "https", true)
+	if !ok {
+		t.Fatal("secure session creation failed")
+	}
+
+	protected := app.mustBeRole(roleAdmin, http.HandlerFunc(app.handleAdminSystem))
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/system", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: insecureSID})
+	rr := httptest.NewRecorder()
+	protected.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected strict wfc policy to deny insecure/1fa session, got %d", rr.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/admin/system", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: secureSID})
+	rr = httptest.NewRecorder()
+	protected.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected strict wfc policy to allow secure 2fa session, got %d", rr.Code)
 	}
 }
 
@@ -1224,6 +1265,26 @@ func TestGatewayFilebaseQueueAndTicket(t *testing.T) {
 	if token == "" {
 		t.Fatalf("expected issued token in redirect location: %s", loc)
 	}
+	expiresRaw := strings.TrimSpace(parsed.Query().Get("issued_expires"))
+	if expiresRaw == "" {
+		t.Fatalf("expected issued_expires in redirect location: %s", loc)
+	}
+	if _, err := time.Parse(time.RFC3339, expiresRaw); err != nil {
+		t.Fatalf("invalid issued_expires in redirect location: %s", loc)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, parsed.Path+"?"+parsed.RawQuery, nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleGateway(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("ticket status card page = %d body=%s", rr.Code, rr.Body.String())
+	}
+	for _, needle := range []string{"Download Ticket Issued", "Expires:"} {
+		if !strings.Contains(rr.Body.String(), needle) {
+			t.Fatalf("expected %q in ticket status card: %s", needle, rr.Body.String())
+		}
+	}
 
 	req = httptest.NewRequest(http.MethodGet, "/gateway?download="+url.QueryEscape(token), nil)
 	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
@@ -1234,6 +1295,185 @@ func TestGatewayFilebaseQueueAndTicket(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "wolfbbs-file-content") {
 		t.Fatalf("expected file body in download response, got %q", rr.Body.String())
+	}
+}
+
+func TestGatewayHubRendersModernDoors(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	if _, err := authSvc.Register("caller", "password123"); err != nil {
+		t.Fatalf("register user: %v", err)
+	}
+	app := &webApp{
+		authSvc:  authSvc,
+		userRepo: userRepo,
+		sessions: map[string]sessionState{},
+	}
+	sid, ok := app.createSession("caller")
+	if !ok {
+		t.Fatal("create session failed")
+	}
+	req := httptest.NewRequest(http.MethodGet, "/gateway", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.handleGateway(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("gateway hub status = %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, needle := range []string{
+		"Text Web Browser",
+		"Email Gateway",
+		"Generative AI",
+		"Feed Reader",
+		"Article Summarizer",
+		"JSON Explorer",
+	} {
+		if !strings.Contains(body, needle) {
+			t.Fatalf("expected %q in gateway hub body: %s", needle, body)
+		}
+	}
+}
+
+func TestAdminGatewaysPersistsAISettingsAndGatewayView(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
+	authSvc := auth.NewService(userRepo)
+	if _, err := authSvc.Register("sysop", "password123"); err != nil {
+		t.Fatalf("register sysop: %v", err)
+	}
+	if err := authSvc.SetRole("sysop", roleAdmin); err != nil {
+		t.Fatalf("set role: %v", err)
+	}
+	app := &webApp{
+		authSvc:   authSvc,
+		userRepo:  userRepo,
+		adminRepo: adminRepo,
+		sessions:  map[string]sessionState{},
+	}
+	sid, ok := app.createSession("sysop")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+	csrf := app.sessions[sid].csrf
+
+	form := url.Values{}
+	form.Set("smtp_host", "smtp.example.com")
+	form.Set("smtp_port", "2525")
+	form.Set("smtp_user", "mailer")
+	form.Set("smtp_pass", "secret")
+	form.Set("from_domain", "bbs.example.com")
+	form.Set("max_recipients", "4")
+	form.Set("max_message_bytes", "4096")
+	form.Set("web_timeout_sec", "12")
+	form.Set("web_max_bytes", "123456")
+	form.Set("ai_enabled", "1")
+	form.Set("ai_base_url", "https://api.example.ai")
+	form.Set("ai_model", "gpt-unit")
+	form.Set("ai_api_key", "unit-secret")
+	form.Set("ai_system_prompt", "Be concise.")
+	form.Set("ai_timeout_sec", "22")
+	form.Set("ai_max_tokens", "333")
+	form.Set("csrf_token", csrf)
+	req := httptest.NewRequest(http.MethodPost, "/admin/gateways", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.mustBeRole(roleAdmin, app.handleAdminGateways).ServeHTTP(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("admin gateways post status = %d", rr.Code)
+	}
+	if got := rr.Header().Get("Location"); !strings.Contains(got, "/admin/gateways?notice=") {
+		t.Fatalf("expected notice redirect, got %q", got)
+	}
+
+	if cfg, err := adminRepo.GetGatewaySettings(); err != nil || cfg == nil {
+		t.Fatalf("expected gateway settings saved, cfg=%+v err=%v", cfg, err)
+	} else if cfg.SMTPHost != "smtp.example.com" || cfg.SMTPPort != 2525 || cfg.FromDomain != "bbs.example.com" {
+		t.Fatalf("unexpected smtp cfg: %+v", *cfg)
+	}
+	for key, want := range map[string]string{
+		sysSettingGatewayAIBaseURL:      "https://api.example.ai",
+		sysSettingGatewayAIModel:        "gpt-unit",
+		sysSettingGatewayAIAPIKey:       "unit-secret",
+		sysSettingGatewayAISystemPrompt: "Be concise.",
+		sysSettingGatewayAITimeoutSec:   "22",
+		sysSettingGatewayAIMaxTokens:    "333",
+	} {
+		got, err := adminRepo.GetSystemSetting(key)
+		if err != nil {
+			t.Fatalf("missing system setting %s: %v", key, err)
+		}
+		if strings.TrimSpace(got) != want {
+			t.Fatalf("system setting %s mismatch: got %q want %q", key, got, want)
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/gateway?view=ai", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleGateway(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("gateway ai view status = %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, needle := range []string{"Generative AI Door", "gpt-unit", "https://api.example.ai"} {
+		if !strings.Contains(body, needle) {
+			t.Fatalf("expected %q in ai view body: %s", needle, body)
+		}
+	}
+}
+
+func TestMailExternalSendUsesAdminGatewayLimits(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
+	mailRepo := repository.NewInMemoryPrivateMailRepository()
+	authSvc := auth.NewService(userRepo)
+	if _, err := authSvc.Register("caller", "password123"); err != nil {
+		t.Fatalf("register caller: %v", err)
+	}
+	if err := authSvc.SetVerified("caller", true); err != nil {
+		t.Fatalf("set verified: %v", err)
+	}
+	if err := adminRepo.UpsertGatewaySettings(&domain.GatewaySettings{
+		MaxRecipients:   3,
+		MaxMessageBytes: 32,
+		WebTimeoutSec:   10,
+		WebMaxBytes:     2 * 1024 * 1024,
+	}); err != nil {
+		t.Fatalf("seed gateway settings: %v", err)
+	}
+	app := &webApp{
+		authSvc:              authSvc,
+		userRepo:             userRepo,
+		adminRepo:            adminRepo,
+		mailRepo:             mailRepo,
+		sessions:             map[string]sessionState{},
+		requireVerifiedEmail: false,
+	}
+	sid, ok := app.createSession("caller")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+	csrf := app.sessions[sid].csrf
+
+	form := url.Values{}
+	form.Set("to", "outside@example.net")
+	form.Set("subject", "hello")
+	form.Set("body", strings.Repeat("x", 80))
+	form.Set("csrf_token", csrf)
+	req := httptest.NewRequest(http.MethodPost, "/mail", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.handleMail(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("expected redirect on relay error, got %d", rr.Code)
+	}
+	location := rr.Header().Get("Location")
+	decoded, _ := url.QueryUnescape(location)
+	if !strings.Contains(strings.ToLower(decoded), "message exceeds 32 bytes") {
+		t.Fatalf("expected max message bytes error from admin gateway config, location=%q decoded=%q", location, decoded)
 	}
 }
 
@@ -2345,6 +2585,151 @@ func TestWithModernUISkipsChatStreamPath(t *testing.T) {
 	}
 }
 
+func TestModernUIBootstrapIncludesAdvancedUXPassFeatures(t *testing.T) {
+	for _, needle := range []string{
+		"wolfbbs-breadcrumbs",
+		"wolfbbs-pref-controls",
+		"wolfbbs-table-toolbar",
+		"wolfbbs-form-actions-sticky",
+		"wolfbbsBackToTop",
+		"wolfbbsScrollProgress",
+		"toggleFavoriteCurrentRoute",
+		"downloadTableCSV",
+		"mountSectionToggles",
+		"enhanceFieldValidation",
+	} {
+		if !strings.Contains(modernUIBootstrap, needle) {
+			t.Fatalf("expected modern UI bootstrap to include %q", needle)
+		}
+	}
+}
+
+func TestModernUIBootstrapIncludesNextTenFeatureHooks(t *testing.T) {
+	for _, needle := range []string{
+		"goalCoachRegistry",
+		"mountGoalCoach",
+		"tableViewPrefix",
+		"saveTableView",
+		"wolfbbsNotesButton",
+		"mountQuickNotesWorkspace",
+		"mountRouteScorecard",
+		"enhanceEmptyStates",
+		"mountMacroHelp",
+		"attachFocusTimerUI",
+		"enhanceComposeTemplates",
+		"mountReplayBanner",
+		"telemetryKey",
+		"trackTelemetry",
+		"downloadJSONFile(\"wolfbbs-ux-telemetry.json\"",
+	} {
+		if !strings.Contains(modernUIBootstrap, needle) {
+			t.Fatalf("expected modern UI bootstrap to include %q", needle)
+		}
+	}
+}
+
+func TestModernUIBootstrapIncludesRoundTwoTwentyUXHooks(t *testing.T) {
+	for _, needle := range []string{
+		"ensureLiveRegion",
+		"announceLive",
+		"paletteHistoryKey",
+		"savePaletteHistoryEntry",
+		"mountNetworkStatusChip",
+		"mountLatencyChip",
+		"Auto refresh",
+		"wolfbbs-column-toggle-panel",
+		"Copy JSON",
+		"mountGuideMinimizeControl",
+		"wolfbbs-section-progress",
+		"mountShortcutLegendOverlay",
+		"wolfbbs-text-counter",
+		"form:required-missing",
+		"wolfbbsUXDiagButton",
+		"applyFocusMode",
+		"focusModeKey",
+		"trackTelemetry(\"route:view\")",
+		"downloadJSONFile(\"wolfbbs-ui-diagnostics.json\"",
+		"mountTelemetryChip",
+	} {
+		if !strings.Contains(modernUIBootstrap, needle) {
+			t.Fatalf("expected modern UI bootstrap to include %q", needle)
+		}
+	}
+}
+
+func TestModernUIBootstrapIncludesRoundThreeNextTenUXHooks(t *testing.T) {
+	for _, needle := range []string{
+		"toastHistoryKey",
+		"undoStackKey",
+		"workspaceKey",
+		"revisitKeyPrefix",
+		"kpiSnapshotKeyPrefix",
+		"spotlightKey",
+		"checkpointKey",
+		"applyGlossaryEnhancer",
+		"mountRevisitBanner",
+		"mountKPIDeltas",
+		"mountToastCenter",
+		"mountWorkspaceHub",
+		"buildHandoffMarkdown",
+		"mountSpotlightSearch",
+		"mountCheckpointHub",
+		"pushUndoAction",
+		"popUndoAction",
+		"wolfbbs-selected-row",
+		"Export selected",
+		"Copy JSON",
+		"wolfbbsOpenWorkspaceHub",
+		"wolfbbsOpenToastCenter",
+		"wolfbbsOpenCheckpointHub",
+		"wolfbbs-spotlight-hit",
+		"Last visited this route",
+		"Handoff markdown copied",
+		"Sections 0/",
+	} {
+		if !strings.Contains(modernUIBootstrap, needle) {
+			t.Fatalf("expected modern UI bootstrap to include %q", needle)
+		}
+	}
+}
+
+func TestModernUIBootstrapIncludesRoundFourNextTenUXHooks(t *testing.T) {
+	for _, needle := range []string{
+		"draftKeyPrefix",
+		"incidentKey",
+		"playbookKeyPrefix",
+		"reminderKey",
+		"releaseGateKey",
+		"feedbackKey",
+		"kpiWatchKeyPrefix",
+		"syncChannelName",
+		"wolfbbsSyncChannel",
+		"mountCrossTabSync",
+		"mountDraftCenter",
+		"mountKPIWatchCenter",
+		"mountIncidentConsole",
+		"mountPlaybookRunner",
+		"mountReminderScheduler",
+		"mountReleaseGate",
+		"mountFeedbackPulse",
+		"Draft autosave is available.",
+		"Select visible",
+		"Invert selected",
+		"Copy selected JSON",
+		"KPI Watch Center",
+		"Incident Console",
+		"Playbook Runner",
+		"Reminder Scheduler",
+		"Release Gate",
+		"Feedback Pulse",
+		"Ctrl/Cmd+Shift+D",
+	} {
+		if !strings.Contains(modernUIBootstrap, needle) {
+			t.Fatalf("expected modern UI bootstrap to include %q", needle)
+		}
+	}
+}
+
 func TestHandleChatPageSupportsLegacyAndCurrentMessageKeys(t *testing.T) {
 	userRepo := repository.NewInMemoryUserRepository()
 	authSvc := auth.NewService(userRepo)
@@ -2377,7 +2762,18 @@ func TestHandleChatPageSupportsLegacyAndCurrentMessageKeys(t *testing.T) {
 	if !strings.Contains(body, "msgValue(m, 'body', 'Body'") {
 		t.Fatalf("expected body fallback logic in chat page script")
 	}
-	for _, needle := range []string{"Open Channel", "Reconnect Stream", "streamState.lastSeenId", "const canModerate =", "This room is locked for non-moderators."} {
+	for _, needle := range []string{
+		"Open Channel",
+		"Reconnect Stream",
+		"streamState.lastSeenId",
+		"const canModerate =",
+		"This room is locked for non-moderators.",
+		"normalizeIncomingMessage",
+		"presenceValue(row, 'nick', 'Nick'",
+		"chatStatePill",
+		"updateMessageCount()",
+		"currentHandle",
+	} {
 		if !strings.Contains(body, needle) {
 			t.Fatalf("expected chat page to include %q, got %q", needle, body)
 		}
@@ -2479,6 +2875,41 @@ func TestHandleChatOnlineDefaultsToLobby(t *testing.T) {
 	}
 	if int(payload["count"].(float64)) != 1 {
 		t.Fatalf("expected default lobby presence count 1, got %#v", payload["count"])
+	}
+}
+
+func TestHandleChatOnlineUsesLowercasePresenceKeys(t *testing.T) {
+	app := &webApp{chatSvc: chat.NewServiceForTest()}
+	app.chatSvc.JoinChannel("caller", "#lobby")
+
+	req := httptest.NewRequest(http.MethodGet, "/chat/online?channel=%23lobby", nil)
+	rr := httptest.NewRecorder()
+	app.handleChatOnline(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("chat online status = %d", rr.Code)
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode chat online payload: %v", err)
+	}
+	rows, ok := payload["presence"].([]interface{})
+	if !ok || len(rows) == 0 {
+		t.Fatalf("expected presence rows, got %#v", payload["presence"])
+	}
+	first, ok := rows[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected object row, got %#v", rows[0])
+	}
+	for _, key := range []string{"nick", "node", "online", "idle_sec", "area", "login_at", "last_seen"} {
+		if _, ok := first[key]; !ok {
+			t.Fatalf("expected key %q in presence row, got %#v", key, first)
+		}
+	}
+	for _, key := range []string{"Nick", "Node", "Online", "IdleSec", "Area", "LoginAt", "LastSeen"} {
+		if _, ok := first[key]; ok {
+			t.Fatalf("unexpected uppercase key %q leaked into presence row: %#v", key, first)
+		}
 	}
 }
 
@@ -2830,7 +3261,7 @@ func TestConnectAndTourPages(t *testing.T) {
 	if !strings.Contains(body, "WolfBBS Connect") || !strings.Contains(body, "ws://localhost:6080/ws-login") {
 		t.Fatalf("connect page missing expected content: %s", body)
 	}
-	for _, needle := range []string{"Choose your client", "First call checklist", "Clipboard-Friendly Commands", "Connection Sanity", "Mobile-first connection picks", "iPhone/iPad", "Android"} {
+	for _, needle := range []string{"Choose your client", "First call checklist", "Clipboard-Friendly Commands", "Connection Sanity", "Terminal Profile Presets", "Compatibility Notes", "Mobile-first connection picks", "iPhone/iPad", "Android"} {
 		if !strings.Contains(body, needle) {
 			t.Fatalf("connect page missing %q: %s", needle, body)
 		}
@@ -2853,6 +3284,15 @@ func TestConnectAndTourPages(t *testing.T) {
 	if strings.Contains(body, "if (!v) return;") {
 		t.Fatalf("connect page still blocks empty line submit")
 	}
+	rr = httptest.NewRecorder()
+	app.handleConnect(rr, httptest.NewRequest(http.MethodGet, "/connect?preset=syncterm", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("connect preset status = %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), `const preset = "syncterm";`) {
+		t.Fatalf("connect page missing syncterm preset wiring: %s", rr.Body.String())
+	}
+
 	sid, ok := app.createSession("touruser")
 	if !ok {
 		t.Fatal("session creation failed")
@@ -3748,6 +4188,50 @@ func TestStartAttentionOpsAndRichComposeSurfaces(t *testing.T) {
 	}
 	if got := app.countRateLimits(); got != 0 {
 		t.Fatalf("expected rate limits to clear, got %d", got)
+	}
+}
+
+func TestShowcaseGuestAndCallerViews(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	if _, err := authSvc.Register("caller", "password123"); err != nil {
+		t.Fatalf("register caller: %v", err)
+	}
+	app := &webApp{
+		authSvc:   authSvc,
+		boardRepo: repository.NewInMemoryBoardRepository(),
+		adminRepo: repository.NewInMemoryAdminRepository(),
+		chatSvc:   chat.NewServiceForTest(),
+		sessions:  map[string]sessionState{},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/showcase", nil)
+	rr := httptest.NewRecorder()
+	app.handleShowcase(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("guest showcase status = %d", rr.Code)
+	}
+	for _, needle := range []string{"Product Showcase", "10-minute smoke flow", "Experience Lanes", "docs/EXTENSION_SDK.md"} {
+		if !strings.Contains(rr.Body.String(), needle) {
+			t.Fatalf("guest showcase missing %q: %s", needle, rr.Body.String())
+		}
+	}
+
+	sid, ok := app.createSession("caller")
+	if !ok {
+		t.Fatal("caller session creation failed")
+	}
+	req = httptest.NewRequest(http.MethodGet, "/showcase", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleShowcase(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("caller showcase status = %d", rr.Code)
+	}
+	for _, needle := range []string{"First-Run Progress", "/first-call"} {
+		if !strings.Contains(rr.Body.String(), needle) {
+			t.Fatalf("caller showcase missing %q: %s", needle, rr.Body.String())
+		}
 	}
 }
 
@@ -5638,7 +6122,7 @@ func TestGatewayTicketRejectsExternalReturnTo(t *testing.T) {
 	if strings.TrimSpace(parsed.Query().Get("issued_token")) == "" {
 		t.Fatalf("expected issued_token on redirect, got %q", location)
 	}
-	if !strings.Contains(parsed.Query().Get("notice"), "Download ticket issued.") {
+	if !strings.Contains(parsed.Query().Get("notice"), "Download ticket issued") {
 		t.Fatalf("expected notice on redirect, got %q", location)
 	}
 }
@@ -5683,6 +6167,89 @@ func TestGatewayFilesShowsPreviewAndRelatedUploads(t *testing.T) {
 	for _, needle := range []string{"File Preview", "Related Uploads", "ansi-lab.zip"} {
 		if !strings.Contains(body, needle) {
 			t.Fatalf("expected %q in file preview page: %s", needle, body)
+		}
+	}
+}
+
+func TestAdminFilesTicketShowsExpiryCard(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
+	authSvc := auth.NewService(userRepo)
+	sysop, err := authSvc.Register("sysop", "password123")
+	if err != nil {
+		t.Fatalf("register sysop: %v", err)
+	}
+	if err := authSvc.SetRole("sysop", roleAdmin); err != nil {
+		t.Fatalf("set sysop role: %v", err)
+	}
+
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "ops-guide.txt")
+	if err := os.WriteFile(filePath, []byte("ops"), 0o644); err != nil {
+		t.Fatalf("write fixture file: %v", err)
+	}
+	if err := adminRepo.CreateFileArea(&domain.FileArea{Name: "Uploads", Path: dir, Description: "test"}); err != nil {
+		t.Fatalf("create area: %v", err)
+	}
+	app := &webApp{
+		authSvc:   authSvc,
+		adminRepo: adminRepo,
+		sessions:  map[string]sessionState{},
+	}
+	if _, _, err := app.indexAreaFiles(domain.FileArea{ID: 1, Name: "Uploads", Path: dir}, sysop.ID); err != nil {
+		t.Fatalf("index area files: %v", err)
+	}
+	files, err := adminRepo.ListFileEntries(0, "ops-guide", nil, 10)
+	if err != nil {
+		t.Fatalf("list files: %v", err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("expected one indexed file, got %d", len(files))
+	}
+	if err := adminRepo.EnqueueDownload(sysop.ID, files[0].ID); err != nil {
+		t.Fatalf("enqueue file: %v", err)
+	}
+
+	sid, ok := app.createSession("sysop")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+	form := url.Values{}
+	form.Set("action", "ticket")
+	form.Set("queue_user_id", strconv.FormatInt(sysop.ID, 10))
+	form.Set("file_id", strconv.FormatInt(files[0].ID, 10))
+	form.Set("ttl_minutes", "30")
+	form.Set("csrf_token", app.sessions[sid].csrf)
+	req := httptest.NewRequest(http.MethodPost, "/admin/files", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.mustBeRole(roleAdmin, http.HandlerFunc(app.handleAdminFiles)).ServeHTTP(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("issue ticket status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	location := rr.Header().Get("Location")
+	parsed, err := url.Parse(location)
+	if err != nil {
+		t.Fatalf("parse redirect %q: %v", location, err)
+	}
+	if strings.TrimSpace(parsed.Query().Get("issued_token")) == "" {
+		t.Fatalf("expected issued token, got %q", location)
+	}
+	if strings.TrimSpace(parsed.Query().Get("issued_expires")) == "" {
+		t.Fatalf("expected issued expires, got %q", location)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, parsed.Path+"?"+parsed.RawQuery, nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.mustBeRole(roleAdmin, http.HandlerFunc(app.handleAdminFiles)).ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("admin files view status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	for _, needle := range []string{"Issued Ticket", "Expires:", "ops-guide.txt"} {
+		if !strings.Contains(rr.Body.String(), needle) {
+			t.Fatalf("expected %q in admin files ticket card: %s", needle, rr.Body.String())
 		}
 	}
 }
@@ -6610,7 +7177,7 @@ func TestTodayShowsCallerActivityHeatmap(t *testing.T) {
 		t.Fatalf("today status = %d body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, needle := range []string{"Activity Heatmap", "Posts, private mail, and completed calls over the last 14 days.", "3 touch(es)", "hot"} {
+	for _, needle := range []string{"Activity Heatmap", "Posts, private mail, and completed calls over the last 14 days.", "touch(es)", "hot"} {
 		if !strings.Contains(body, needle) {
 			t.Fatalf("today page missing %q: %s", needle, body)
 		}
@@ -7068,6 +7635,9 @@ func TestWebQuickJumpPath(t *testing.T) {
 	if got := webQuickJumpPath("mail"); got != "/mail" {
 		t.Fatalf("expected /mail, got %q", got)
 	}
+	if got := webQuickJumpPath("showcase"); got != "/showcase" {
+		t.Fatalf("expected /showcase, got %q", got)
+	}
 	if got := webQuickJumpPath("status"); got != "/status" {
 		t.Fatalf("expected /status, got %q", got)
 	}
@@ -7095,8 +7665,59 @@ func TestWebQuickJumpPath(t *testing.T) {
 	if got := webQuickJumpPath("clubhouse"); got != "/clubhouse" {
 		t.Fatalf("expected /clubhouse, got %q", got)
 	}
+	if got := webQuickJumpPath("streaks"); got != "/streaks" {
+		t.Fatalf("expected /streaks, got %q", got)
+	}
+	if got := webQuickJumpPath("next"); got != "/next" {
+		t.Fatalf("expected /next, got %q", got)
+	}
+	if got := webQuickJumpPath("spotlights"); got != "/spotlights" {
+		t.Fatalf("expected /spotlights, got %q", got)
+	}
 	if got := webQuickJumpPath("challenges"); got != "/challenges" {
 		t.Fatalf("expected /challenges, got %q", got)
+	}
+	if got := webQuickJumpPath("missions"); got != "/missions" {
+		t.Fatalf("expected /missions, got %q", got)
+	}
+	if got := webQuickJumpPath("resume"); got != "/resume" {
+		t.Fatalf("expected /resume, got %q", got)
+	}
+	if got := webQuickJumpPath("comeback"); got != "/doors/comeback" {
+		t.Fatalf("expected /doors/comeback, got %q", got)
+	}
+	if got := webQuickJumpPath("mentorship"); got != "/mentorship" {
+		t.Fatalf("expected /mentorship, got %q", got)
+	}
+	if got := webQuickJumpPath("milestones"); got != "/milestones" {
+		t.Fatalf("expected /milestones, got %q", got)
+	}
+	if got := webQuickJumpPath("time-lane"); got != "/time-lane" {
+		t.Fatalf("expected /time-lane, got %q", got)
+	}
+	if got := webQuickJumpPath("digest-prefs"); got != "/digest/preferences" {
+		t.Fatalf("expected /digest/preferences, got %q", got)
+	}
+	if got := webQuickJumpPath("admin-missions"); got != "/admin/missions" {
+		t.Fatalf("expected /admin/missions, got %q", got)
+	}
+	if got := webQuickJumpPath("admin-mentorship"); got != "/admin/mentorship" {
+		t.Fatalf("expected /admin/mentorship, got %q", got)
+	}
+	if got := webQuickJumpPath("mod-center"); got != "/admin/mod-center" {
+		t.Fatalf("expected /admin/mod-center, got %q", got)
+	}
+	if got := webQuickJumpPath("plugins"); got != "/admin/plugins" {
+		t.Fatalf("expected /admin/plugins, got %q", got)
+	}
+	if got := webQuickJumpPath("themes"); got != "/admin/themes" {
+		t.Fatalf("expected /admin/themes, got %q", got)
+	}
+	if got := webQuickJumpPath("webhooks"); got != "/admin/webhooks" {
+		t.Fatalf("expected /admin/webhooks, got %q", got)
+	}
+	if got := webQuickJumpPath("analytics"); got != "/admin/analytics" {
+		t.Fatalf("expected /admin/analytics, got %q", got)
 	}
 	if got := webQuickJumpPath("upgrade-safety"); got != "/admin/upgrade-safety" {
 		t.Fatalf("expected /admin/upgrade-safety, got %q", got)
@@ -7739,12 +8360,30 @@ func TestAdminReleaseDashboardRendersArtifacts(t *testing.T) {
 		}
 	}
 
-	req = httptest.NewRequest(http.MethodPost, "/admin/release", strings.NewReader("x=1"))
+	form := url.Values{
+		"csrf_token": {app.sessions[sid].csrf},
+		"action":     {"toggle_check"},
+		"key":        {"go_test_all"},
+		"done":       {"1"},
+	}
+	req = httptest.NewRequest(http.MethodPost, "/admin/release", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
 	rr = httptest.NewRecorder()
 	app.handleAdminReleaseDashboard(rr, req)
-	if rr.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("expected 405 for non-GET release dashboard, got %d", rr.Code)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("expected redirect on release checklist update, got %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/admin/release", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleAdminReleaseDashboard(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("release dashboard status after update = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "go test ./...") {
+		t.Fatalf("expected release checklist row after update: %s", rr.Body.String())
 	}
 }
 
@@ -8170,5 +8809,722 @@ func TestAdminUpgradeSafetyAndBackupBrowser(t *testing.T) {
 		if !kinds[kind] {
 			t.Fatalf("expected artifact kind %q in %+v", kind, artifacts)
 		}
+	}
+}
+
+func TestRoadmap146PluginManifestCapabilityMatrix(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	if _, err := authSvc.Register("sysop", "password123"); err != nil {
+		t.Fatalf("register sysop: %v", err)
+	}
+	if err := authSvc.SetRole("sysop", roleAdmin); err != nil {
+		t.Fatalf("set sysop role: %v", err)
+	}
+	app := &webApp{
+		authSvc:   authSvc,
+		userRepo:  userRepo,
+		adminRepo: repository.NewInMemoryAdminRepository(),
+		sessions:  map[string]sessionState{},
+	}
+	sid, ok := app.createSession("sysop")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+
+	form := url.Values{
+		"csrf_token":      {app.sessions[sid].csrf},
+		"action":          {"save_plugin"},
+		"id":              {"mod_sync"},
+		"entrypoint":      {"/app/plugins/mod-sync"},
+		"capabilities":    {"board.read,board.write,http.outbound"},
+		"sandbox_profile": {"strict"},
+		"retention_days":  {"45"},
+		"enabled":         {"1"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/plugins", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.handleAdminPlugins(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("save plugin status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/admin/plugins", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleAdminPlugins(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("plugins page status = %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, needle := range []string{"Plugin Manifest Contracts", "mod_sync", "board.read", "Capability Matrix", "Starter SDK Pack"} {
+		if !strings.Contains(body, needle) {
+			t.Fatalf("expected %q in plugins page: %s", needle, body)
+		}
+	}
+}
+
+func TestRoadmap146PluginStarterPackDownload(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	if _, err := authSvc.Register("sysop", "password123"); err != nil {
+		t.Fatalf("register sysop: %v", err)
+	}
+	if err := authSvc.SetRole("sysop", roleAdmin); err != nil {
+		t.Fatalf("set sysop role: %v", err)
+	}
+	app := &webApp{
+		authSvc:   authSvc,
+		userRepo:  userRepo,
+		adminRepo: repository.NewInMemoryAdminRepository(),
+		sessions:  map[string]sessionState{},
+	}
+	sid, ok := app.createSession("sysop")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/plugins/starter?id=mod_sync", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.handleAdminPluginStarter(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("starter pack status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("Content-Type"); !strings.Contains(got, "application/zip") {
+		t.Fatalf("expected zip content-type, got %q", got)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(rr.Body.Bytes()), int64(rr.Body.Len()))
+	if err != nil {
+		t.Fatalf("open zip: %v", err)
+	}
+	names := map[string]bool{}
+	manifestBody := ""
+	for _, file := range zr.File {
+		names[file.Name] = true
+		if file.Name == "mod_sync/manifest.json" {
+			rc, err := file.Open()
+			if err != nil {
+				t.Fatalf("open manifest file: %v", err)
+			}
+			raw, err := io.ReadAll(rc)
+			_ = rc.Close()
+			if err != nil {
+				t.Fatalf("read manifest file: %v", err)
+			}
+			manifestBody = string(raw)
+		}
+	}
+	for _, want := range []string{
+		"mod_sync/manifest.json",
+		"mod_sync/entrypoint.sh",
+		"mod_sync/event.sample.json",
+		"mod_sync/README.md",
+	} {
+		if !names[want] {
+			t.Fatalf("missing expected starter file %q in %+v", want, names)
+		}
+	}
+	if !strings.Contains(manifestBody, `"id": "mod_sync"`) {
+		t.Fatalf("expected plugin id in manifest: %s", manifestBody)
+	}
+}
+
+func TestRoadmap147ThemeMarketplaceImportAndApply(t *testing.T) {
+	t.Setenv("WOLFBBS_THEME_BUNDLE_DIR", t.TempDir())
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	if _, err := authSvc.Register("sysop", "password123"); err != nil {
+		t.Fatalf("register sysop: %v", err)
+	}
+	if err := authSvc.SetRole("sysop", roleAdmin); err != nil {
+		t.Fatalf("set sysop role: %v", err)
+	}
+	app := &webApp{
+		authSvc:   authSvc,
+		userRepo:  userRepo,
+		adminRepo: repository.NewInMemoryAdminRepository(),
+		sessions:  map[string]sessionState{},
+	}
+	sid, ok := app.createSession("sysop")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+
+	bundle := `{"manifest":{"id":"retro_night","name":"Retro Night","version":"1.0.0","author":"sysop"},"themes":[{"name":"retro-night","status_fg":"fg-black","status_bg":"bg-gray","body_fg":"fg-yellow","accent_fg":"fg-orange","warn_fg":"fg-red","error_fg":"fg-magenta","muted_fg":"fg-green"}]}`
+	form := url.Values{
+		"csrf_token":  {app.sessions[sid].csrf},
+		"action":      {"import_bundle"},
+		"bundle_json": {bundle},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/themes", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.handleAdminThemes(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("import bundle status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	form = url.Values{
+		"csrf_token": {app.sessions[sid].csrf},
+		"action":     {"apply_bundle"},
+		"id":         {"retro_night"},
+	}
+	req = httptest.NewRequest(http.MethodPost, "/admin/themes", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleAdminThemes(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("apply bundle status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if got := app.activeThemeMarketplaceBundleID(); got != "retro_night" {
+		t.Fatalf("expected active bundle retro_night, got %q", got)
+	}
+
+	themeFound := false
+	for _, name := range ui.ThemeNames() {
+		if name == "retro-night" {
+			themeFound = true
+			break
+		}
+	}
+	if !themeFound {
+		t.Fatalf("expected imported theme retro-night in %+v", ui.ThemeNames())
+	}
+}
+
+func TestRoadmap148WebhookBridgeRetrySemantics(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		var payload map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode webhook payload: %v", err)
+		}
+		if payload["event"] != "board.created" {
+			t.Fatalf("expected event board.created, got %+v", payload)
+		}
+		if attempts == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	app := &webApp{adminRepo: repository.NewInMemoryAdminRepository()}
+	app.persistWebhookBridgeConfig(webhookBridgeConfig{
+		Enabled:        true,
+		Endpoint:       server.URL,
+		Events:         []string{"board.created"},
+		RetryAttempts:  2,
+		BackoffMS:      1,
+		TimeoutSeconds: 2,
+	})
+	app.dispatchWebhookEvent("board.created", map[string]string{"board_id": "42", "board": "General"})
+	if attempts != 2 {
+		t.Fatalf("expected 2 attempts, got %d", attempts)
+	}
+	logs := app.loadWebhookDeliveryLogs()
+	if len(logs) == 0 {
+		t.Fatal("expected webhook delivery log rows")
+	}
+	if !logs[0].Success || logs[0].Attempts != 2 {
+		t.Fatalf("unexpected webhook log %+v", logs[0])
+	}
+}
+
+func TestRoadmap149AnalyticsAndRetentionRoutes(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	boardRepo := repository.NewInMemoryBoardRepository()
+	msgRepo := repository.NewInMemoryMessageRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
+	doorRepo := repository.NewInMemoryDoorRepository()
+	authSvc := auth.NewService(userRepo)
+	chatSvc := chat.NewServiceForTest()
+
+	caller, err := authSvc.Register("caller", "password123")
+	if err != nil {
+		t.Fatalf("register caller: %v", err)
+	}
+	if _, err := authSvc.Register("sysop", "password123"); err != nil {
+		t.Fatalf("register sysop: %v", err)
+	}
+	if err := authSvc.SetRole("sysop", roleAdmin); err != nil {
+		t.Fatalf("set sysop role: %v", err)
+	}
+	board := &domain.Board{Name: "General", Conference: "Public", CreatedBy: caller.ID}
+	if err := boardRepo.Create(board); err != nil {
+		t.Fatalf("create board: %v", err)
+	}
+	if err := msgRepo.CreateMessage(&domain.Message{BoardID: board.ID, AuthorID: caller.ID, Subject: "weekly update", Body: "msg", CreatedAt: time.Now().UTC().Add(-30 * time.Minute)}); err != nil {
+		t.Fatalf("create message: %v", err)
+	}
+	chatSvc.JoinChannel("caller", "#lobby")
+	if _, err := chatSvc.Post("caller", "#lobby", "chat check-in"); err != nil {
+		t.Fatalf("chat post: %v", err)
+	}
+	doorRegistry := doors.NewRegistry()
+	doorRegistry.SetRepository(doorRepo)
+	doorRegistry.Register(doors.Door{ID: "retro-door", Hotkey: "R", Name: "Retro Door", Command: "/bin/true"})
+	if err := doorRepo.AddEvent(&domain.DoorEvent{DoorID: "retro-door", UserID: caller.ID, EventType: "start", CreatedAt: time.Now().UTC().Add(-20 * time.Minute)}); err != nil {
+		t.Fatalf("seed door event: %v", err)
+	}
+
+	app := &webApp{
+		authSvc:      authSvc,
+		userRepo:     userRepo,
+		boardRepo:    boardRepo,
+		msgRepo:      msgRepo,
+		adminRepo:    adminRepo,
+		doorRepo:     doorRepo,
+		doorRegistry: doorRegistry,
+		chatSvc:      chatSvc,
+		sessions:     map[string]sessionState{},
+	}
+	app.setEventAttendance("evt-1", "caller", true)
+
+	callerSID, ok := app.createSession("caller")
+	if !ok {
+		t.Fatal("caller session creation failed")
+	}
+	sysopSID, ok := app.createSession("sysop")
+	if !ok {
+		t.Fatal("sysop session creation failed")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/analytics", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sysopSID})
+	rr := httptest.NewRecorder()
+	app.handleAdminAnalytics(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("admin analytics status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	for _, needle := range []string{"Embedded Product Analytics", "Daily", "Weekly", "Monthly"} {
+		if !strings.Contains(rr.Body.String(), needle) {
+			t.Fatalf("expected %q on analytics page: %s", needle, rr.Body.String())
+		}
+	}
+
+	form := url.Values{
+		"csrf_token": {app.sessions[callerSID].csrf},
+		"sunday":     {"10"},
+		"monday":     {"20"},
+		"tuesday":    {"12"},
+		"wednesday":  {"12"},
+		"thursday":   {"12"},
+		"friday":     {"12"},
+		"saturday":   {"12"},
+	}
+	req = httptest.NewRequest(http.MethodPost, "/digest/preferences", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleDigestPreferences(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("digest preferences save status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if got := app.loadWeekdayDigestPrefs("caller", 12).Monday; got != 20 {
+		t.Fatalf("expected monday digest max 20, got %d", got)
+	}
+
+	starts := time.Now().Add(-2 * time.Hour).Format("2006-01-02T15:04")
+	ends := time.Now().Add(24 * time.Hour).Format("2006-01-02T15:04")
+	form = url.Values{
+		"csrf_token":         {app.sessions[sysopSID].csrf},
+		"action":             {"save_mission"},
+		"id":                 {"spring-return-1"},
+		"season":             {"Spring 2026"},
+		"title":              {"Post Chat Play"},
+		"description":        {"Complete all three lanes."},
+		"starts_at":          {starts},
+		"ends_at":            {ends},
+		"target_board_posts": {"1"},
+		"target_chat_posts":  {"1"},
+		"target_door_runs":   {"1"},
+		"active":             {"1"},
+	}
+	req = httptest.NewRequest(http.MethodPost, "/admin/missions", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sysopSID})
+	rr = httptest.NewRecorder()
+	app.handleAdminMissions(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("save mission status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	form = url.Values{
+		"csrf_token": {app.sessions[callerSID].csrf},
+		"action":     {"claim"},
+		"mission_id": {"spring-return-1"},
+	}
+	req = httptest.NewRequest(http.MethodPost, "/missions", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+	rr = httptest.NewRecorder()
+	app.handleMissions(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("claim mission status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !app.userMissionClaimed("spring-return-1", "caller") {
+		t.Fatal("expected mission to be claimed for caller")
+	}
+
+	for _, tc := range []struct {
+		path string
+		fn   func(http.ResponseWriter, *http.Request)
+	}{
+		{path: "/next", fn: app.handleNextActions},
+		{path: "/streaks", fn: app.handleStreaks},
+		{path: "/spotlights", fn: app.handleSpotlights},
+	} {
+		req = httptest.NewRequest(http.MethodGet, tc.path, nil)
+		req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: callerSID})
+		rr = httptest.NewRecorder()
+		tc.fn(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s status = %d body=%s", tc.path, rr.Code, rr.Body.String())
+		}
+	}
+}
+
+func TestRoadmap156To165Features(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	boardRepo := repository.NewInMemoryBoardRepository()
+	msgRepo := repository.NewInMemoryMessageRepository()
+	mailRepo := repository.NewInMemoryPrivateMailRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
+	doorRepo := repository.NewInMemoryDoorRepository()
+	doorRegistry := doors.NewRegistry()
+	doorRegistry.SetRepository(doorRepo)
+	doorRegistry.Register(doors.Door{ID: "retro-door", Hotkey: "R", Name: "Retro Door", Command: "/bin/true"})
+	chatSvc := chat.NewServiceForTest()
+
+	sysop, err := authSvc.Register("sysop", "password123")
+	if err != nil {
+		t.Fatalf("register sysop: %v", err)
+	}
+	mentor, err := authSvc.Register("mentor", "password123")
+	if err != nil {
+		t.Fatalf("register mentor: %v", err)
+	}
+	caller, err := authSvc.Register("caller", "password123")
+	if err != nil {
+		t.Fatalf("register caller: %v", err)
+	}
+	if err := authSvc.SetRole("sysop", roleAdmin); err != nil {
+		t.Fatalf("set sysop role: %v", err)
+	}
+	if err := authSvc.SetRole("mentor", roleModerator); err != nil {
+		t.Fatalf("set mentor role: %v", err)
+	}
+	if err := authSvc.SetVerified("sysop", true); err != nil {
+		t.Fatalf("verify sysop: %v", err)
+	}
+	if err := authSvc.SetVerified("mentor", true); err != nil {
+		t.Fatalf("verify mentor: %v", err)
+	}
+	if err := authSvc.SetVerified("caller", true); err != nil {
+		t.Fatalf("verify caller: %v", err)
+	}
+
+	board := &domain.Board{Name: "General", Conference: "Public", CreatedBy: sysop.ID}
+	if err := boardRepo.Create(board); err != nil {
+		t.Fatalf("create board: %v", err)
+	}
+	msg := &domain.Message{
+		BoardID:   board.ID,
+		AuthorID:  caller.ID,
+		Subject:   "Need help with setup",
+		Body:      "starter question",
+		CreatedAt: time.Now().UTC().Add(-45 * time.Minute),
+	}
+	if err := msgRepo.CreateMessage(msg); err != nil {
+		t.Fatalf("create message: %v", err)
+	}
+	if err := msgRepo.CreateReport(&domain.MessageReport{
+		MessageID:  msg.ID,
+		ReporterID: mentor.ID,
+		Reason:     "qa moderation report",
+		Status:     "open",
+		CreatedAt:  time.Now().UTC().Add(-20 * time.Minute),
+	}); err != nil {
+		t.Fatalf("create report: %v", err)
+	}
+	chatSvc.JoinChannel("caller", "#lobby")
+	if _, err := chatSvc.Post("caller", "#lobby", "first chat line"); err != nil {
+		t.Fatalf("chat post: %v", err)
+	}
+	if err := doorRepo.AddEvent(&domain.DoorEvent{
+		DoorID:    "retro-door",
+		UserID:    caller.ID,
+		EventType: "start",
+		CreatedAt: time.Now().UTC().Add(-10 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed door event: %v", err)
+	}
+
+	app := &webApp{
+		authSvc:      authSvc,
+		userRepo:     userRepo,
+		boardRepo:    boardRepo,
+		msgRepo:      msgRepo,
+		mailRepo:     mailRepo,
+		adminRepo:    adminRepo,
+		doorRepo:     doorRepo,
+		doorRegistry: doorRegistry,
+		chatSvc:      chatSvc,
+		sessions:     map[string]sessionState{},
+	}
+
+	sysopSID, ok := app.createSession("sysop")
+	if !ok {
+		t.Fatal("sysop session creation failed")
+	}
+	callerSID, ok := app.createSession("caller")
+	if !ok {
+		t.Fatal("caller session creation failed")
+	}
+	sysopCSRF := app.sessions[sysopSID].csrf
+	callerCSRF := app.sessions[callerSID].csrf
+
+	mentorshipAdmin := app.mustBeRole(roleModerator, http.HandlerFunc(app.handleAdminMentorship))
+	modCenter := app.mustBeRole(roleModerator, http.HandlerFunc(app.handleAdminModCenter))
+
+	getWithSession := func(path, sid string, fn func(http.ResponseWriter, *http.Request)) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+		rr := httptest.NewRecorder()
+		fn(rr, req)
+		return rr
+	}
+	postWithSession := func(path, sid string, form url.Values, fn func(http.ResponseWriter, *http.Request)) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+		rr := httptest.NewRecorder()
+		fn(rr, req)
+		return rr
+	}
+
+	for _, tc := range []struct {
+		path   string
+		expect string
+		fn     func(http.ResponseWriter, *http.Request)
+	}{
+		{path: "/resume", expect: "Smart Re-entry", fn: app.handleResumeCenter},
+		{path: "/doors/comeback", expect: "Door Comeback Prompts", fn: app.handleDoorComeback},
+		{path: "/time-lane", expect: "Time-of-Day Landing States", fn: app.handleTimeLane},
+		{path: "/milestones", expect: "Milestone Celebrations", fn: app.handleMilestones},
+	} {
+		rr := getWithSession(tc.path, callerSID, tc.fn)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s status = %d body=%s", tc.path, rr.Code, rr.Body.String())
+		}
+		if !strings.Contains(rr.Body.String(), tc.expect) {
+			t.Fatalf("expected %q in %s body: %s", tc.expect, tc.path, rr.Body.String())
+		}
+	}
+
+	form := url.Values{
+		"csrf_token": {sysopCSRF},
+		"action":     {"save_pair"},
+		"mentee":     {"caller"},
+		"mentor":     {"mentor"},
+		"note":       {"welcome lane"},
+		"active":     {"1"},
+	}
+	rr := postWithSession("/admin/mentorship", sysopSID, form, mentorshipAdmin.ServeHTTP)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("save mentorship pair status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if pair, ok := app.mentorshipForMentee("caller"); !ok || pair.Mentor != "mentor" {
+		t.Fatalf("expected active mentorship pair caller->mentor, got pair=%+v ok=%v", pair, ok)
+	}
+
+	rr = getWithSession("/mentorship", callerSID, app.handleMentorship)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "Your Mentor") {
+		t.Fatalf("mentorship page status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	form = url.Values{
+		"csrf_token": {callerCSRF},
+		"action":     {"ping_mentor"},
+		"message":    {"I am blocked on boards"},
+	}
+	rr = postWithSession("/mentorship", callerSID, form, app.handleMentorship)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("ping mentor status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	mentorInbox, err := mailRepo.ListInbox(mentor.ID, 20)
+	if err != nil {
+		t.Fatalf("list mentor inbox: %v", err)
+	}
+	if len(mentorInbox) == 0 || !strings.Contains(strings.ToLower(mentorInbox[0].Subject), "mentorship") {
+		t.Fatalf("expected mentorship mail in mentor inbox, got %+v", mentorInbox)
+	}
+
+	form = url.Values{
+		"csrf_token": {callerCSRF},
+		"action":     {"celebrate"},
+		"id":         {"first_post"},
+	}
+	rr = postWithSession("/milestones", callerSID, form, app.handleMilestones)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("milestone celebrate status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if _, ok := app.loadMilestoneCelebrations("caller")["first_post"]; !ok {
+		t.Fatal("expected first_post celebration to persist")
+	}
+
+	form = url.Values{
+		"csrf_token": {callerCSRF},
+		"action":     {"set_home"},
+		"route":      {"/doors"},
+	}
+	rr = postWithSession("/time-lane", callerSID, form, app.handleTimeLane)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("time-lane set home status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if got := app.loadHomeRoute("caller"); got != "/doors" {
+		t.Fatalf("expected home route /doors, got %q", got)
+	}
+
+	rr = getWithSession("/directory?handle=caller", sysopSID, app.handleDirectory)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("directory status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "Caller Risk Summary") {
+		t.Fatalf("expected caller risk summary card on directory profile: %s", rr.Body.String())
+	}
+
+	reports, err := msgRepo.ListReports(10, "")
+	if err != nil || len(reports) == 0 {
+		t.Fatalf("list reports for assignment: reports=%+v err=%v", reports, err)
+	}
+	reportID := reports[0].ID
+	form = url.Values{
+		"csrf_token": {sysopCSRF},
+		"action":     {"save_report_assignment"},
+		"report_id":  {strconv.FormatInt(reportID, 10)},
+		"assignee":   {"mentor"},
+		"status":     {"investigating"},
+		"priority":   {"high"},
+		"due_hours":  {"2"},
+		"note":       {"triage this first"},
+	}
+	rr = postWithSession("/admin/mod-center", sysopSID, form, modCenter.ServeHTTP)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("save report assignment status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	assignments := app.loadReportAssignments()
+	assignment, ok := assignments[reportID]
+	if !ok {
+		t.Fatalf("expected assignment for report %d, got %+v", reportID, assignments)
+	}
+	if assignment.Assignee != "mentor" || assignment.Priority != "high" || assignment.Status != "investigating" {
+		t.Fatalf("unexpected assignment state: %+v", assignment)
+	}
+	if assignment.DueAt.IsZero() {
+		t.Fatalf("expected assignment due time to be set: %+v", assignment)
+	}
+
+	form = url.Values{
+		"csrf_token": {sysopCSRF},
+		"action":     {"save_canned"},
+		"id":         {"warn_spam_v1"},
+		"category":   {"conduct"},
+		"title":      {"Friendly Reminder"},
+		"body":       {"Please keep posts constructive."},
+	}
+	rr = postWithSession("/admin/mod-center", sysopSID, form, modCenter.ServeHTTP)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("save canned response status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	templates := app.loadModeratorTemplates()
+	if len(templates) == 0 || templates[0].ID != "warn_spam_v1" {
+		t.Fatalf("expected canned template to persist, got %+v", templates)
+	}
+
+	form = url.Values{
+		"csrf_token":  {sysopCSRF},
+		"action":      {"send_canned"},
+		"template_id": {"warn_spam_v1"},
+		"target":      {"caller"},
+		"extra_note":  {"next violation escalates"},
+	}
+	rr = postWithSession("/admin/mod-center", sysopSID, form, modCenter.ServeHTTP)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("send canned response status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	callerInbox, err := mailRepo.ListInbox(caller.ID, 20)
+	if err != nil {
+		t.Fatalf("list caller inbox: %v", err)
+	}
+	foundCanned := false
+	for _, row := range callerInbox {
+		if strings.Contains(strings.ToLower(row.Subject), "friendly reminder") {
+			foundCanned = true
+			break
+		}
+	}
+	if !foundCanned {
+		t.Fatalf("expected canned response mail in caller inbox, got %+v", callerInbox)
+	}
+
+	form = url.Values{
+		"csrf_token":    {sysopCSRF},
+		"action":        {"save_case"},
+		"title":         {"Incident follow-up thread"},
+		"status":        {"open"},
+		"priority":      {"high"},
+		"owner":         {"mentor"},
+		"target_handle": {"caller"},
+		"report_id":     {strconv.FormatInt(reportID, 10)},
+		"summary":       {"track remediation"},
+	}
+	rr = postWithSession("/admin/mod-center", sysopSID, form, modCenter.ServeHTTP)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("save case status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	cases := app.loadCaseThreads()
+	if len(cases) == 0 {
+		t.Fatal("expected at least one case thread")
+	}
+	caseID := cases[0].ID
+	form = url.Values{
+		"csrf_token": {sysopCSRF},
+		"action":     {"add_case_note"},
+		"case_id":    {caseID},
+		"note":       {"first handoff note"},
+	}
+	rr = postWithSession("/admin/mod-center", sysopSID, form, modCenter.ServeHTTP)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("add case note status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	form = url.Values{
+		"csrf_token": {sysopCSRF},
+		"action":     {"close_case"},
+		"case_id":    {caseID},
+	}
+	rr = postWithSession("/admin/mod-center", sysopSID, form, modCenter.ServeHTTP)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("close case status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	cases = app.loadCaseThreads()
+	if len(cases) == 0 || cases[0].Status != "resolved" || len(cases[0].Updates) == 0 {
+		t.Fatalf("expected resolved case with updates, got %+v", cases)
+	}
+
+	rr = getWithSession("/admin/mod-center", sysopSID, modCenter.ServeHTTP)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("mod center status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "Moderation Center") {
+		t.Fatalf("expected moderation center heading, got %s", rr.Body.String())
 	}
 }

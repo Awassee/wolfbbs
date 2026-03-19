@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -47,9 +48,11 @@ func TestRunHelpIncludesNetworkAndMods(t *testing.T) {
 }
 
 func TestRunNetworkStatus(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "oputil-network-status.sqlite")
+	dsn := "sqlite://" + dbPath
 	var out bytes.Buffer
 	var errOut bytes.Buffer
-	code := run([]string{"network", "status"}, &out, &errOut)
+	code := run([]string{"--db", dsn, "network", "status"}, &out, &errOut)
 	if code != 0 {
 		t.Fatalf("expected exit code 0, got %d (stderr=%s)", code, errOut.String())
 	}

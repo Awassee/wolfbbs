@@ -2,6 +2,13 @@
 
 ## Flow
 - User selects gateway -> enters URL.
+- SSH gateway desk (`G`) includes six terminal-native tools:
+  - `W` text web browser
+  - `E` email gateway send
+  - `F` RSS/Atom feed reader
+  - `S` article summarizer
+  - `J` JSON API explorer
+  - `A` generative AI prompt client
 - Server fetches with strict defaults:
   - timeout: 10s
   - max body: 2 MiB
@@ -20,6 +27,13 @@
   - manage per-user download queue
   - issue short-lived ticket links and download via `/gateway?download=<token>`
   - stream queued files as a batch ZIP via `/gateway?view=files&batch=1`
+- Modern gateway hub modes:
+  - `/gateway?view=browser` text web browser door
+  - `/gateway?view=email` email relay diagnostics door
+  - `/gateway?view=ai` generative AI client door
+  - `/gateway?view=rss` RSS/Atom feed reader door
+  - `/gateway?view=summarize` article summarizer door
+  - `/gateway?view=json` JSON API explorer door
 
 ## Safety
 - SSRF deny-by-default:

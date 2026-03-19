@@ -6,6 +6,7 @@ Covers:
 - new user registration/login
 - main-menu navigation and status/config visibility
 - quick-jump navigation
+- deep terminal UX checks: menu traversal, compose editing, paging/wrapping, and input correction
 - sysop role elevation via oputil and admin terminal entrypoint
 """
 
@@ -51,10 +52,11 @@ def wait_for_port(port: int, proc: subprocess.Popen[str] | None = None, timeout_
     raise RuntimeError(f"timeout waiting for ssh port {port}")
 
 
-def start_bbs_server(db_path: Path, port: int, log_path: Path) -> subprocess.Popen[str]:
+def start_bbs_server(db_path: Path, port: int, log_path: Path, files_root: Path) -> subprocess.Popen[str]:
     env = os.environ.copy()
     env.setdefault("WOLFBBS_QUICK_JUMP_ENABLE", "true")
     env.setdefault("WOLFBBS_GUEST_TOUR_ENABLE", "true")
+    env.setdefault("WOLFBBS_FILES_ROOT", str(files_root))
     cmd = [
         "go",
         "run",
@@ -232,6 +234,381 @@ def complete_login(
     child.expect("Enter selection:")
 
 
+def type_with_backspace(child: pexpect.spawn, value: str, extra_char: str = "x") -> None:
+    child.send(value + extra_char)
+    child.send("\x7f")
+    child.sendline("")
+
+
+def seed_file_fixture(files_root: Path) -> None:
+    files_root.mkdir(parents=True, exist_ok=True)
+    (files_root / "welcome-guide.txt").write_text("WolfBBS fixture file\n", encoding="utf-8")
+    (files_root / "ansi-pack.ans").write_text("ANSI fixture file\n", encoding="utf-8")
+
+
+def run_regular_user_smoke(child: pexpect.spawn) -> None:
+    child.send("?")
+    child.expect("Main Menu Key Guide")
+    child.send("x")
+    child.expect("Enter selection:")
+
+    child.send("N")
+    child.expect("Newscan Digest")
+    child.send("x")
+    child.expect("Enter selection:")
+
+    child.send("M")
+    child.expect("Select board ID")
+    child.sendline("Q")
+    child.expect("Enter selection:")
+
+    child.send("P")
+    child.expect("Private Mail")
+    child.sendline("Q")
+    child.expect("Enter selection:")
+
+    child.send("F")
+    child.expect("Files")
+    child.sendline("Q")
+    child.expect("Enter selection:")
+
+    child.send("C")
+    child.expect("Live Chat")
+    child.send("Q")
+    child.expect("Enter selection:")
+
+    child.send("G")
+    child.expect("Gateway Menu")
+    child.send("Q")
+    child.expect("Enter selection:")
+
+    child.send("D")
+    child.expect("Door Hub")
+    child.send("R")
+    child.expect("Enter selection:")
+
+    child.send("L")
+    child.expect("Last Callers")
+    child.send("x")
+    child.expect("Enter selection:")
+
+    child.send("W")
+    child.expect("Who's Online")
+    child.send("x")
+    child.expect("Enter selection:")
+
+    child.send("S")
+    child.expect("MCI Preferences")
+    child.send("Q")
+    child.expect("Enter selection:")
+
+    child.send("A")
+    child.expect("Admin access denied. Press any key.")
+    child.send("x")
+    child.expect("Enter selection:")
+
+    child.send("Y")
+    child.expect("Status Center")
+    child.expect("Quick jump state")
+    child.send("x")
+    child.expect("Enter selection:")
+
+    child.send("/")
+    child.expect("Jump target")
+    child.sendline("boards")
+    child.expect("Select board ID")
+    child.sendline("Q")
+    child.expect("Enter selection:")
+
+    child.send("X")
+    child.expect("Config Center")
+    child.expect("Guest tour enabled")
+    child.send("x")
+    child.expect("Enter selection:")
+
+
+def run_regular_user_deep(child: pexpect.spawn) -> None:
+    child.send("?")
+    child.expect("Main Menu Key Guide")
+    child.send("x")
+    child.expect("Enter selection:")
+
+    child.send("N")
+    child.expect("Newscan Digest")
+    child.send("x")
+    child.expect("Enter selection:")
+
+    # Boards: help, compose with edit helpers, paging, and search.
+    child.send("M")
+    child.expect("Select board ID")
+    child.sendline("1")
+    child.expect_exact("Commands: (N)ew")
+    child.sendline("?")
+    child.expect("Boards Navigation")
+    child.send("x")
+    child.expect_exact("Commands: (N)ew")
+    child.sendline("N")
+    child.expect("Subject:")
+    type_with_backspace(child, "UX Subject")
+    child.sendline("draft line to delete")
+    child.sendline("/preview")
+    child.expect("draft preview")
+    child.sendline("/del")
+    child.expect("Removed last line.")
+    child.sendline("/help")
+    child.expect("Compose helpers")
+    for i in range(1, 26):
+        child.sendline(f"line {i:02d} " + ("x" * 36))
+    child.sendline(".")
+    child.expect_exact("Commands: (N)ew")
+
+    child.sendline("S")
+    idx = child.expect(["Search query:", "Classic search is disabled by sysop. Press any key."])
+    if idx == 0:
+        child.sendline("line 01")
+        child.expect("Classic Search Results")
+        child.send("x")
+    else:
+        child.send("x")
+    child.expect_exact("Commands: (N)ew")
+
+    child.sendline("R")
+    child.expect("Message ID")
+    child.sendline("1")
+    idx = child.expect([r"Long body detected; pager enabled\.", r"Command \(R/N/P/Q/\?\):"])
+    if idx == 0:
+        child.expect("More")
+        child.send(" ")
+        child.expect(r"Command \(R/N/P/Q/\?\):")
+    child.send("Q")
+    child.expect_exact("Commands: (N)ew")
+    child.sendline("Q")
+    child.expect("Select board ID")
+    child.sendline("Q")
+    child.expect("Enter selection:")
+
+    # Mail: compose, input correction, compose helper commands, and delete.
+    child.send("P")
+    child.expect_exact("Commands: (C)ompose")
+    child.sendline("?")
+    child.expect("Private Mail Commands")
+    child.send("x")
+    child.expect_exact("Commands: (C)ompose")
+    child.sendline("C")
+    child.expect("To handle or external email:")
+    type_with_backspace(child, "e2eadmin")
+    child.expect("Subject:")
+    type_with_backspace(child, "Mail UX Check")
+    child.sendline("draft mail line")
+    child.sendline("/preview")
+    child.expect("draft preview")
+    child.sendline("/del")
+    child.expect("Removed last line.")
+    child.sendline("final mail body")
+    child.sendline(".")
+    child.expect_exact("Commands: (C)ompose")
+    child.sendline("R")
+    child.expect("Mail ID:")
+    child.sendline("1")
+    idx = child.expect_exact(["Reader commands: (P) reply  (D) delete  (Q) back", "Mail not found. Press any key."])
+    if idx != 0:
+        raise RuntimeError("mail reader did not open expected message ID")
+    child.send("D")
+    child.expect("Mail deleted. Press any key.")
+    child.send("x")
+    child.expect_exact("Commands: (C)ompose")
+    child.sendline("Q")
+    child.expect("Enter selection:")
+
+    # Files: help/search/indexed queue surface/download queue surface.
+    child.send("F")
+    child.expect("Files")
+    child.expect("Selection:")
+    child.sendline("?")
+    child.expect("Files Commands")
+    child.send("x")
+    child.expect("Selection:")
+    child.sendline("R")
+    child.expect("Recent Files")
+    child.send("x")
+    child.expect("Selection:")
+    child.sendline("N")
+    child.expect("New Files")
+    child.send("x")
+    child.expect("Selection:")
+    child.sendline("S")
+    child.expect("Search query:")
+    type_with_backspace(child, "welcome-guide")
+    child.expect("File Search")
+    child.send("x")
+    child.expect("Selection:")
+    child.sendline("I")
+    child.expect("Indexed FileBase")
+    child.expect_exact("Commands: (S)earch  [ID] queue add  (Q)uit")
+    child.sendline("Q")
+    child.expect("Selection:")
+    child.sendline("D")
+    child.expect("Download Queue")
+    child.expect("Commands: R<ID> remove  T<ID> ticket  B batch tip  Q quit")
+    child.sendline("B")
+    child.expect("Batch ZIP:")
+    child.send("x")
+    child.expect("Selection:")
+    child.sendline("Q")
+    child.expect("Files")
+    child.expect("Selection:")
+    child.sendline("1")
+    child.expect("Files: Uploads")
+    child.expect("Selection:")
+    child.sendline("Q")
+    child.expect("Selection:")
+    child.sendline("Q")
+    child.expect("Enter selection:")
+
+    # Chat: online list, channel switch, send, refresh.
+    child.send("C")
+    child.expect("Live Chat")
+    child.expect("Selection:")
+    child.send("O")
+    child.expect("Online users:")
+    child.expect("e2eadmin")
+    child.expect("Press any key.")
+    child.send("x")
+    child.expect("Selection:")
+    child.send("J")
+    child.expect("Join channel")
+    child.sendline("#ux")
+    child.expect("Selection:")
+    child.send("S")
+    child.expect("Message:")
+    type_with_backspace(child, "hello ux channel")
+    child.expect("Selection:")
+    child.send("R")
+    child.expect("Selection:")
+    child.send("Q")
+    child.expect("Enter selection:")
+
+    # Gateway: URL validation and compose validation.
+    child.send("G")
+    child.expect("Gateway Menu")
+    child.send("W")
+    child.expect("URL:")
+    type_with_backspace(child, "http://127.0.0.1")
+    child.expect("Gateway blocked:")
+    child.send("x")
+    child.expect("Enter selection:")
+    child.send("G")
+    child.expect("Gateway Menu")
+    child.send("E")
+    child.expect("To external email:")
+    child.sendline("")
+    child.expect("Subject:")
+    child.sendline("gateway validation")
+    child.expect("Body")
+    child.sendline("body")
+    child.sendline(".")
+    child.expect("To/subject/body required. Press any key.")
+    child.send("x")
+    child.expect("Enter selection:")
+
+    child.send("G")
+    child.expect("Gateway Menu")
+    child.send("F")
+    child.expect("Feed URL:")
+    child.sendline("")
+    child.expect("Feed URL required. Press any key.")
+    child.send("x")
+    child.expect("Enter selection:")
+
+    child.send("G")
+    child.expect("Gateway Menu")
+    child.send("S")
+    child.expect("Article URL:")
+    child.sendline("")
+    child.expect("Article URL required. Press any key.")
+    child.send("x")
+    child.expect("Enter selection:")
+
+    child.send("G")
+    child.expect("Gateway Menu")
+    child.send("J")
+    child.expect("JSON URL:")
+    child.sendline("")
+    child.expect("JSON URL required. Press any key.")
+    child.send("x")
+    child.expect("Enter selection:")
+
+    child.send("G")
+    child.expect("Gateway Menu")
+    child.send("A")
+    ai_idx = child.expect(
+        [
+            "AI gateway is disabled. Configure /admin/gateways and set API key. Press any key.",
+            "Prompt:",
+        ]
+    )
+    if ai_idx == 0:
+        child.send("x")
+    else:
+        child.sendline("")
+        child.expect("Prompt is required. Press any key.")
+        child.send("x")
+    child.expect("Enter selection:")
+
+    # Doors + caller visibility panels.
+    child.send("D")
+    child.expect("Door Hub")
+    child.send("?")
+    child.expect("Door Hub Commands")
+    child.send("x")
+    child.expect("Selection:")
+    child.send("R")
+    child.expect("Enter selection:")
+
+    child.send("L")
+    child.expect("Last Callers")
+    child.expect("Orig")
+    child.send("x")
+    child.expect("Enter selection:")
+
+    child.send("W")
+    child.expect("Who's Online")
+    child.expect("Orig")
+    child.send("P")
+    child.expect("Handle to page:")
+    child.sendline("e2eadmin")
+    child.expect("Pick another active handle. Press any key.")
+    child.send("x")
+    child.expect_exact("(P)age caller  (R)efresh  (Q)uit:")
+    child.send("Q")
+    child.expect("Enter selection:")
+
+    # Status/config/settings and quick jump paths.
+    child.send("Y")
+    child.expect("Status Center")
+    child.expect("Quick jump state")
+    child.send("x")
+    child.expect("Enter selection:")
+
+    child.send("X")
+    child.expect("Config Center")
+    child.send("x")
+    child.expect("Enter selection:")
+
+    child.send("S")
+    child.expect("MCI Preferences")
+    child.send("A")
+    child.expect("MCI Preferences")
+    child.send("P")
+    child.expect("MCI Preferences")
+    child.send("C")
+    child.expect("MCI Preferences")
+    child.send("S")
+    child.expect("Preferences saved. Press any key.")
+    child.send("x")
+    child.expect("Enter selection:")
+
+
 def run_regular_user_flow(
     port: int,
     *,
@@ -239,89 +616,15 @@ def run_regular_user_flow(
     cols: int,
     rows: int,
     create_if_missing: bool,
+    deep: bool,
 ) -> None:
     child = spawn_ssh(port, term_name=term_name, cols=cols, rows=rows)
     try:
         complete_login(child, "e2eadmin", "password123", create_if_missing=create_if_missing)
-        child.send("?")
-        child.expect("Main Menu Key Guide")
-        child.send("x")
-        child.expect("Enter selection:")
-
-        child.send("N")
-        child.expect("Newscan Digest")
-        child.send("x")
-        child.expect("Enter selection:")
-
-        child.send("M")
-        child.expect("Select board ID")
-        child.sendline("Q")
-        child.expect("Enter selection:")
-
-        child.send("P")
-        child.expect("Private Mail")
-        child.sendline("Q")
-        child.expect("Enter selection:")
-
-        child.send("F")
-        child.expect("Files")
-        child.sendline("Q")
-        child.expect("Enter selection:")
-
-        child.send("C")
-        child.expect("Live Chat")
-        child.send("Q")
-        child.expect("Enter selection:")
-
-        child.send("G")
-        child.expect("Gateway Menu")
-        child.send("Q")
-        child.expect("Enter selection:")
-
-        child.send("D")
-        child.expect("Door Hub")
-        child.send("R")
-        child.expect("Enter selection:")
-
-        child.send("L")
-        child.expect("Last Callers")
-        child.send("x")
-        child.expect("Enter selection:")
-
-        child.send("W")
-        child.expect("Who's Online")
-        child.send("x")
-        child.expect("Enter selection:")
-
-        child.send("S")
-        child.expect("MCI Preferences")
-        child.send("Q")
-        child.expect("Enter selection:")
-
-        child.send("A")
-        child.expect("Admin access denied. Press any key.")
-        child.send("x")
-        child.expect("Enter selection:")
-
-        child.send("Y")
-        child.expect("Status Center")
-        child.expect("Quick jump state")
-        child.send("x")
-        child.expect("Enter selection:")
-
-        child.send("/")
-        child.expect("Jump target")
-        child.sendline("boards")
-        child.expect("Select board ID")
-        child.sendline("Q")
-        child.expect("Enter selection:")
-
-        child.send("X")
-        child.expect("Config Center")
-        child.expect("Guest tour enabled")
-        child.send("x")
-        child.expect("Enter selection:")
-
+        if deep:
+            run_regular_user_deep(child)
+        else:
+            run_regular_user_smoke(child)
         child.send("Q")
         child.expect(pexpect.EOF)
     finally:
@@ -333,9 +636,19 @@ def run_admin_flow(port: int, *, term_name: str, cols: int, rows: int) -> None:
     try:
         complete_login(child, "e2eadmin", "password123", create_if_missing=False)
         child.send("A")
-        child.expect("Use web admin at /admin for full sysop controls.")
-        child.send("x")
-        child.expect("Enter selection:")
+        idx = child.expect(
+            [
+                "Admin Center",
+                "Admin Control Deck",
+                "Use web admin at /admin for full sysop controls.",
+            ]
+        )
+        if idx == 2:
+            child.send("x")
+            child.expect("Enter selection:")
+        else:
+            child.send("Q")
+            child.expect("Enter selection:")
         child.send("Q")
         child.expect(pexpect.EOF)
     finally:
@@ -346,6 +659,8 @@ def main() -> int:
     tmp_root = Path(tempfile.mkdtemp(prefix="wolfbbs-tui-e2e-"))
     db_path = tmp_root / "wolfbbs-e2e.db"
     log_path = tmp_root / "wolfbbs-e2e.log"
+    files_root = tmp_root / "files"
+    seed_file_fixture(files_root)
     first_port = free_port()
     second_port = free_port()
     third_port = free_port()
@@ -355,19 +670,20 @@ def main() -> int:
         third_port = free_port()
     proc = None
     try:
-        proc = start_bbs_server(db_path, first_port, log_path)
-        run_regular_user_flow(first_port, term_name="ansi", cols=60, rows=24, create_if_missing=True)
+        proc = start_bbs_server(db_path, first_port, log_path, files_root)
+        run_regular_user_flow(first_port, term_name="ansi", cols=60, rows=24, create_if_missing=True, deep=False)
+        run_regular_user_flow(first_port, term_name="vt100", cols=40, rows=22, create_if_missing=False, deep=False)
         stop_process(proc)
         proc = None
 
-        proc = start_bbs_server(db_path, second_port, log_path)
-        run_regular_user_flow(second_port, term_name="xterm-256color", cols=100, rows=30, create_if_missing=False)
+        proc = start_bbs_server(db_path, second_port, log_path, files_root)
+        run_regular_user_flow(second_port, term_name="xterm-256color", cols=100, rows=30, create_if_missing=False, deep=True)
         stop_process(proc)
         proc = None
 
         run_oputil_set_role(db_path, "e2eadmin", "sysop")
 
-        proc = start_bbs_server(db_path, third_port, log_path)
+        proc = start_bbs_server(db_path, third_port, log_path, files_root)
         run_admin_flow(third_port, term_name="xterm-256color", cols=100, rows=30)
         print("PASS terminal e2e (pexpect)")
         return 0

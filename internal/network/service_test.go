@@ -1,9 +1,11 @@
 package network
 
 import (
+	"archive/zip"
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -54,8 +56,25 @@ func TestBoardExportImportQWK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("export board: %v", err)
 	}
+	if !strings.HasSuffix(strings.ToLower(path), ".qwk") {
+		t.Fatalf("expected qwk extension, got %s", path)
+	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("expected exported packet at %s: %v", path, err)
+	}
+	bundle, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatalf("open qwk bundle: %v", err)
+	}
+	defer bundle.Close()
+	seen := map[string]bool{}
+	for _, file := range bundle.File {
+		seen[strings.ToUpper(filepath.Base(file.Name))] = true
+	}
+	for _, required := range []string{"CONTROL.DAT", "HEADERS.DAT", "MESSAGES.DAT", "MESSAGES.JSON"} {
+		if !seen[required] {
+			t.Fatalf("missing %s in qwk bundle", required)
+		}
 	}
 
 	imported, err := svc.ImportPacket(path, 0, alice.ID)

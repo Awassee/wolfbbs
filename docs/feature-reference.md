@@ -56,6 +56,18 @@ This document maps product features to concrete runtime surfaces (binaries, rout
 - `Q` Quit
 - `?` Context help
 
+### Gateway Desk Commands (SSH)
+
+From `G` Gateways in terminal:
+
+- `W` Text web browser (safe fetch + ANSI pager + optional offline save)
+- `E` External email relay send (policy/verification gated)
+- `F` RSS/Atom feed reader
+- `S` Article summarizer
+- `J` JSON API explorer
+- `A` Generative AI client (when configured)
+- `R/Q/Esc` Return to main menu
+
 ### Inline Help Coverage
 
 - Login: `?` at handle prompt opens login help.
@@ -203,6 +215,7 @@ Documented in `docs/irc-compat.md`:
 - Weekly digest can be delivered by internal private mail from the `mailbot` service account
 - Guided onboarding at `/first-call` to create a first post, lobby line, private mail, and saved home route
 - Guest `/start` and caller `/today` surfaces now carry persistent quick-start checklists
+- Public `/showcase` route provides a feature walk-through plus a practical 10-minute smoke-flow checklist
 - `/settings` includes saved home-route preference for `/today`, `/digest`, `/boards`, `/chat`, or `/doors`
 - Private mail supports urgency levels (`normal`, `urgent`, `low`) rendered in inbox, outbox, and message reader views
 - SSH boards include conference filter toggle (`C`) for area-focused browsing
@@ -277,6 +290,7 @@ Documented in `docs/irc-compat.md`:
 - Held uploads stay out of caller-facing file surfaces until approved
 - SSH files menu includes indexed search (`I`) and legacy queue manager (`D`)
 - Queue manager supports remove, one-time ticket issue, and batch zip handoff via gateway
+- Ticket issue flows now surface explicit expiry metadata and direct handoff links in both caller and admin web queues
 
 ## Gateways
 
@@ -303,6 +317,8 @@ Reference: `docs/email-gateway.md`.
 - manifest-driven doors (`doors/*/door.json`)
 - native and external door types
 - turn bank, score, achievements, event logs
+- plugin contract tooling at `/admin/plugins` now includes downloadable starter SDK packs via `/admin/plugins/starter`
+- extension starter documentation in `docs/EXTENSION_SDK.md`
 - connector adapters (DoorParty, BBSLink, Telnet bridge)
 - sysop controls at `/admin/doors`
 

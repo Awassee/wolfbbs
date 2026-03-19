@@ -9,6 +9,8 @@ Run these before changing random settings:
 ```bash
 bash install.sh --status
 bash install.sh --doctor
+bash install.sh --port-audit
+bash install.sh --debug-bundle
 bash install.sh --repair
 bash install.sh --logs
 ```
@@ -17,6 +19,7 @@ Useful generated files:
 
 - `<prefix>/FIRST_STEPS.txt`
 - `<prefix>/SERVICE_STATUS.txt`
+- `<prefix>/WOLFBBS_DIAGNOSTICS_<timestamp>.txt` from `bash install.sh --debug-bundle`
 
 ## Symptom Routing
 

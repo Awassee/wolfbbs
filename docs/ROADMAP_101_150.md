@@ -194,20 +194,20 @@ Status: shipped in v1.1.19.
 
 146. Plugin manifest, capability model, and sandbox contract.
 Value: prepares the platform for safe extension.
-Status: in progress (kickoff contract added in docs/ROADMAP_146_150_KICKOFF.md).
+Status: shipped (admin plugin contract surface at `/admin/plugins` with manifest validation and capability matrix).
 
 147. Theme marketplace / import path.
 Value: broadens customization without code edits.
-Status: in progress (kickoff contract added in docs/ROADMAP_146_150_KICKOFF.md).
+Status: shipped (theme bundle import/apply workflow at `/admin/themes` with safe extracted bundle files and runtime apply state).
 
 148. External webhook bridge for board events.
 Value: improves integration potential.
-Status: in progress (kickoff contract added in docs/ROADMAP_146_150_KICKOFF.md).
+Status: shipped (configurable bridge at `/admin/webhooks` with retry/backoff and delivery logs for board events).
 
 149. Embedded product analytics summary for sysops.
 Value: helps prioritize improvements from real usage.
-Status: in progress (kickoff contract added in docs/ROADMAP_146_150_KICKOFF.md).
+Status: shipped (`/admin/analytics` provides daily/weekly/monthly KPI windows and recommendations from existing activity signals).
 
 150. Release dashboard linking roadmap, QA, docs, and artifacts.
 Value: closes the loop between product planning and shipping.
-Status: in progress (alpha shipped at /admin/release; follow-on items tracked in docs/ROADMAP_146_150_KICKOFF.md).
+Status: shipped (`/admin/release` now includes persisted checklist state, release metadata rows, and package artifact inspection).

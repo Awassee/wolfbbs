@@ -1,156 +1,128 @@
 # WolfBBS Datasheet
 
-## Product Summary
+WolfBBS is a self-hosted, SSH-first BBS platform that combines classic ANSI caller flow with a modern web companion, IRC bridge, sysop control plane, and turnkey installer lifecycle.
 
-WolfBBS is a self-hosted bulletin board system that combines a classic ANSI caller experience with a modern web companion, IRC bridge, admin control plane, doors, and packaged deployment.
+## At A Glance
 
-## Product Type
-
-- `Category`: self-hosted community platform / BBS
-- `Primary access`: SSH ANSI/TUI
-- `Secondary access`: web companion
-- `Additional access`: IRC bridge
-- `Deployment model`: Docker Compose
-
-## Key Benefits
-
-| Benefit | Detail |
+| Attribute | Value |
 | --- | --- |
-| Fast to deploy | Paste-and-run bootstrap installer or release tarball install |
-| Nostalgic by design | Classic menu flow, message boards, private mail, doors, bulletins, operator screens |
-| Modern enough to operate | Web admin, diagnostics, password reset, health endpoints, packaging, upgrade tooling |
-| Multi-surface community | SSH, web, and IRC share the same board and chat system |
-| Operator-friendly | Setup wizard, config center, audit, repair, lifecycle commands |
+| Product category | Self-hosted BBS / community platform |
+| Release target | `v1.1.20` (current public distro tag) |
+| Primary UX | SSH ANSI/TUI caller experience |
+| Secondary UX | Web companion for callers and operators |
+| Additional protocol | IRC bridge with shared chat layer |
+| Deployment model | Docker Compose (default supported path) |
+| Install options | One-line bootstrap, repo installer, release tarball |
+| Typical first-run path | `/admin/setup` -> `/admin/launch` -> SSH + `/boards` + `/chat` + `/doors` |
 
-## Major Capabilities
+## Highlighted Feature Matrix
 
-### Caller Features
+| Feature area | Highlighted features | Practical value |
+| --- | --- | --- |
+| Caller experience | ANSI menu flow, threaded boards, private mail, doors, score surfaces | Delivers the nostalgic board feel users expect |
+| Daily retention loop | `/today`, `/attention`, `/events`, `/challenges`, `/clubhouse` | Gives callers a clear reason to return each day |
+| Live social layer | Web chat + IRC bridge + presence signals | Keeps conversation active across client preferences |
+| Operator launch workflow | Setup wizard, launch center, config center, status center | Reduces first-run ambiguity and misconfiguration |
+| Community operations | Users/roles, board admin, chat moderation, bulletin and event management | Supports real moderation and content cadence |
+| Reliability and lifecycle | `install.sh` doctor/repair/upgrade/uninstall + packaged releases | Makes operation viable for non-developer sysops |
+| Distribution and onboarding | Bootstrap installer, release artifacts, docs hub, showcase pages | Lowers adoption friction for new operators |
+| Security controls | CSRF-protected mutating routes, strict cookie profile, optional TOTP, audit visibility | Improves default safety for self-hosted communities |
 
-- ANSI login and main menu
-- guest tour
-- message boards and replies
-- private mail
-- bulletins
-- file areas and download queue
-- live chat
-- door launching
-- who’s online
-- last callers
-- scoreboards and trophies
-- personal settings
+## Screenshot-Backed Surfaces
 
-### Sysop And Moderator Features
+| Surface | Screenshot | Why it matters |
+| --- | --- | --- |
+| Connect hub | [connect.png](assets/screenshots/connect.png) | Single place for SSH/web/IRC onboarding |
+| Message boards | [boards.png](assets/screenshots/boards.png) | Core long-form community interaction |
+| Live chat | [chat.png](assets/screenshots/chat.png) | Real-time social loop (shared with IRC) |
+| Door cockpit | [doors.png](assets/screenshots/doors.png) | Replay loop, score chase, and game depth |
+| Today Brief | [today.png](assets/screenshots/today.png) | Daily dashboard for callers/operators |
+| Admin setup | [admin-setup.png](assets/screenshots/admin-setup.png) | Guided launch-readiness workflow |
+| Admin config | [admin-config.png](assets/screenshots/admin-config.png) | Runtime feature and service controls |
+| Mobile connect | [connect-mobile.png](assets/screenshots/connect-mobile.png) | Usable onboarding on phones/tablets |
 
-- setup wizard
-- config center
-- users and roles
-- board management
-- file area management
-- gateway controls
-- chat moderation
-- door administration
-- system dashboard
-- audit view
-- runtime diagnostics
+Full gallery: [SHOWCASE.md](SHOWCASE.md)
 
-### Web Companion Features
+## Role-Based Value
 
-- browser login
-- password reset
-- boards, mail, bulletins, directory, finder, new files
-- clubhouse, radar, scores, discover, help
-- chat with lobby and channels
-- admin panels for all major subsystems
+| Role | Core routes | Value outcome |
+| --- | --- | --- |
+| Sysop | `/admin/setup`, `/admin/launch`, `/admin/ops`, `/admin/config` | Faster, safer launch and routine operations |
+| Moderator | `/chat`, `/boards`, `/admin/chat`, `/admin/users` | Direct moderation and user support workflow |
+| Caller | SSH, `/today`, `/boards`, `/chat`, `/doors`, `/scores` | Engaging classic flow with modern convenience |
+| Visitor | `/connect`, `/tour`, `/help` | Understand the product quickly before signup |
 
-## Included Runtime Components
+## Technical Profile
+
+### Runtime binaries
 
 | Binary | Purpose |
 | --- | --- |
-| `wolfbbs` | SSH ANSI BBS service |
-| `wolfbbs-web` | web companion and admin surface |
+| `wolfbbs` | SSH ANSI BBS runtime |
+| `wolfbbs-web` | Web caller + admin surfaces |
 | `wolfbbs-irc` | IRC bridge service |
-| `wolfbbs-mailin` | inbound mail adapter |
-| `wolfbbs-trivia` | bundled trivia door |
-| `oputil` | sysop CLI |
+| `wolfbbs-mailin` | Inbound mail adapter |
+| `wolfbbs-trivia` | Bundled trivia door |
+| `oputil` | Sysop/operator CLI utility |
 
-## Protocols And Default Ports
+### Protocol and default port map
 
-| Surface | Default |
+| Protocol/surface | Default |
 | --- | --- |
-| SSH | `2222` |
-| Web | `8080` |
+| SSH caller service | `2222` |
+| Web companion/admin | `8080` |
 | IRC | `6667` |
-| IRC TLS | `6697` |
+| IRC TLS (optional) | `6697` |
 | Mail ingestion adapter | `8091` |
 
-## Installation And Lifecycle
+### Deployment assumptions
 
-### Supported installation paths
+- Docker and Docker Compose available on host
+- outbound network access for container pulls and bootstrap dependencies
+- host ports available for configured SSH/web/IRC endpoints
 
-- bootstrap installer from GitHub
-- guided installer from cloned repo
-- packaged release tarballs
+Supported host targets:
+- Linux: Debian/Ubuntu, Fedora/RHEL/CentOS-class, Arch
+- macOS: Intel + Apple Silicon (Docker Desktop or Colima path)
 
-### Operator lifecycle commands
+## Installation and Lifecycle Summary
 
+Install paths:
+- One-line bootstrap from GitHub (`bootstrap.sh`)
+- Guided installer from cloned repo (`install.sh`)
+- Packaged release tarball + local `install.sh`
+
+Common operator commands:
 - `bash install.sh --status`
 - `bash install.sh --doctor`
 - `bash install.sh --repair`
 - `bash install.sh --upgrade`
 - `bash install.sh --rapid-upgrade`
-- `bash install.sh --uninstall`
+- `bash install.sh --uninstall --purge --yes`
 
-## Package Contents
+## Security and Operations Notes
 
-Release bundles include:
+| Control | Current behavior |
+| --- | --- |
+| Session cookies | `HttpOnly`, strict same-site profile |
+| CSRF | Enabled for mutating web routes |
+| 2FA | Optional TOTP for operator accounts |
+| Auditability | Admin writes and operational events are auditable |
+| Artifact integrity | Release bundles include checksums/manifests |
 
-- platform binaries
-- `install.sh`
-- `bootstrap.sh`
-- `docker-compose.yml`
-- `.env.example`
-- product docs
-- validation and build helpers
-- checksums and release manifest
+## Product Boundaries
 
-## Deployment Requirements
-
-### Runtime assumptions
-
-- Docker and Docker Compose support
-- outbound network access for dependency bootstrap and container pulls
-- available ports for SSH, web, IRC, and supporting services
-
-### Supported host targets
-
-- Linux
-  - Debian or Ubuntu
-  - Fedora, RHEL, CentOS class systems
-  - Arch
-- macOS
-  - Intel and Apple Silicon
-  - Docker Desktop or Colima path
-
-## Security And Operations Notes
-
-- session cookies are `HttpOnly` with strict same-site behavior
-- CSRF protection is enabled on mutating web routes
-- admin writes are auditable
-- optional TOTP is available for sysop accounts
-- release bundles are checksummed
-
-## Current Boundaries
-
-- native non-Docker deployment is not the supported product path
-- ActivityPub support is limited and not a full federation implementation
-- product scope is centered on self-hosted BBS/community operation, not general social networking
+- Native non-Docker deployment is not the primary supported product path.
+- ActivityPub support is present but not a complete federation implementation.
+- Product scope is focused on self-hosted BBS/community operation, not broad social-network parity.
 
 ## Canonical Resources
 
-- Repo: [Awassee/wolfbbs](https://github.com/Awassee/wolfbbs)
+- Repository: [Awassee/wolfbbs](https://github.com/Awassee/wolfbbs)
 - Releases: [GitHub Releases](https://github.com/Awassee/wolfbbs/releases)
 - Start here: [START_HERE.md](START_HERE.md)
 - Quickstart: [QUICKSTART.md](QUICKSTART.md)
 - Install guide: [INSTALL.md](INSTALL.md)
-- Operations guide: [OPERATIONS.md](OPERATIONS.md)
 - Product guide: [PRODUCT_GUIDE.md](PRODUCT_GUIDE.md)
+- Showcase: [SHOWCASE.md](SHOWCASE.md)
+- Documentation hub: [README.md](README.md)

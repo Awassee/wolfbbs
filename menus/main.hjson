@@ -11,6 +11,7 @@
     { hotkey: "G", label: "Gateways", action: "gateway.open", target: "menu" }
     { hotkey: "D", label: "Doors", action: "doors.open", target: "hub" }
     { hotkey: "N", label: "Newscan", action: "system.newscan", target: "digest" }
+    { hotkey: "R", label: "Caller Pulse", action: "pulse.open", target: "insights" }
     { hotkey: "S", label: "Settings", action: "settings.open", target: "preferences" }
     { hotkey: "A", label: "Admin", action: "admin.open", target: "sysop", acs: "role=admin" }
     { hotkey: "L", label: "Last Callers", action: "system.last_callers" }

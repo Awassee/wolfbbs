@@ -2,6 +2,8 @@
 
 This is the shortest practical path from install to a usable WolfBBS board.
 
+Release baseline: `v1.1.20` (current public distro target).
+
 ## Goal
 
 You are done when:
@@ -74,6 +76,7 @@ curl -fsSL https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh |
 
 - run `bash install.sh --status`
 - run `bash install.sh --doctor`
+- run `bash install.sh --port-audit` if ports look wrong
 - walk [LAUNCH_CHECKLIST.md](LAUNCH_CHECKLIST.md)
 
 ## If something looks wrong
@@ -81,6 +84,8 @@ curl -fsSL https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh |
 ```bash
 bash install.sh --status
 bash install.sh --doctor
+bash install.sh --port-audit
+bash install.sh --debug-bundle
 bash install.sh --repair
 ```
 

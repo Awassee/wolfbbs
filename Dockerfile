@@ -13,7 +13,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -o /out/oputil ./cmd/oputil
 
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates curl netcat-openbsd
+RUN apk add --no-cache ca-certificates curl docker-cli docker-cli-compose netcat-openbsd
 WORKDIR /app
 COPY --from=build /out/wolfbbs /app/wolfbbs
 COPY --from=build /out/wolfbbs-web /app/wolfbbs-web

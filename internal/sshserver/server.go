@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -72,9 +73,17 @@ const (
 )
 
 const (
-	appUpgradeCommandEnv = "WOLFBBS_APP_UPGRADE_COMMAND"
-	appUpgradeWorkDirEnv = "WOLFBBS_APP_UPGRADE_WORKDIR"
-	appUpgradeTimeoutEnv = "WOLFBBS_APP_UPGRADE_TIMEOUT_SECONDS"
+	appUpgradeCommandEnv            = "WOLFBBS_APP_UPGRADE_COMMAND"
+	appUpgradeWorkDirEnv            = "WOLFBBS_APP_UPGRADE_WORKDIR"
+	appUpgradeTimeoutEnv            = "WOLFBBS_APP_UPGRADE_TIMEOUT_SECONDS"
+	sysSettingPageRequests          = "community.pages"
+	sysSettingGatewayAIEnabled      = "gateway.ai.enabled"
+	sysSettingGatewayAIBaseURL      = "gateway.ai.base_url"
+	sysSettingGatewayAIModel        = "gateway.ai.model"
+	sysSettingGatewayAIAPIKey       = "gateway.ai.api_key"
+	sysSettingGatewayAISystemPrompt = "gateway.ai.system_prompt"
+	sysSettingGatewayAITimeoutSec   = "gateway.ai.timeout_sec"
+	sysSettingGatewayAIMaxTokens    = "gateway.ai.max_tokens"
 )
 
 var appUpgradeExec = func(ctx context.Context, command, workDir string, env []string) (string, error) {
@@ -157,8 +166,8 @@ func (s *Server) handleSession(sess gssh.Session) {
 	}
 	termWidth := pty.Window.Width
 	h := pty.Window.Height
-	if termWidth < 40 {
-		termWidth = 40
+	if termWidth < ui.MinWidth {
+		termWidth = ui.MinWidth
 	}
 	if h < 20 {
 		h = 20
@@ -180,7 +189,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 	if offlineDir == "" {
 		offlineDir = ".wolfbbs/offline"
 	}
-	emailGateway := gateway.NewEmailGateway(gateway.LoadEmailConfigFromEnv())
+	emailGateway := s.activeEmailGateway()
 	th := ui.DefaultTheme()
 	state := stateWelcome
 	termProfile := term.DetectProfile(pty.Term, os.Getenv("LANG"), strings.TrimSpace(os.Getenv("WOLFBBS_TERM_ENCODING")), termWidth, h, true)
@@ -368,6 +377,11 @@ func (s *Server) handleSession(sess gssh.Session) {
 				state = stateLogin
 				continue
 			}
+			if strings.EqualFold(handle, "reset") || strings.EqualFold(handle, "/reset") {
+				s.runPasswordResetFlow(sess, reader, termWidth, renderWidth, th, sessionANSI, sessionEncoding, sessionTime24h, nodeLabel, touch)
+				state = stateLogin
+				continue
+			}
 			if isGuestTourHandle(handle) && s.guestTourEnabled() {
 				state = stateGuestTour
 				continue
@@ -518,18 +532,15 @@ func (s *Server) handleSession(sess gssh.Session) {
 				if title == "" {
 					title = "Main Menu"
 				}
-				lines := make([]string, 0, len(menuEntries)+3)
+				viewEntries := make([]ui.ActionMenuEntry, 0, len(menuEntries))
 				for _, entry := range menuEntries {
-					lines = append(lines, fmt.Sprintf("[%s] %-15s  %s", strings.ToUpper(entry.Hotkey), truncateText(entry.Label, 15), truncateText(entry.Target, 26)))
+					viewEntries = append(viewEntries, ui.ActionMenuEntry{
+						Key:    strings.ToUpper(strings.TrimSpace(entry.Hotkey)),
+						Label:  strings.TrimSpace(entry.Label),
+						Target: strings.TrimSpace(entry.Target),
+					})
 				}
-				if len(lines) == 0 {
-					lines = append(lines, "No menu options are currently available.")
-				}
-				if help := strings.TrimSpace(configuredMenu.Help); help != "" {
-					lines = append(lines, "")
-					lines = append(lines, truncateText(help, renderWidth-4))
-				}
-				renderFrame(sess, termWidth, renderWidth, ui.DrawBox(renderWidth, len(lines)+2, title, lines, ui.CP437Box, ui.FgCyan, ui.BgBlack), sessionANSI, sessionEncoding)
+				renderFrame(sess, termWidth, renderWidth, ui.RenderConfiguredMainMenu(renderWidth, title, strings.TrimSpace(configuredMenu.Help), viewEntries), sessionANSI, sessionEncoding)
 				footer := strings.TrimSpace(configuredMenu.Footer)
 				if footer == "" {
 					footer = "Press Q to quit, ? for help"
@@ -583,6 +594,10 @@ func (s *Server) handleSession(sess gssh.Session) {
 				state = stateExit
 			case "system.newscan":
 				state = stateBulletins
+			case "pulse.open":
+				setArea("Caller Pulse")
+				s.runCallerPulse(sess, reader, termWidth, renderWidth, currentUser, currentAccount, th, sessionANSI, sessionEncoding, sessionTime24h, nodeLabel, touch)
+				setArea("Main Menu")
 			case "boards.open":
 				setArea("Message Boards")
 				s.runBoards(sess, reader, termWidth, renderWidth, currentUser, th, sessionANSI, sessionEncoding, sessionTime24h, nodeLabel, touch)
@@ -614,7 +629,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 					touch()
 					break
 				}
-				io.WriteString(sess, "\r\nJump target (boards/mail/chat/gateway/doors/settings/last/who/status/config/newscan/app-upgrade): ")
+				io.WriteString(sess, "\r\nJump target (boards/mail/chat/gateway/doors/files/collections/offline/pulse/events/challenges/spotlights/digest/bookmarks/circles/showcase/settings/last/who/status/statusz/config/newscan/app-upgrade): ")
 				targetRaw, readErr := readLine(reader, 32)
 				if readErr != nil {
 					return
@@ -630,6 +645,10 @@ func (s *Server) handleSession(sess gssh.Session) {
 				switch jumpAction {
 				case "system.newscan":
 					state = stateBulletins
+				case "pulse.open":
+					setArea("Caller Pulse")
+					s.runCallerPulse(sess, reader, termWidth, renderWidth, currentUser, currentAccount, th, sessionANSI, sessionEncoding, sessionTime24h, nodeLabel, touch)
+					setArea("Main Menu")
 				case "boards.open":
 					setArea("Message Boards")
 					s.runBoards(sess, reader, termWidth, renderWidth, currentUser, th, sessionANSI, sessionEncoding, sessionTime24h, nodeLabel, touch)
@@ -675,6 +694,8 @@ func (s *Server) handleSession(sess gssh.Session) {
 					state = stateStatusCenter
 				case "system.app_upgrade":
 					s.runAppUpgrade(sess, reader, currentUser, currentAccount, touch)
+				case "system.showcase":
+					s.runShowcase(sess, reader, termWidth, renderWidth, currentUser, nodeLabel, th, sessionANSI, sessionEncoding, sessionTime24h, touch)
 				}
 			case "files.open":
 				if !evaluateAccess(strings.TrimSpace(os.Getenv("WOLFBBS_ACS_FILES_READ")), currentAccount, currentUser, map[string]string{"area": "files"}, acsStrict, s.logger) {
@@ -712,11 +733,13 @@ func (s *Server) handleSession(sess gssh.Session) {
 					touch()
 					break
 				}
-				io.WriteString(sess, "\r\nUse web admin at /admin for full sysop controls. Press any key.")
-				_, _ = readKey(reader)
-				touch()
+				setArea("Admin")
+				s.runAdminCenter(sess, reader, termWidth, renderWidth, currentUser, currentAccount, th, sessionANSI, sessionEncoding, sessionTime24h, nodeLabel, touch)
+				setArea("Main Menu")
 			case "system.app_upgrade":
 				s.runAppUpgrade(sess, reader, currentUser, currentAccount, touch)
+			case "system.showcase":
+				s.runShowcase(sess, reader, termWidth, renderWidth, currentUser, nodeLabel, th, sessionANSI, sessionEncoding, sessionTime24h, touch)
 			case "":
 				if len(key) == 1 {
 					io.WriteString(sess, "\r\nUse a single-letter hotkey listed in the menu.\r\n")
@@ -967,6 +990,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 				showHelpPanel(sess, reader, termWidth, renderWidth, s.siteName()+" Help", currentUser, nodeLabel, th, sessionTime24h, sessionANSI, sessionEncoding, ui.RenderGatewayHelp(renderWidth), touch)
 				state = stateGateway
 			case "E":
+				emailGateway = s.activeEmailGateway()
 				io.WriteString(sess, "\r\nTo external email: ")
 				to, err := readLine(reader, 200)
 				if err != nil {
@@ -978,7 +1002,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 					return
 				}
 				io.WriteString(sess, "Body (blank line then '.' to send):\r\n")
-				body, err := readMessageBody(reader, 100, 65536)
+				body, err := readMessageBody(sess, reader, 100, 65536)
 				if err != nil {
 					return
 				}
@@ -1040,6 +1064,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 				touch()
 				state = stateMainMenu
 			case "W":
+				fetchCfg := s.activeWebFetchConfig()
 				io.WriteString(sess, "\r\nURL: ")
 				url, err := readLine(reader, 160)
 				if err != nil {
@@ -1050,7 +1075,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 					io.WriteString(sess, "\r\nNo URL entered. Press any key.\r\n")
 				} else {
 					io.WriteString(sess, "\r\nFetching and formatting...\r\n")
-					text, err := gateway.FetchText(context.Background(), u, gateway.DefaultFetchConfig)
+					text, err := gateway.FetchText(context.Background(), u, fetchCfg)
 					if err != nil {
 						io.WriteString(sess, "\r\nGateway blocked: "+err.Error()+"\r\n")
 					} else {
@@ -1068,6 +1093,205 @@ func (s *Server) handleSession(sess gssh.Session) {
 						}
 					}
 				}
+				_, _ = readKey(reader)
+				touch()
+				state = stateMainMenu
+			case "F":
+				fetchCfg := s.activeWebFetchConfig()
+				io.WriteString(sess, "\r\nFeed URL: ")
+				feedURL, err := readLine(reader, 200)
+				if err != nil {
+					return
+				}
+				feedURL = strings.TrimSpace(feedURL)
+				if feedURL == "" {
+					io.WriteString(sess, "\r\nFeed URL required. Press any key.\r\n")
+					_, _ = readKey(reader)
+					touch()
+					state = stateMainMenu
+					continue
+				}
+				io.WriteString(sess, "Max items (1-20, default 8): ")
+				limitRaw, err := readLine(reader, 12)
+				if err != nil {
+					return
+				}
+				limit := 8
+				if strings.TrimSpace(limitRaw) != "" {
+					if parsed, convErr := strconv.Atoi(strings.TrimSpace(limitRaw)); convErr == nil {
+						limit = parsed
+					}
+				}
+				if limit < 1 {
+					limit = 1
+				}
+				if limit > 20 {
+					limit = 20
+				}
+				feed, fetchErr := gateway.FetchFeed(context.Background(), feedURL, fetchCfg, limit)
+				if fetchErr != nil {
+					io.WriteString(sess, "\r\nFeed fetch failed: "+fetchErr.Error()+"\r\nPress any key.\r\n")
+					_, _ = readKey(reader)
+					touch()
+					state = stateMainMenu
+					continue
+				}
+				var out strings.Builder
+				out.WriteString("Feed: " + defaultIfBlank(strings.TrimSpace(feed.Title), "Untitled feed") + "\n")
+				out.WriteString("Source: " + defaultIfBlank(strings.TrimSpace(feed.SourceURL), feedURL) + "\n")
+				out.WriteString("Items: " + strconv.Itoa(len(feed.Items)) + "\n")
+				out.WriteString(strings.Repeat("-", 60) + "\n")
+				for idx, item := range feed.Items {
+					out.WriteString(fmt.Sprintf("%02d) %s\n", idx+1, defaultIfBlank(strings.TrimSpace(item.Title), "(untitled item)")))
+					if strings.TrimSpace(item.Published) != "" {
+						out.WriteString("    " + strings.TrimSpace(item.Published) + "\n")
+					}
+					if strings.TrimSpace(item.Link) != "" {
+						out.WriteString("    " + strings.TrimSpace(item.Link) + "\n")
+					}
+					if strings.TrimSpace(item.Summary) != "" {
+						out.WriteString("    " + clampForTTY(strings.TrimSpace(item.Summary), 180) + "\n")
+					}
+					out.WriteString("\n")
+				}
+				pagerWrite(sess, reader, strings.TrimSpace(out.String()))
+				io.WriteString(sess, "\r\nPress any key.\r\n")
+				_, _ = readKey(reader)
+				touch()
+				state = stateMainMenu
+			case "S":
+				fetchCfg := s.activeWebFetchConfig()
+				io.WriteString(sess, "\r\nArticle URL: ")
+				articleURL, err := readLine(reader, 200)
+				if err != nil {
+					return
+				}
+				articleURL = strings.TrimSpace(articleURL)
+				if articleURL == "" {
+					io.WriteString(sess, "\r\nArticle URL required. Press any key.\r\n")
+					_, _ = readKey(reader)
+					touch()
+					state = stateMainMenu
+					continue
+				}
+				io.WriteString(sess, "Bullet count (1-12, default 5): ")
+				bulletsRaw, err := readLine(reader, 12)
+				if err != nil {
+					return
+				}
+				bullets := 5
+				if strings.TrimSpace(bulletsRaw) != "" {
+					if parsed, convErr := strconv.Atoi(strings.TrimSpace(bulletsRaw)); convErr == nil {
+						bullets = parsed
+					}
+				}
+				if bullets < 1 {
+					bullets = 1
+				}
+				if bullets > 12 {
+					bullets = 12
+				}
+				summary, summaryErr := gateway.SummarizeURL(context.Background(), articleURL, fetchCfg, bullets)
+				if summaryErr != nil {
+					io.WriteString(sess, "\r\nSummarizer failed: "+summaryErr.Error()+"\r\nPress any key.\r\n")
+					_, _ = readKey(reader)
+					touch()
+					state = stateMainMenu
+					continue
+				}
+				var out strings.Builder
+				out.WriteString("Title: " + defaultIfBlank(strings.TrimSpace(summary.Title), articleURL) + "\n")
+				out.WriteString("URL: " + defaultIfBlank(strings.TrimSpace(summary.URL), articleURL) + "\n")
+				out.WriteString("Word count: " + strconv.Itoa(summary.WordCount) + "\n")
+				out.WriteString(strings.Repeat("-", 60) + "\n")
+				for idx, bullet := range summary.Bullets {
+					out.WriteString(fmt.Sprintf("%d. %s\n", idx+1, strings.TrimSpace(bullet)))
+				}
+				if strings.TrimSpace(summary.Excerpt) != "" {
+					out.WriteString("\nExcerpt:\n" + strings.TrimSpace(summary.Excerpt) + "\n")
+				}
+				pagerWrite(sess, reader, strings.TrimSpace(out.String()))
+				io.WriteString(sess, "\r\nPress any key.\r\n")
+				_, _ = readKey(reader)
+				touch()
+				state = stateMainMenu
+			case "J":
+				fetchCfg := s.activeWebFetchConfig()
+				io.WriteString(sess, "\r\nJSON URL: ")
+				jsonURL, err := readLine(reader, 200)
+				if err != nil {
+					return
+				}
+				jsonURL = strings.TrimSpace(jsonURL)
+				if jsonURL == "" {
+					io.WriteString(sess, "\r\nJSON URL required. Press any key.\r\n")
+					_, _ = readKey(reader)
+					touch()
+					state = stateMainMenu
+					continue
+				}
+				pretty, fetchErr := gateway.FetchJSON(context.Background(), jsonURL, fetchCfg)
+				if fetchErr != nil {
+					io.WriteString(sess, "\r\nJSON fetch failed: "+fetchErr.Error()+"\r\nPress any key.\r\n")
+					_, _ = readKey(reader)
+					touch()
+					state = stateMainMenu
+					continue
+				}
+				pagerWrite(sess, reader, pretty)
+				io.WriteString(sess, "\r\nPress any key.\r\n")
+				_, _ = readKey(reader)
+				touch()
+				state = stateMainMenu
+			case "X":
+				s.runCallerPulse(sess, reader, termWidth, renderWidth, currentUser, currentAccount, th, sessionANSI, sessionEncoding, sessionTime24h, nodeLabel, touch)
+				state = stateMainMenu
+			case "A":
+				aiCfg := s.loadAIGatewaySettings()
+				if !aiCfg.Enabled || strings.TrimSpace(aiCfg.APIKey) == "" {
+					io.WriteString(sess, "\r\nAI gateway is disabled. Configure /admin/gateways and set API key. Press any key.\r\n")
+					_, _ = readKey(reader)
+					touch()
+					state = stateMainMenu
+					continue
+				}
+				io.WriteString(sess, "\r\nPrompt: ")
+				prompt, err := readLine(reader, 1200)
+				if err != nil {
+					return
+				}
+				prompt = strings.TrimSpace(prompt)
+				if prompt == "" {
+					io.WriteString(sess, "\r\nPrompt is required. Press any key.\r\n")
+					_, _ = readKey(reader)
+					touch()
+					state = stateMainMenu
+					continue
+				}
+				client := gateway.NewAIClient(gateway.AIConfig{
+					BaseURL:      aiCfg.BaseURL,
+					APIKey:       aiCfg.APIKey,
+					Model:        aiCfg.Model,
+					SystemPrompt: aiCfg.SystemPrompt,
+					Timeout:      time.Duration(aiCfg.TimeoutSec) * time.Second,
+					MaxTokens:    aiCfg.MaxTokens,
+				})
+				answer, aiErr := client.Complete(context.Background(), prompt)
+				if aiErr != nil {
+					io.WriteString(sess, "\r\nAI request failed: "+aiErr.Error()+"\r\nPress any key.\r\n")
+					_, _ = readKey(reader)
+					touch()
+					state = stateMainMenu
+					continue
+				}
+				var out strings.Builder
+				out.WriteString("Model: " + aiCfg.Model + "\n")
+				out.WriteString(strings.Repeat("-", 60) + "\n")
+				out.WriteString(strings.TrimSpace(answer))
+				pagerWrite(sess, reader, strings.TrimSpace(out.String()))
+				io.WriteString(sess, "\r\nPress any key.\r\n")
+				_, _ = readKey(reader)
+				touch()
 				state = stateMainMenu
 			default:
 				io.WriteString(sess, "\r\nUnknown gateway key. Press any key.\r\n")
@@ -1151,9 +1375,54 @@ func (s *Server) handleSession(sess gssh.Session) {
 				}
 			}
 			renderFrame(sess, termWidth, renderWidth, ui.RenderWhoOnline(renderWidth, onlineRows), sessionANSI, sessionEncoding)
-			_, _ = readKey(reader)
+			io.WriteString(sess, "\r\n(P)age caller  (R)efresh  (Q)uit: ")
+			choice, readErr := readKey(reader)
+			if readErr != nil {
+				return
+			}
 			touch()
-			state = stateMainMenu
+			switch choice {
+			case "P":
+				io.WriteString(sess, "\r\nHandle to page: ")
+				target, err := readLine(reader, 32)
+				if err != nil {
+					return
+				}
+				touch()
+				target = strings.TrimSpace(target)
+				if target == "" || strings.EqualFold(target, currentUser) {
+					io.WriteString(sess, "\r\nPick another active handle. Press any key.")
+					_, _ = readKey(reader)
+					touch()
+					state = stateWhoOnline
+					break
+				}
+				io.WriteString(sess, "\r\nMessage: ")
+				message, err := readLine(reader, 160)
+				if err != nil {
+					return
+				}
+				touch()
+				message = strings.TrimSpace(message)
+				if message == "" {
+					message = "Page from " + currentUser
+				}
+				if queueErr := s.queuePageRequest(currentUser, target, message, "ssh who-online / "+nodeLabel); queueErr != nil {
+					io.WriteString(sess, "\r\nCould not queue page: "+queueErr.Error()+"\r\nPress any key.")
+					_, _ = readKey(reader)
+					touch()
+					state = stateWhoOnline
+					break
+				}
+				io.WriteString(sess, "\r\nPage queued for "+target+". Press any key.")
+				_, _ = readKey(reader)
+				touch()
+				state = stateWhoOnline
+			case "R":
+				state = stateWhoOnline
+			default:
+				state = stateMainMenu
+			}
 		case stateConfigCenter:
 			setArea("Config Center")
 			touch()
@@ -1183,43 +1452,98 @@ func (s *Server) handleSession(sess gssh.Session) {
 			state = stateMainMenu
 		case stateStatusCenter:
 			setArea("Status Center")
-			touch()
-			writeClear(sess, sessionANSI)
-			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "Status Center", currentUser, time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
-			onlineCount := 0
-			if s.nodes != nil {
-				onlineCount = len(s.nodes.Online())
+			for {
+				touch()
+				onlineCount := 0
+				if s.nodes != nil {
+					onlineCount = len(s.nodes.Online())
+				}
+				chatChannels := 0
+				if s.chatSvc != nil {
+					chatChannels = len(s.chatSvc.ListChannels())
+				}
+				statusLines := []string{
+					fmt.Sprintf("Node: %s", nodeLabel),
+					fmt.Sprintf("Session: %s", clampForTTY(sessionID, 18)),
+					fmt.Sprintf("Remote origin: %s", strings.ToUpper(remoteOrigin)),
+					fmt.Sprintf("Remote host: %s", remoteHost),
+					fmt.Sprintf("Role: %s", currentAccount.Role),
+					fmt.Sprintf("Current area: %s", currentArea),
+					fmt.Sprintf("Boards backend ready: %s", boolText(s.boards != nil && s.msgs != nil)),
+					fmt.Sprintf("Mail backend ready: %s", boolText(s.mail != nil)),
+					fmt.Sprintf("Chat backend ready: %s", boolText(s.chatSvc != nil)),
+					fmt.Sprintf("Doors registry ready: %s", boolText(s.doors != nil)),
+					fmt.Sprintf("Chat channels: %d", chatChannels),
+					fmt.Sprintf("Online callers: %d", onlineCount),
+					fmt.Sprintf("Guest tour state: %s", boolText(s.guestTourEnabled())),
+					fmt.Sprintf("Smart newscan state: %s", boolText(s.smartNewscanEnabled())),
+					fmt.Sprintf("Discover feed state: %s", boolText(s.discoverEnabled())),
+					fmt.Sprintf("Quick jump state: %s", boolText(s.quickJumpEnabled())),
+					fmt.Sprintf("Classic search state: %s", boolText(s.classicSearchEnabled())),
+					fmt.Sprintf("Telnet login enabled: %s", boolText(s.flagFromConfig("runtime.login.telnet.enabled", "WOLFBBS_TELNET_ENABLE", false))),
+					fmt.Sprintf("WebSocket login enabled: %s", boolText(s.flagFromConfig("runtime.login.ws.enabled", "WOLFBBS_WS_ENABLE", false))),
+					fmt.Sprintf("WebSocket TLS enabled: %s", boolText(s.flagFromConfig("runtime.login.wss.enabled", "WOLFBBS_WSS_ENABLE", false))),
+					"",
+					"Commands: [J] status JSON (/statusz parity), [R]efresh, [Q] return",
+				}
+				writeClear(sess, sessionANSI)
+				renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "Status Center", currentUser, time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
+				renderFrame(sess, termWidth, renderWidth, ui.RenderStatusCenter(renderWidth, statusLines), sessionANSI, sessionEncoding)
+				io.WriteString(sess, "Selection: ")
+				choice, err := readKey(reader)
+				if err != nil {
+					return
+				}
+				touch()
+				switch choice {
+				case "R":
+					continue
+				case "J":
+					snapshot := map[string]interface{}{
+						"generated_at":  time.Now().UTC().Format(time.RFC3339Nano),
+						"user":          currentUser,
+						"role":          strings.TrimSpace(currentAccount.Role),
+						"node":          nodeLabel,
+						"session":       clampForTTY(sessionID, 48),
+						"remote_origin": strings.ToUpper(remoteOrigin),
+						"remote_host":   remoteHost,
+						"area":          currentArea,
+						"services": map[string]bool{
+							"boards": s.boards != nil && s.msgs != nil,
+							"mail":   s.mail != nil,
+							"chat":   s.chatSvc != nil,
+							"doors":  s.doors != nil,
+						},
+						"features": map[string]bool{
+							"guest_tour":     s.guestTourEnabled(),
+							"smart_newscan":  s.smartNewscanEnabled(),
+							"discover":       s.discoverEnabled(),
+							"quick_jump":     s.quickJumpEnabled(),
+							"classic_search": s.classicSearchEnabled(),
+						},
+						"transports": map[string]bool{
+							"telnet": s.flagFromConfig("runtime.login.telnet.enabled", "WOLFBBS_TELNET_ENABLE", false),
+							"ws":     s.flagFromConfig("runtime.login.ws.enabled", "WOLFBBS_WS_ENABLE", false),
+							"wss":    s.flagFromConfig("runtime.login.wss.enabled", "WOLFBBS_WSS_ENABLE", false),
+						},
+						"chat_channels":  chatChannels,
+						"online_callers": onlineCount,
+					}
+					body, mErr := json.MarshalIndent(snapshot, "", "  ")
+					if mErr != nil {
+						adminPause(sess, reader, touch, "Could not render status JSON: "+mErr.Error())
+						continue
+					}
+					writeClear(sess, sessionANSI)
+					renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "Status JSON", currentUser, time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
+					pagerWrite(sess, reader, string(body))
+				default:
+					state = stateMainMenu
+				}
+				if state == stateMainMenu {
+					break
+				}
 			}
-			chatChannels := 0
-			if s.chatSvc != nil {
-				chatChannels = len(s.chatSvc.ListChannels())
-			}
-			statusLines := []string{
-				fmt.Sprintf("Node: %s", nodeLabel),
-				fmt.Sprintf("Session: %s", clampForTTY(sessionID, 18)),
-				fmt.Sprintf("Remote origin: %s", strings.ToUpper(remoteOrigin)),
-				fmt.Sprintf("Remote host: %s", remoteHost),
-				fmt.Sprintf("Role: %s", currentAccount.Role),
-				fmt.Sprintf("Current area: %s", currentArea),
-				fmt.Sprintf("Boards backend ready: %s", boolText(s.boards != nil && s.msgs != nil)),
-				fmt.Sprintf("Mail backend ready: %s", boolText(s.mail != nil)),
-				fmt.Sprintf("Chat backend ready: %s", boolText(s.chatSvc != nil)),
-				fmt.Sprintf("Doors registry ready: %s", boolText(s.doors != nil)),
-				fmt.Sprintf("Chat channels: %d", chatChannels),
-				fmt.Sprintf("Online callers: %d", onlineCount),
-				fmt.Sprintf("Guest tour state: %s", boolText(s.guestTourEnabled())),
-				fmt.Sprintf("Smart newscan state: %s", boolText(s.smartNewscanEnabled())),
-				fmt.Sprintf("Discover feed state: %s", boolText(s.discoverEnabled())),
-				fmt.Sprintf("Quick jump state: %s", boolText(s.quickJumpEnabled())),
-				fmt.Sprintf("Classic search state: %s", boolText(s.classicSearchEnabled())),
-				fmt.Sprintf("Telnet login enabled: %s", boolText(s.flagFromConfig("runtime.login.telnet.enabled", "WOLFBBS_TELNET_ENABLE", false))),
-				fmt.Sprintf("WebSocket login enabled: %s", boolText(s.flagFromConfig("runtime.login.ws.enabled", "WOLFBBS_WS_ENABLE", false))),
-				fmt.Sprintf("WebSocket TLS enabled: %s", boolText(s.flagFromConfig("runtime.login.wss.enabled", "WOLFBBS_WSS_ENABLE", false))),
-			}
-			renderFrame(sess, termWidth, renderWidth, ui.RenderStatusCenter(renderWidth, statusLines), sessionANSI, sessionEncoding)
-			_, _ = readKey(reader)
-			touch()
-			state = stateMainMenu
 		case stateExit:
 			writeClear(sess, sessionANSI)
 			io.WriteString(sess, "Signing off "+s.siteName()+"...\r\n")
@@ -1489,6 +1813,8 @@ func legacyHotkeyToAction(key string) string {
 		return "session.quit"
 	case "N":
 		return "system.newscan"
+	case "R":
+		return "pulse.open"
 	case "M":
 		return "boards.open"
 	case "P":
@@ -1525,6 +1851,8 @@ func quickJumpToAction(raw string) string {
 	switch target {
 	case "n", "new", "newscan", "bulletins":
 		return "system.newscan"
+	case "r", "pulse", "next", "streaks", "missions", "topx", "tournaments", "mentorship", "milestones", "time-lane", "resume", "comeback", "events", "event", "recaps", "recap", "challenges", "challenge", "spotlights", "spotlight", "digest", "digest-prefs", "digest-weekday":
+		return "pulse.open"
 	case "m", "msg", "msgs", "boards", "messages":
 		return "boards.open"
 	case "p", "pm", "mail", "private":
@@ -1535,7 +1863,7 @@ func quickJumpToAction(raw string) string {
 		return "gateway.open"
 	case "d", "door", "doors":
 		return "doors.open"
-	case "s", "settings", "prefs":
+	case "s", "settings", "prefs", "bookmarks", "bookmark", "saved", "circles", "circle", "profile-export", "profile", "attention-export", "attention-json":
 		return "settings.open"
 	case "l", "last", "callers":
 		return "system.last_callers"
@@ -1543,12 +1871,14 @@ func quickJumpToAction(raw string) string {
 		return "system.who_online"
 	case "x", "config", "config-center":
 		return "system.config_center"
-	case "y", "status", "status-center":
+	case "y", "status", "status-center", "statusz":
 		return "system.status_center"
 	case "a", "admin", "sysop":
 		return "admin.open"
-	case "f", "files":
+	case "f", "files", "filebase", "collection", "collections", "offline", "packets":
 		return "files.open"
+	case "showcase", "tour":
+		return "system.showcase"
 	case "u", "upgrade", "update", "app", "app-upgrade", "app upgrade", "/app", "/app upgrade":
 		return "system.app_upgrade"
 	case "q", "quit", "exit":
@@ -1618,7 +1948,8 @@ func (s *Server) runAppUpgrade(sess gssh.Session, reader *bufio.Reader, handle s
 	}
 	if strings.TrimSpace(os.Getenv(appUpgradeCommandEnv)) == "" {
 		io.WriteString(sess, "\r\nApp upgrade is not configured.")
-		io.WriteString(sess, "\r\nSet "+appUpgradeCommandEnv+" (example: bash install.sh --rapid-upgrade --yes).")
+		io.WriteString(sess, "\r\nRun 'bash install.sh --repair' to backfill app-upgrade defaults,")
+		io.WriteString(sess, "\r\nor set "+appUpgradeCommandEnv+" manually.")
 		io.WriteString(sess, "\r\nPress any key.")
 		_, _ = readKey(reader)
 		touch()
@@ -1707,6 +2038,32 @@ func (s *Server) guestTourLines(time24h bool) []string {
 	return lines
 }
 
+func (s *Server) runShowcase(sess gssh.Session, reader *bufio.Reader, termWidth, renderWidth int, handle, nodeLabel string, th ui.Theme, ansiEnabled bool, encoding string, time24h bool, touch func()) {
+	if touch == nil {
+		touch = func() {}
+	}
+	writeClear(sess, ansiEnabled)
+	renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "Showcase", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
+	lines := []string{
+		"Showcase lane (terminal parity for /showcase)",
+		"",
+		"1) Start with Caller Pulse for next-action momentum.",
+		"2) Use Boards + Mail for long-form follow-through.",
+		"3) Use Chat + Doors for real-time loop + retention.",
+		"4) Use Files center for indexed search and queue tickets.",
+		"5) Use Status/Config centers for runtime checks.",
+		"",
+		"Shortcuts:",
+		"- / then showcase      : reopen this panel",
+		"- / then statusz       : machine-readable status snapshot",
+		"- / then bookmarks     : saved read-later queue in settings",
+		"- / then circles       : caller circle manager in settings",
+	}
+	renderFrame(sess, termWidth, renderWidth, ui.DrawBox(renderWidth, len(lines)+2, "Product Showcase", lines, ui.CP437Box, ui.FgCyan, ui.BgBlack), ansiEnabled, encoding)
+	_, _ = readKey(reader)
+	touch()
+}
+
 func (s *Server) latestThreadHeadline() string {
 	if s.boards == nil || s.msgs == nil {
 		return ""
@@ -1767,6 +2124,179 @@ func (s *Server) textFromConfig(settingKey, envKey, fallback string) string {
 		return fallback
 	}
 	return raw
+}
+
+type aiGatewaySettings struct {
+	Enabled      bool
+	BaseURL      string
+	Model        string
+	APIKey       string
+	SystemPrompt string
+	TimeoutSec   int
+	MaxTokens    int
+}
+
+func (s *Server) activeWebFetchConfig() gateway.FetchConfig {
+	cfg := gateway.DefaultFetchConfig
+	if s == nil || s.admin == nil {
+		return cfg
+	}
+	settings, err := s.admin.GetGatewaySettings()
+	if err != nil || settings == nil {
+		return cfg
+	}
+	if settings.WebTimeoutSec > 0 {
+		cfg.Timeout = time.Duration(clampInt(settings.WebTimeoutSec, 1, 120)) * time.Second
+	}
+	if settings.WebMaxBytes > 0 {
+		cfg.MaxBodyBytes = int64(clampInt(settings.WebMaxBytes, 1024, 8*1024*1024))
+	}
+	return cfg
+}
+
+func (s *Server) activeEmailGateway() *gateway.EmailGateway {
+	cfg := gateway.LoadEmailConfigFromEnv()
+	if s != nil && s.admin != nil {
+		if settings, err := s.admin.GetGatewaySettings(); err == nil && settings != nil {
+			if host := strings.TrimSpace(settings.SMTPHost); host != "" {
+				cfg.Host = host
+			}
+			if settings.SMTPPort > 0 {
+				cfg.Port = settings.SMTPPort
+			}
+			if user := strings.TrimSpace(settings.SMTPUser); user != "" {
+				cfg.User = user
+			}
+			if pass := strings.TrimSpace(settings.SMTPPass); pass != "" {
+				cfg.Pass = pass
+			}
+			if fromDomain := strings.TrimSpace(settings.FromDomain); fromDomain != "" {
+				cfg.FromDomain = fromDomain
+			}
+			if settings.MaxRecipients > 0 {
+				cfg.MaxRecipients = settings.MaxRecipients
+			}
+			if settings.MaxMessageBytes > 0 {
+				cfg.MaxMessageBytes = settings.MaxMessageBytes
+			}
+		}
+	}
+	cfg.MaxRecipients = clampInt(cfg.MaxRecipients, 1, 25)
+	cfg.MaxMessageBytes = clampInt(cfg.MaxMessageBytes, 1024, 2*1024*1024)
+	ratePerHour := parseIntWithDefault(os.Getenv("WOLFBBS_MAIL_RATE_PER_HOUR"), cfg.RateLimitPerHour)
+	cfg.RateLimitPerHour = clampInt(ratePerHour, 1, 2000)
+	return gateway.NewEmailGateway(cfg)
+}
+
+func defaultAIGatewaySettingsFromEnv() aiGatewaySettings {
+	cfg := aiGatewaySettings{
+		BaseURL:      strings.TrimSpace(envFirstValue("WOLFBBS_GATEWAY_AI_BASE_URL", "WOLFBBS_AI_BASE_URL", "OPENAI_BASE_URL")),
+		Model:        strings.TrimSpace(envFirstValue("WOLFBBS_GATEWAY_AI_MODEL", "WOLFBBS_AI_MODEL", "OPENAI_MODEL")),
+		APIKey:       strings.TrimSpace(envFirstValue("WOLFBBS_GATEWAY_AI_API_KEY", "WOLFBBS_AI_API_KEY", "OPENAI_API_KEY")),
+		SystemPrompt: strings.TrimSpace(envFirstValue("WOLFBBS_GATEWAY_AI_SYSTEM_PROMPT", "WOLFBBS_AI_SYSTEM_PROMPT")),
+		TimeoutSec:   parseIntWithDefault(envFirstValue("WOLFBBS_GATEWAY_AI_TIMEOUT_SEC", "WOLFBBS_AI_TIMEOUT_SEC"), 20),
+		MaxTokens:    parseIntWithDefault(envFirstValue("WOLFBBS_GATEWAY_AI_MAX_TOKENS", "WOLFBBS_AI_MAX_TOKENS"), 400),
+		Enabled:      envBool(envFirstValue("WOLFBBS_GATEWAY_AI_ENABLED", "WOLFBBS_AI_ENABLED")),
+	}
+	if strings.TrimSpace(cfg.BaseURL) == "" {
+		cfg.BaseURL = "https://api.openai.com"
+	}
+	if strings.TrimSpace(cfg.Model) == "" {
+		cfg.Model = "gpt-4.1-mini"
+	}
+	cfg.TimeoutSec = clampInt(cfg.TimeoutSec, 1, 120)
+	cfg.MaxTokens = clampInt(cfg.MaxTokens, 1, 4000)
+	if cfg.APIKey != "" && !cfg.Enabled {
+		cfg.Enabled = true
+	}
+	return cfg
+}
+
+func (s *Server) loadAIGatewaySettings() aiGatewaySettings {
+	cfg := defaultAIGatewaySettingsFromEnv()
+	if s == nil || s.admin == nil {
+		return cfg
+	}
+	if raw, err := s.admin.GetSystemSetting(sysSettingGatewayAIBaseURL); err == nil {
+		if val := strings.TrimSpace(raw); val != "" {
+			cfg.BaseURL = val
+		}
+	}
+	if raw, err := s.admin.GetSystemSetting(sysSettingGatewayAIModel); err == nil {
+		if val := strings.TrimSpace(raw); val != "" {
+			cfg.Model = val
+		}
+	}
+	if raw, err := s.admin.GetSystemSetting(sysSettingGatewayAIAPIKey); err == nil {
+		if val := strings.TrimSpace(raw); val != "" {
+			cfg.APIKey = val
+		}
+	}
+	if raw, err := s.admin.GetSystemSetting(sysSettingGatewayAISystemPrompt); err == nil {
+		if val := strings.TrimSpace(raw); val != "" {
+			cfg.SystemPrompt = val
+		}
+	}
+	if raw, err := s.admin.GetSystemSetting(sysSettingGatewayAIEnabled); err == nil && strings.TrimSpace(raw) != "" {
+		cfg.Enabled = envBool(raw)
+	}
+	if raw, err := s.admin.GetSystemSetting(sysSettingGatewayAITimeoutSec); err == nil && strings.TrimSpace(raw) != "" {
+		cfg.TimeoutSec = parseIntWithDefault(raw, cfg.TimeoutSec)
+	}
+	if raw, err := s.admin.GetSystemSetting(sysSettingGatewayAIMaxTokens); err == nil && strings.TrimSpace(raw) != "" {
+		cfg.MaxTokens = parseIntWithDefault(raw, cfg.MaxTokens)
+	}
+	if strings.TrimSpace(cfg.BaseURL) == "" {
+		cfg.BaseURL = "https://api.openai.com"
+	}
+	if strings.TrimSpace(cfg.Model) == "" {
+		cfg.Model = "gpt-4.1-mini"
+	}
+	cfg.TimeoutSec = clampInt(cfg.TimeoutSec, 1, 120)
+	cfg.MaxTokens = clampInt(cfg.MaxTokens, 1, 4000)
+	if cfg.APIKey != "" && !cfg.Enabled {
+		cfg.Enabled = true
+	}
+	return cfg
+}
+
+func envFirstValue(names ...string) string {
+	for _, name := range names {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func parseIntWithDefault(raw string, fallback int) int {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+	return value
+}
+
+func clampInt(value, minValue, maxValue int) int {
+	if value < minValue {
+		return minValue
+	}
+	if value > maxValue {
+		return maxValue
+	}
+	return value
+}
+
+func defaultIfBlank(value, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 func (s *Server) siteName() string {
@@ -1886,8 +2416,9 @@ func (s *Server) runChat(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 		touch()
 		history := s.chatSvc.History(channel, 12)
 		online := s.chatSvc.OnlineInChannel(channel)
+		locked := s.isChannelLockedSSH(channel)
 		lines := []string{
-			fmt.Sprintf("Channel: %s   Online: %d", channel, len(online)),
+			fmt.Sprintf("Channel: %s   Online: %d   Locked: %s", channel, len(online), boolText(locked)),
 			strings.Repeat("-", 62),
 		}
 		if len(history) == 0 {
@@ -1955,6 +2486,12 @@ func (s *Server) runChat(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 			body = strings.TrimSpace(body)
 			if body == "" {
 				io.WriteString(sess, "\r\nEmpty message. Press any key.")
+				_, _ = readKey(reader)
+				touch()
+				continue
+			}
+			if locked && !s.chatLockBypass(handle) {
+				io.WriteString(sess, "\r\nChannel is locked for moderator/sysop posting only.\r\nPress any key.")
 				_, _ = readKey(reader)
 				touch()
 				continue
@@ -2200,7 +2737,7 @@ func (s *Server) runBoards(sess gssh.Session, reader *bufio.Reader, termWidth, r
 					return
 				}
 				touch()
-				body, err := readMessageBody(reader, 80, 2048)
+				body, err := readMessageBody(sess, reader, 80, 2048)
 				if err != nil {
 					return
 				}
@@ -2370,7 +2907,7 @@ func (s *Server) runBoardReader(sess gssh.Session, reader *bufio.Reader, termWid
 				replySubject = defaultSubject
 			}
 			io.WriteString(sess, "\r\nEnter reply body, end with blank line then '.'\r\n")
-			replyBody, err := readMessageBody(reader, 80, 4096)
+			replyBody, err := readMessageBody(sess, reader, 80, 4096)
 			if err != nil {
 				return posted, err
 			}
@@ -2470,6 +3007,14 @@ func (s *Server) runMail(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 			return
 		case "?":
 			showHelpPanel(sess, reader, termWidth, renderWidth, s.siteName()+" Help", handle, nodeLabel, th, time24h, ansiEnabled, encoding, ui.RenderMailHelp(renderWidth), touch)
+		case "H":
+			io.WriteString(sess, "\r\nHandle search (?blank for all): ")
+			query, err := readLine(reader, 64)
+			if err != nil {
+				return
+			}
+			touch()
+			s.runHandleSuggestions(sess, reader, termWidth, renderWidth, handle, strings.TrimSpace(query), th, ansiEnabled, encoding, time24h, nodeLabel, touch)
 		case "C":
 			if !evaluateAccess(strings.TrimSpace(os.Getenv("WOLFBBS_ACS_MAIL_SEND")), currentUser, handle, map[string]string{"area": "mail", "mode": "compose"}, acsStrict, s.logger) {
 				io.WriteString(sess, "\r\nSending mail denied by ACS rule. Press any key.")
@@ -2480,19 +3025,17 @@ func (s *Server) runMail(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 			writeClear(sess, ansiEnabled)
 			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName()+" Mail Compose", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
 			renderFrame(sess, termWidth, renderWidth, ui.RenderPostEditor(renderWidth, "")+"\r\n", ansiEnabled, encoding)
-			io.WriteString(sess, "To handle or external email: ")
-			to, err := readLine(reader, 128)
+			to, err := s.promptRecipient(sess, reader, termWidth, renderWidth, handle, th, ansiEnabled, encoding, time24h, nodeLabel, touch)
 			if err != nil {
 				return
 			}
-			touch()
 			io.WriteString(sess, "Subject: ")
 			subject, err := readLine(reader, 120)
 			if err != nil {
 				return
 			}
 			touch()
-			body, err := readMessageBody(reader, 80, 4096)
+			body, err := readMessageBody(sess, reader, 80, 4096)
 			if err != nil {
 				return
 			}
@@ -2515,7 +3058,12 @@ func (s *Server) runMail(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 			} else {
 				targetUser, err := s.auth.GetUser(to)
 				if err != nil || targetUser == nil {
-					io.WriteString(sess, "\r\nUnknown recipient handle. Press any key.")
+					suggestions := s.suggestHandles(to, handle, 5)
+					io.WriteString(sess, "\r\nUnknown recipient handle.")
+					if len(suggestions) > 0 {
+						io.WriteString(sess, "\r\nTry: "+strings.Join(suggestions, ", "))
+					}
+					io.WriteString(sess, "\r\nPress any key.")
 					_, _ = readKey(reader)
 					touch()
 					continue
@@ -2597,7 +3145,7 @@ func (s *Server) runMail(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 				subject = inputSubject
 			}
 			io.WriteString(sess, "\r\nEnter reply body, end with '.' on a line by itself.\r\n")
-			replyBody, err := readMessageBody(reader, 80, 4096)
+			replyBody, err := readMessageBody(sess, reader, 80, 4096)
 			if err != nil {
 				return
 			}
@@ -2711,7 +3259,7 @@ func (s *Server) runMail(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 					replySubject = override
 				}
 				io.WriteString(sess, "\r\nEnter reply body, end with '.' on a line by itself.\r\n")
-				replyBody, err := readMessageBody(reader, 80, 4096)
+				replyBody, err := readMessageBody(sess, reader, 80, 4096)
 				if err != nil {
 					return
 				}
@@ -2855,6 +3403,10 @@ func (s *Server) runFiles(sess gssh.Session, reader *bufio.Reader, termWidth, re
 			return
 		case "?":
 			showHelpPanel(sess, reader, termWidth, renderWidth, s.siteName()+" Help", handle, nodeLabel, th, time24h, ansiEnabled, encoding, ui.RenderFilesHelp(renderWidth), touch)
+		case "C":
+			s.runFeaturedCollections(sess, reader, termWidth, renderWidth, handle, account, th, ansiEnabled, encoding, time24h, nodeLabel, touch)
+		case "O":
+			s.runOfflineCenter(sess, reader, termWidth, renderWidth, handle, account, th, ansiEnabled, encoding, time24h, nodeLabel, touch)
 		case "R":
 			rows := formatFileRows(renderWidth, s.collectFilesAcrossAreas(areas, "", nil, 40), true, time24h)
 			writeClear(sess, ansiEnabled)
@@ -3680,6 +4232,14 @@ func (s *Server) runSettingsMCI(sess gssh.Session, reader *bufio.Reader, termWid
 			user.PagingEnabled = !user.PagingEnabled
 		case "C":
 			user.TimeFormat24h = !user.TimeFormat24h
+		case "B":
+			s.runBookmarkCenter(sess, reader, termWidth, renderWidth, user.Handle, previewTheme, currentANSI, currentEncoding, user.TimeFormat24h, nodeLabel, touch)
+		case "O":
+			s.runCircleCenter(sess, reader, termWidth, renderWidth, user.Handle, previewTheme, currentANSI, currentEncoding, user.TimeFormat24h, nodeLabel, touch)
+		case "X":
+			s.runProfileExportViewer(sess, reader, termWidth, renderWidth, user, previewTheme, currentANSI, currentEncoding, user.TimeFormat24h, nodeLabel, touch)
+		case "E":
+			s.runAttentionExportViewer(sess, reader, termWidth, renderWidth, user, previewTheme, currentANSI, currentEncoding, user.TimeFormat24h, nodeLabel, touch)
 		case "S":
 			if err := s.auth.SetPreferences(user.Handle, themes[selectedTheme], user.ANSIEnabled, user.PagingEnabled, user.TimeFormat24h); err != nil {
 				return user, err
@@ -3706,7 +4266,7 @@ func (s *Server) buildSettingsMCIView(user *domain.User, themes []string, select
 	base := mci.View{
 		ID:     "settings",
 		Title:  "Settings",
-		Footer: "T theme, A ansi, P paging, C clock, S save, Q quit",
+		Footer: "T theme, A ansi, P paging, C clock, B bookmarks, O circles, X profile export, E attention export, S save, Q quit",
 		Controls: []mci.Control{
 			{Type: mci.ControlLabel, ID: "header", Label: s.siteName() + " user preferences"},
 			{Type: mci.ControlInput, ID: "theme", Label: "Theme", Value: user.Theme},
@@ -3757,7 +4317,106 @@ func (s *Server) buildSettingsMCIView(user *domain.User, themes []string, select
 	return view
 }
 
-func readMessageBody(reader *bufio.Reader, maxLines, maxChars int) (string, error) {
+type persistedPageRequest struct {
+	ID        string    `json:"id"`
+	From      string    `json:"from"`
+	To        string    `json:"to"`
+	Message   string    `json:"message"`
+	Source    string    `json:"source,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func normalizePageRequestRecord(row persistedPageRequest) (persistedPageRequest, bool) {
+	row.ID = strings.TrimSpace(row.ID)
+	row.From = strings.TrimSpace(row.From)
+	row.To = strings.TrimSpace(row.To)
+	row.Message = sanitizePageText(strings.TrimSpace(row.Message), 240)
+	row.Source = sanitizePageText(strings.TrimSpace(row.Source), 80)
+	if row.ID == "" || row.From == "" || row.To == "" || row.Message == "" {
+		return persistedPageRequest{}, false
+	}
+	if row.CreatedAt.IsZero() {
+		row.CreatedAt = time.Now().UTC()
+	}
+	return row, true
+}
+
+func (s *Server) loadPageRequests() []persistedPageRequest {
+	if s == nil || s.admin == nil {
+		return nil
+	}
+	raw, err := s.admin.GetSystemSetting(sysSettingPageRequests)
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	rows := []persistedPageRequest{}
+	if err := json.Unmarshal([]byte(raw), &rows); err != nil {
+		return nil
+	}
+	out := make([]persistedPageRequest, 0, len(rows))
+	for _, row := range rows {
+		if clean, ok := normalizePageRequestRecord(row); ok {
+			out = append(out, clean)
+		}
+	}
+	return out
+}
+
+func (s *Server) persistPageRequests(rows []persistedPageRequest) error {
+	if s == nil || s.admin == nil {
+		return errors.New("page storage is unavailable")
+	}
+	clean := make([]persistedPageRequest, 0, len(rows))
+	for _, row := range rows {
+		if normalized, ok := normalizePageRequestRecord(row); ok {
+			clean = append(clean, normalized)
+		}
+	}
+	raw, err := json.Marshal(clean)
+	if err != nil {
+		return err
+	}
+	return s.admin.UpsertSystemSetting(sysSettingPageRequests, string(raw))
+}
+
+func (s *Server) queuePageRequest(from, to, message, source string) error {
+	if s == nil || s.admin == nil {
+		return errors.New("page storage is unavailable")
+	}
+	from = strings.TrimSpace(from)
+	to = strings.TrimSpace(to)
+	message = sanitizePageText(strings.TrimSpace(message), 240)
+	source = sanitizePageText(strings.TrimSpace(source), 80)
+	if from == "" || to == "" || message == "" {
+		return errors.New("from, to, and message are required")
+	}
+	rows := s.loadPageRequests()
+	next := append([]persistedPageRequest{{
+		ID:        time.Now().UTC().Format("20060102T150405.000000000"),
+		From:      from,
+		To:        to,
+		Message:   message,
+		Source:    source,
+		CreatedAt: time.Now().UTC(),
+	}}, rows...)
+	if len(next) > 500 {
+		next = next[:500]
+	}
+	return s.persistPageRequests(next)
+}
+
+func sanitizePageText(value string, max int) string {
+	value = strings.ReplaceAll(value, "\r\n", " ")
+	value = strings.ReplaceAll(value, "\n", " ")
+	value = strings.ReplaceAll(value, "\r", " ")
+	value = strings.TrimSpace(value)
+	if max > 0 && len(value) > max {
+		return value[:max]
+	}
+	return value
+}
+
+func readMessageBody(out io.Writer, reader *bufio.Reader, maxLines, maxChars int) (string, error) {
 	if maxLines <= 0 {
 		maxLines = 80
 	}
@@ -3774,6 +4433,30 @@ func readMessageBody(reader *bufio.Reader, maxLines, maxChars int) (string, erro
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "." {
 			break
+		}
+		switch strings.ToLower(trimmed) {
+		case "/help":
+			if out != nil {
+				_, _ = io.WriteString(out, "\r\nCompose helpers: /preview, /del, /help, '.' to send.\r\n")
+			}
+			continue
+		case "/del":
+			if len(lines) > 0 {
+				lines = lines[:len(lines)-1]
+				if out != nil {
+					_, _ = io.WriteString(out, "\r\nRemoved last line.\r\n")
+				}
+			}
+			continue
+		case "/preview":
+			if out != nil {
+				preview := strings.Join(lines, "\r\n")
+				if strings.TrimSpace(preview) == "" {
+					preview = "(draft is empty)"
+				}
+				_, _ = io.WriteString(out, "\r\n--- draft preview ---\r\n"+preview+"\r\n--- end preview ---\r\n")
+			}
+			continue
 		}
 		if trimmed == "" && len(lines) > 0 {
 			break

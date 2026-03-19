@@ -1,3 +1,5 @@
+name: wolfbbs
+
 services:
   bbs:
     build: .
@@ -32,6 +34,12 @@ services:
       WOLFBBS_SMTP_USER: "${WOLFBBS_SMTP_USER:-}"
       WOLFBBS_SMTP_PASS: "${WOLFBBS_SMTP_PASS:-}"
       WOLFBBS_FROM_DOMAIN: "${WOLFBBS_FROM_DOMAIN:-}"
+      WOLFBBS_INSTALL_PREFIX: "${WOLFBBS_INSTALL_PREFIX:-.}"
+      WOLFBBS_INSTALL_WORKDIR: "${WOLFBBS_INSTALL_WORKDIR:-.}"
+      WOLFBBS_DOCKER_SOCKET: "${WOLFBBS_DOCKER_SOCKET:-/var/run/docker.sock}"
+      WOLFBBS_APP_UPGRADE_COMMAND: "${WOLFBBS_APP_UPGRADE_COMMAND:-}"
+      WOLFBBS_APP_UPGRADE_WORKDIR: "${WOLFBBS_APP_UPGRADE_WORKDIR:-/wolfbbs-host}"
+      WOLFBBS_APP_UPGRADE_TIMEOUT_SECONDS: "${WOLFBBS_APP_UPGRADE_TIMEOUT_SECONDS:-900}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -40,6 +48,10 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    volumes:
+      - "${WOLFBBS_INSTALL_WORKDIR:-.}:/wolfbbs-host:rw"
+      - "${WOLFBBS_INSTALL_PREFIX:-.}:/wolfbbs-prefix:rw"
+      - "${WOLFBBS_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock"
   web:
     build: .
     entrypoint: ["/app/wolfbbs-web"]

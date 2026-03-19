@@ -9,6 +9,14 @@ This kickoff starts Theme 16 (`146-150`) with delivery order intact and concrete
    - Purpose: unify roadmap status, QA evidence, release notes, and packaging commands in one operator view.
 2. Items 146-149 foundation contracts documented here for implementation sequencing.
 
+## Delivery Update (Shipped)
+
+- 146 shipped at `/admin/plugins` with explicit manifest validation, sandbox profile checks, and capability matrix.
+- 147 shipped at `/admin/themes` with importable bundle contract, safe extracted bundle files, and apply workflow.
+- 148 shipped at `/admin/webhooks` with endpoint/token/event controls plus retry/backoff delivery logs.
+- 149 shipped at `/admin/analytics` with bounded daily/weekly/monthly KPI windows and recommendations.
+- 150 follow-on shipped at `/admin/release` with persisted release checklist state and package artifact inspection.
+
 ## Item Contracts
 
 ### 146. Plugin manifest, capability model, sandbox contract
@@ -54,4 +62,3 @@ This kickoff starts Theme 16 (`146-150`) with delivery order intact and concrete
   - release checklist state persistence
   - tag/release metadata fetch and render
   - package artifact inspection integration
-

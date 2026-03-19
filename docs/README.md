@@ -9,6 +9,7 @@ This directory is organized for three common audiences: operators, contributors,
 - [SHOWCASE.md](SHOWCASE.md): product tour for GitHub visitors and release notes
 - [ACCEPTANCE_SPEC.md](ACCEPTANCE_SPEC.md): acceptance contract and MUST checks
 - [manual-acceptance-latest.md](manual-acceptance-latest.md): latest acceptance run report
+- [releases/v1.1.20.md](releases/v1.1.20.md): current distro release notes
 
 ## Start Here
 
@@ -59,3 +60,4 @@ This directory is organized for three common audiences: operators, contributors,
 ## Release Notes
 
 - [releases/](releases): release-by-release change history
+- [releases/README.md](releases/README.md): release index + current recommended tag

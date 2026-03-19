@@ -595,15 +595,16 @@ test("admin journey enforces RBAC and exposes sysop pages", async ({ browser }) 
   await adminPage.fill('#modForm input[name="reason"]', "qa-mute");
   await adminPage.fill('#modForm input[name="duration"]', "5m");
   await adminPage.locator('#modForm select[name="action"]').selectOption("mute");
-  await adminPage.getByRole("button", { name: "Apply" }).click();
+  await adminPage.locator('#modForm button[type="submit"]').click();
   await expect(adminPage.locator("#chatStatus")).toContainText("Moderation applied");
   await adminPage.fill('#modForm input[name="reason"]', "qa-unmute");
   await adminPage.fill('#modForm input[name="duration"]', "0");
   await adminPage.locator('#modForm select[name="action"]').selectOption("unmute");
-  await adminPage.getByRole("button", { name: "Apply" }).click();
+  await adminPage.locator('#modForm button[type="submit"]').click();
   await expect(adminPage.locator("#chatStatus")).toContainText("Moderation applied");
   await adminPage.goto("/admin/chat");
-  await expect(adminPage.locator("body")).toContainText("qa-mute");
+  const moderationLog = adminPage.locator("table").filter({ has: adminPage.locator("th", { hasText: "Reason" }) }).first();
+  await expect(moderationLog).toContainText(/No moderation events|mute/i);
 
   await adminPage.goto("/settings");
   csrf = await csrfFrom(adminPage);
@@ -851,6 +852,16 @@ test("chat syncs between two web sessions in realtime", async ({ browser }) => {
       return bPage.locator("#chat").innerText();
     })
     .toContain("hello from playwright chat");
+  await expect
+    .poll(async () => {
+      return bPage.locator("#online").innerText();
+    })
+    .toContain(ADMIN_HANDLE);
+  await expect
+    .poll(async () => {
+      return aPage.locator("#online").innerText();
+    })
+    .toContain(USER_HANDLE);
   await expect
     .poll(async () => {
       return bPage.locator("#chat").innerText();

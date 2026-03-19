@@ -34,13 +34,13 @@ type Message struct {
 }
 
 type Presence struct {
-	Nick     string
-	Node     string
-	Online   bool
-	IdleSec  int
-	Area     string
-	LoginAt  time.Time
-	LastSeen time.Time
+	Nick     string    `json:"nick"`
+	Node     string    `json:"node"`
+	Online   bool      `json:"online"`
+	IdleSec  int       `json:"idle_sec"`
+	Area     string    `json:"area"`
+	LoginAt  time.Time `json:"login_at"`
+	LastSeen time.Time `json:"last_seen"`
 }
 
 type ModerationAction struct {

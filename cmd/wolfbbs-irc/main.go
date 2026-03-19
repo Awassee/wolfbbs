@@ -52,6 +52,8 @@ type ircClient struct {
 const serverName = "wolfbbs"
 
 var (
+	// ircVersion is overridden in CI/release builds via -ldflags -X main.ircVersion=...
+	ircVersion = "1.0.0"
 	maxConn       = 512
 	maxPerIP      = 16
 	floodWindow   = 1500 * time.Millisecond
@@ -255,7 +257,7 @@ func handleIRCConn(conn net.Conn, svc *chat.Service, authSvc *auth.Service, ip s
 	_ = replyfConn(client, ":%s 001 * :Welcome to WolfBBS IRC", serverName)
 	_ = replyfConn(client, ":%s 002 * :Your host is WolfBBS-IRCd", serverName)
 	_ = replyfConn(client, ":%s 003 * :This server accepts BBS accounts", serverName)
-	_ = replyfConn(client, ":%s 004 * WolfBBS 1.0 i", serverName)
+	_ = replyfConn(client, ":%s 004 * WolfBBS "+ircVersion+" i", serverName)
 	_ = replyfConn(client, ":%s 375 * :- WolfBBS Message of the day", serverName)
 	_ = replyfConn(client, ":%s 372 * :- Authenticate with PASS, NICK, USER then join a channel", serverName)
 	_ = replyfConn(client, ":%s 376 * :End of /MOTD command", serverName)
@@ -679,7 +681,7 @@ func completeRegistration(client *ircClient) {
 	_ = replyfConn(client, ":%s 001 %s :Welcome to WolfBBS IRC, %s", serverName, nickOrStar(state.nick), state.nick)
 	_ = replyfConn(client, ":%s 002 %s :Your host is WolfBBS-IRCd", serverName, nickOrStar(state.nick))
 	_ = replyfConn(client, ":%s 003 %s :This server accepts BBS accounts", serverName, nickOrStar(state.nick))
-	_ = replyfConn(client, ":%s 004 %s WolfBBS 1.0 i", serverName, nickOrStar(state.nick))
+	_ = replyfConn(client, ":%s 004 %s WolfBBS "+ircVersion+" i", serverName, nickOrStar(state.nick))
 	_ = replyfConn(client, ":%s 375 %s :- Welcome to the message-of-the-day file", serverName, nickOrStar(state.nick))
 	_ = replyfConn(client, ":%s 372 %s :- Authenticated as %s", serverName, nickOrStar(state.nick), state.nick)
 	_ = replyfConn(client, ":%s 376 %s :End of /MOTD", serverName, nickOrStar(state.nick))

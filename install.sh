@@ -26,6 +26,7 @@ IRC_TLS_PORT="$DEFAULT_IRC_TLS_PORT"
 MAILIN_PORT="$DEFAULT_MAILIN_PORT"
 INSTALL_BREW=false
 UNINSTALL=false
+CLEAN_UNINSTALL=false
 UPGRADE=false
 RAPID_UPGRADE=false
 STATUS=false
@@ -36,6 +37,8 @@ RESTART=false
 LOGS=false
 REPAIR=false
 DEPS_ONLY=false
+DEBUG_BUNDLE=false
+PORT_AUDIT=false
 REPO_URL="${WOLFBBS_REPO_URL:-${WOLFBBS_GH:-}}"
 BBS_NAME="${WOLFBBS_BBS_NAME:-$DEFAULT_BBS_NAME}"
 BBS_HOSTNAME="${WOLFBBS_HOSTNAME:-}"
@@ -57,6 +60,7 @@ WORK_DIR="${SCRIPT_PATH}"
 PURGE=false
 ENV_FILE=""
 DOCKER_BIN="docker"
+DOCKER_SOCKET_PATH="${WOLFBBS_DOCKER_SOCKET:-}"
 BOOTSTRAP_ADMIN_HANDLE=""
 BOOTSTRAP_ADMIN_PASSWORD=""
 ENV_CREATED_THIS_RUN=false
@@ -71,6 +75,7 @@ WIZARD_REQUIRE_VERIFIED_EMAIL=""
 WIZARD_MENU_ENABLE=""
 WIZARD_TERM_ENCODING=""
 USED_INSTALLER_CONFIG_FLAGS=false
+AUTO_OPEN_ADVANCED_INSTALL=false
 
 init_log_file() {
   local candidate=""
@@ -186,6 +191,206 @@ prompt_default() {
   printf '%s' "$reply"
 }
 
+toggle_bool_flag() {
+  local value="${1:-false}"
+  if [[ "$value" == "true" ]]; then
+    printf '%s' "false"
+    return
+  fi
+  printf '%s' "true"
+}
+
+bool_word() {
+  local value="${1:-false}"
+  if [[ "$value" == "true" ]]; then
+    printf '%s' "ON"
+    return
+  fi
+  printf '%s' "OFF"
+}
+
+detect_compose_hint() {
+  local local_compose=""
+  local installed_compose=""
+
+  local_compose="$(find_compose_file || true)"
+  if [[ -n "$local_compose" ]]; then
+    printf '%s' "$local_compose"
+    return
+  fi
+  installed_compose="$(find_installed_compose_file || true)"
+  if [[ -n "$installed_compose" ]]; then
+    printf '%s' "$installed_compose"
+    return
+  fi
+  printf '%s' "not detected yet"
+}
+
+show_interactive_advanced_install_menu() {
+  local choice=""
+  local setup_input=""
+  local host_default=""
+  local host_input=""
+
+  while true; do
+    host_default="${BBS_HOSTNAME:-auto}"
+    echo "┌──────────────────── Guided Install: Advanced Options ───────────────────────┐"
+    menu_line "Tune advanced defaults before install. Recommended path is still /admin/setup."
+    menu_divider
+    menu_line "Setup profile : ${SETUP_PROFILE}"
+    menu_line "BBS name      : ${BBS_NAME}"
+    menu_line "Hostname      : ${host_default}"
+    menu_line "Dry run       : $(bool_word "$DRY_RUN")"
+    menu_line "Force .env    : $(bool_word "$FORCE")"
+    menu_line "Install brew  : $(bool_word "$INSTALL_BREW") (macOS only)"
+    menu_divider
+    menu_line "1) Set setup profile (basic|critical|expert)"
+    menu_line "2) Set BBS display name"
+    menu_line "3) Set hostname (or 'auto')"
+    menu_line "4) Toggle dry-run"
+    menu_line "5) Toggle force .env overwrite"
+    menu_line "6) Toggle install-brew"
+    menu_line "b) Back"
+    echo "└──────────────────────────────────────────────────────────────────────────────┘"
+    printf "Selection [b]: "
+    read -r choice
+    choice="$(trim "$choice")"
+    if [[ -z "$choice" ]]; then
+      choice="b"
+    fi
+    case "$(printf '%s' "$choice" | tr '[:upper:]' '[:lower:]')" in
+      1|profile|setup)
+        setup_input="$(prompt_default 'Setup profile (basic|critical|expert)' "$SETUP_PROFILE")"
+        if is_valid_setup_profile "$setup_input"; then
+          SETUP_PROFILE="$(normalize_setup_profile "$setup_input")"
+        else
+          echo "Invalid setup profile: ${setup_input}"
+        fi
+        ;;
+      2|name|bbs)
+        BBS_NAME="$(prompt_default 'BBS display name' "$BBS_NAME")"
+        USED_INSTALLER_CONFIG_FLAGS=true
+        ;;
+      3|host|hostname)
+        host_input="$(prompt_default "Public hostname (use 'auto' for detected host)" "$host_default")"
+        if [[ "$(printf '%s' "$host_input" | tr '[:upper:]' '[:lower:]')" == "auto" ]]; then
+          BBS_HOSTNAME=""
+        else
+          BBS_HOSTNAME="$host_input"
+        fi
+        USED_INSTALLER_CONFIG_FLAGS=true
+        ;;
+      4|dry|dry-run)
+        DRY_RUN="$(toggle_bool_flag "$DRY_RUN")"
+        ;;
+      5|force)
+        FORCE="$(toggle_bool_flag "$FORCE")"
+        ;;
+      6|brew|install-brew)
+        INSTALL_BREW="$(toggle_bool_flag "$INSTALL_BREW")"
+        ;;
+      b|back|return)
+        return
+        ;;
+      *)
+        echo "Unknown selection: ${choice}"
+        echo
+        ;;
+    esac
+  done
+}
+
+show_interactive_troubleshooting_menu() {
+  local choice=""
+  local compose_hint=""
+  local env_hint=""
+
+  while true; do
+    compose_hint="$(detect_compose_hint)"
+    env_hint="${PREFIX}/.env"
+    if [[ -f "$env_hint" ]]; then
+      env_hint="${env_hint} (present)"
+    else
+      env_hint="${env_hint} (missing)"
+    fi
+
+    echo "┌───────────────────── WolfBBS Troubleshooting Center ────────────────────────┐"
+    menu_line "Guided diagnostics and recovery actions for the current install."
+    menu_divider
+    menu_line "Prefix   : ${PREFIX}"
+    menu_line "Compose  : ${compose_hint}"
+    menu_line "Env file : ${env_hint}"
+    menu_divider
+    menu_line "1) Doctor diagnostics (safe, non-mutating)"
+    menu_line "2) Status snapshot (endpoints + probes)"
+    menu_line "3) Service logs (tail)"
+    menu_line "4) Generate debug bundle (detailed diagnostics file)"
+    menu_line "5) Port audit (listener + process scan)"
+    menu_line "6) Repair stack (ensure deps/env + rebuild + verify)"
+    menu_line "7) Restart services"
+    menu_line "8) Start services"
+    menu_line "9) Stop services"
+    menu_line "b) Back to previous menu"
+    menu_line "q) Quit installer"
+    echo "└──────────────────────────────────────────────────────────────────────────────┘"
+    printf "Selection [1]: "
+    read -r choice
+    choice="$(trim "$choice")"
+    if [[ -z "$choice" ]]; then
+      choice="1"
+    fi
+    case "$(printf '%s' "$choice" | tr '[:upper:]' '[:lower:]')" in
+      1|doctor)
+        DOCTOR=true
+        return
+        ;;
+      2|status)
+        STATUS=true
+        return
+        ;;
+      3|logs|log)
+        LOGS=true
+        return
+        ;;
+      4|debug|bundle|debug-bundle)
+        DEBUG_BUNDLE=true
+        return
+        ;;
+      5|ports|port|port-audit)
+        PORT_AUDIT=true
+        return
+        ;;
+      6|repair)
+        REPAIR=true
+        return
+        ;;
+      7|restart)
+        RESTART=true
+        return
+        ;;
+      8|start)
+        START=true
+        return
+        ;;
+      9|stop)
+        STOP=true
+        return
+        ;;
+      b|back|return)
+        return
+        ;;
+      q|quit|exit)
+        echo "Aborted."
+        exit 0
+        ;;
+      *)
+        echo "Unknown selection: ${choice}"
+        echo
+        ;;
+    esac
+  done
+}
+
 show_interactive_install_plan() {
   local args_count="${1:-0}"
   local choice=""
@@ -200,23 +405,30 @@ show_interactive_install_plan() {
   if action_selected; then
     return
   fi
+  if [[ "$AUTO_OPEN_ADVANCED_INSTALL" == "true" ]]; then
+    AUTO_OPEN_ADVANCED_INSTALL=false
+    show_interactive_advanced_install_menu
+  fi
 
   while true; do
     repo_display="${REPO_URL:-$DEFAULT_REPO_URL}"
-    echo "┌──────────────────────────── Easy Install Plan ─────────────────────────────┐"
-    menu_line "Recommended path: defaults now, bootstrap SYSOP now, finish setup in web UI."
+    echo "┌───────────────────── WolfBBS Guided Install Plan ───────────────────────────┐"
+    menu_line "OpenClaw-style flow: quick defaults, plus optional advanced controls."
     menu_divider
     menu_line "Install dir : ${PREFIX}"
     menu_line "Code checkout: $(managed_checkout_dir)"
     menu_line "Ports       : SSH ${SSH_PORT} | Web ${WEB_PORT} | IRC ${IRC_PORT} | TLS ${IRC_TLS_PORT} | Mail ${MAILIN_PORT}"
     menu_line "Source repo : ${repo_display}"
-    menu_line "Next step   : web setup at /admin/setup after containers come up"
+    menu_line "Profile     : ${SETUP_PROFILE} | Dry-run: $(bool_word "$DRY_RUN") | Force .env: $(bool_word "$FORCE")"
+    menu_line "Next step   : web setup at /admin/setup and /admin/config"
     menu_divider
     menu_line "1) Continue with recommended install"
     menu_line "2) Edit install directory"
     menu_line "3) Edit ports"
     menu_line "4) Change source repository"
-    menu_line "5) Doctor diagnostics instead"
+    menu_line "5) Advanced install options (profile/name/hostname/toggles)"
+    menu_line "6) Troubleshooting center"
+    menu_line "7) Doctor diagnostics instead"
     menu_line "q) Quit"
     echo "└──────────────────────────────────────────────────────────────────────────────┘"
     printf "Selection [1]: "
@@ -242,7 +454,16 @@ show_interactive_install_plan() {
       4|repo|source)
         REPO_URL="$(normalize_repo_input "$(prompt_default 'Source repo (owner/repo or git URL)' "$repo_display")")"
         ;;
-      5|doctor)
+      5|advanced|options)
+        show_interactive_advanced_install_menu
+        ;;
+      6|trouble|troubleshoot|diagnostics)
+        show_interactive_troubleshooting_menu
+        if action_selected; then
+          return
+        fi
+        ;;
+      7|doctor)
         DOCTOR=true
         return
         ;;
@@ -279,7 +500,11 @@ print_splash() {
   printf '%b\n' "${c2}  \\ \\  /\\  / / _ \\ ' /|  _ \\|  _ \\ \\___ \\ \\___ \\${reset}"
   printf '%b\n' "${c2}   \\ \\/  \\/ /  __/ . \\| |_) | |_) | ___) | ___) |${reset}"
   printf '%b\n' "${c3}    \\__/\\__/ \\___|_|\\_\\____/|____/ |____/ |____/${reset}"
-  printf '%b\n' "${dim}            WolfBBS Installer • ANSI soul, modern ops${reset}"
+  printf '%b\n' "${c3}                     /\\_/\\    Installer Control Center${reset}"
+  printf '%b\n' "${c3}                    ( o.o )   ${DEFAULT_BBS_NAME} rapid setup${reset}"
+  printf '%b\n' "${c3}                     > ^ <    ops + troubleshooting${reset}"
+  printf '%b\n' "${dim}Target: ${PREFIX} | Platform: ${OS}/${ARCH} | Profile: ${SETUP_PROFILE}${reset}"
+  printf '%b\n' "${dim}Tip: choose Troubleshooting Center in the menu for guided recovery actions.${reset}"
   printf '\n'
 }
 
@@ -290,6 +515,59 @@ read_env_value() {
     return 0
   fi
   awk -F= -v lookup="$key" '$1 == lookup {sub(/^[^=]*=/, "", $0); print; exit}' "$file_path"
+}
+
+quote_env_literal() {
+  local value="${1:-}"
+  local escaped=""
+  escaped="$(printf '%s' "$value" | sed "s/'/'\"'\"'/g")"
+  printf "'%s'" "$escaped"
+}
+
+detect_docker_socket_path() {
+  local host_value=""
+  local candidate=""
+
+  if [[ -n "${DOCKER_SOCKET_PATH:-}" ]]; then
+    printf '%s' "$DOCKER_SOCKET_PATH"
+    return
+  fi
+
+  host_value="${DOCKER_HOST:-}"
+  if [[ "$host_value" == unix://* ]]; then
+    candidate="${host_value#unix://}"
+    if [[ -n "$candidate" ]]; then
+      printf '%s' "$candidate"
+      return
+    fi
+  fi
+
+  for candidate in \
+    "/var/run/docker.sock" \
+    "${HOME}/.colima/docker.sock" \
+    "${HOME}/.colima/default/docker.sock" \
+    "${HOME}/.docker/run/docker.sock"; do
+    if [[ -S "$candidate" || -e "$candidate" ]]; then
+      printf '%s' "$candidate"
+      return
+    fi
+  done
+
+  printf '%s' "/var/run/docker.sock"
+}
+
+append_env_value_if_missing() {
+  local file_path="$1"
+  local key="$2"
+  local value="$3"
+
+  if [[ ! -f "$file_path" ]]; then
+    return
+  fi
+  if grep -q "^${key}=" "$file_path"; then
+    return
+  fi
+  printf '%s=%s\n' "$key" "$value" >>"$file_path"
 }
 
 docs_root_path() {
@@ -695,12 +973,15 @@ Options:
   --rapid-upgrade           local rebuild/restart for fast dev iteration
   --status                  show service status and endpoints
   --doctor                  run non-mutating preflight + install health diagnostics
+  --debug-bundle            write a detailed diagnostics bundle under <prefix>
+  --port-audit              inspect configured WolfBBS ports and listener ownership
   --start                   start existing WolfBBS services
   --stop                    stop existing WolfBBS services
   --restart                 restart existing WolfBBS services
   --logs                    show recent service logs (tail)
   --repair                  self-heal install: ensure deps/env, rebuild + verify stack
   --deps-only               install/check prerequisites and docker runtime, then exit
+  --clean-uninstall         uninstall + purge + remove install directory (git checkout protected)
   --purge                   remove docker volumes/instance on uninstall
   --repo <owner/repo|url>   GitHub slug or URL to fetch if installer is run standalone
   --repo-url <url>          alias of --repo
@@ -726,6 +1007,8 @@ action_selected() {
     "$RAPID_UPGRADE" == "true" ||
     "$STATUS" == "true" ||
     "$DOCTOR" == "true" ||
+    "$DEBUG_BUNDLE" == "true" ||
+    "$PORT_AUDIT" == "true" ||
     "$START" == "true" ||
     "$STOP" == "true" ||
     "$RESTART" == "true" ||
@@ -749,25 +1032,32 @@ show_interactive_action_menu() {
   fi
 
   while true; do
-    echo "┌──────────────────────────── WolfBBS Action Menu ────────────────────────────┐"
-    menu_line "Setup"
+    echo "┌──────────────────────── WolfBBS Installer Command Center ───────────────────┐"
+    menu_line "Setup and Upgrade"
     menu_line "1) Easy install / first setup        Recommended for first-time operators"
-    menu_line "2) Rapid upgrade                     Rebuild and restart this checkout"
-    menu_line "3) Upgrade                           Pull latest shipped images"
-    menu_line "4) Repair                            Fix deps/env and verify the stack"
+    menu_line "2) Guided install options            Tune install profile and advanced defaults"
+    menu_line "3) Rapid upgrade                     Rebuild and restart this checkout"
+    menu_line "4) Upgrade                           Pull latest shipped images"
+    menu_line "5) Repair                            Fix deps/env and verify the stack"
     menu_divider
     menu_line "Run"
-    menu_line "5) Start services                    Bring the stack up"
-    menu_line "6) Stop services                     Bring the stack down"
-    menu_line "7) Restart services                  Restart all services"
-    menu_line "8) Status                            Show endpoints, probes, next steps"
-    menu_line "9) Logs                              Tail recent service logs"
+    menu_line "6) Start services                    Bring the stack up"
+    menu_line "7) Stop services                     Bring the stack down"
+    menu_line "8) Restart services                  Restart all services"
+    menu_line "9) Status                            Show endpoints, probes, next steps"
+    menu_line "10) Logs                             Tail recent service logs"
+    menu_divider
+    menu_line "Troubleshoot"
+    menu_line "11) Troubleshooting center           Guided diagnostics + recovery actions"
+    menu_line "12) Doctor diagnostics               Safe preflight and health checks"
+    menu_line "13) Port audit                       Show listener ownership for core ports"
+    menu_line "14) Debug bundle                     Save deep diagnostics to a report file"
     menu_divider
     menu_line "Maintenance"
-    menu_line "10) Uninstall                        Remove services, keep data"
-    menu_line "11) Uninstall + purge                Remove services and data volumes"
-    menu_line "12) Doctor diagnostics               Safe preflight and health checks"
-    menu_line "13) Dependencies only                Install/check prerequisites only"
+    menu_line "15) Uninstall                        Remove services, keep data"
+    menu_line "16) Uninstall + purge                Remove services and data volumes"
+    menu_line "17) Clean uninstall                  Remove services, data, and install files"
+    menu_line "18) Dependencies only                Install/check prerequisites only"
     menu_divider
     menu_line "Docs"
     menu_line "Read docs/START_HERE.md for first launch and docs/OPERATIONS.md for day-two ops"
@@ -785,52 +1075,76 @@ show_interactive_action_menu() {
       1|install)
         return
         ;;
-      2|rapid|rapid-upgrade)
+      2|guided|options)
+        AUTO_OPEN_ADVANCED_INSTALL=true
+        return
+        ;;
+      3|rapid|rapid-upgrade)
         RAPID_UPGRADE=true
         return
         ;;
-      3|upgrade)
+      4|upgrade)
         UPGRADE=true
         return
         ;;
-      4|repair)
+      5|repair)
         REPAIR=true
         return
         ;;
-      5|start)
+      6|start)
         START=true
         return
         ;;
-      6|stop)
+      7|stop)
         STOP=true
         return
         ;;
-      7|restart)
+      8|restart)
         RESTART=true
         return
         ;;
-      8|status)
+      9|status)
         STATUS=true
         return
         ;;
-      9|logs|log)
+      10|logs|log)
         LOGS=true
         return
         ;;
-      10|uninstall)
-        UNINSTALL=true
-        return
-        ;;
-      11|purge|uninstall-purge|uninstall+purge)
-        UNINSTALL=true
-        PURGE=true
-        return
+      11|trouble|troubleshoot|diagnostics)
+        show_interactive_troubleshooting_menu
+        if action_selected; then
+          return
+        fi
         ;;
       12|doctor)
         DOCTOR=true
         return
         ;;
-      13|deps|deps-only)
+      13|ports|port|port-audit)
+        PORT_AUDIT=true
+        return
+        ;;
+      14|debug|bundle|debug-bundle)
+        DEBUG_BUNDLE=true
+        return
+        ;;
+      15|uninstall)
+        UNINSTALL=true
+        return
+        ;;
+      16|purge|uninstall-purge|uninstall+purge)
+        UNINSTALL=true
+        PURGE=true
+        return
+        ;;
+      17|clean|clean-uninstall|wipe|reset)
+        UNINSTALL=true
+        PURGE=true
+        CLEAN_UNINSTALL=true
+        return
+        ;;
+      18|deps|deps-only)
         DEPS_ONLY=true
         return
         ;;
@@ -1711,13 +2025,49 @@ ensure_compose_file() {
   exit 1
 }
 
+ensure_runtime_env_defaults() {
+  local file_path="$1"
+  local install_workdir=""
+  local docker_socket=""
+  local app_upgrade_workdir=""
+  local app_upgrade_command=""
+  local app_upgrade_timeout=""
+
+  if [[ ! -f "$file_path" ]]; then
+    return 0
+  fi
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "DRY-RUN: would ensure runtime env defaults in ${file_path}"
+    return 0
+  fi
+
+  install_workdir="${WORK_DIR:-}"
+  if [[ -z "$install_workdir" ]]; then
+    install_workdir="$(managed_checkout_dir)"
+  fi
+  docker_socket="$(detect_docker_socket_path)"
+  app_upgrade_workdir="/wolfbbs-host"
+  app_upgrade_timeout="${WOLFBBS_APP_UPGRADE_TIMEOUT_SECONDS:-900}"
+  app_upgrade_command='docker compose -f /wolfbbs-host/docker-compose.yml --env-file /wolfbbs-prefix/.env up -d --build --remove-orphans'
+
+  append_env_value_if_missing "$file_path" "WOLFBBS_INSTALL_PREFIX" "$(quote_env_literal "${PREFIX}")"
+  append_env_value_if_missing "$file_path" "WOLFBBS_INSTALL_WORKDIR" "$(quote_env_literal "${install_workdir}")"
+  append_env_value_if_missing "$file_path" "WOLFBBS_DOCKER_SOCKET" "$(quote_env_literal "${docker_socket}")"
+  append_env_value_if_missing "$file_path" "WOLFBBS_APP_UPGRADE_WORKDIR" "$(quote_env_literal "${app_upgrade_workdir}")"
+  append_env_value_if_missing "$file_path" "WOLFBBS_APP_UPGRADE_COMMAND" "$(quote_env_literal "${app_upgrade_command}")"
+  append_env_value_if_missing "$file_path" "WOLFBBS_APP_UPGRADE_TIMEOUT_SECONDS" "$app_upgrade_timeout"
+  chmod 600 "$file_path" >/dev/null 2>&1 || true
+}
+
 write_env_file() {
   ENV_FILE="${PREFIX}/.env"
   local db_pass db_user db_name db_seed bootstrap_admin_handle bootstrap_admin_password
   local bbs_name bbs_hostname setup_profile secure_cookie require_verified_email menu_enable term_encoding
+  local install_workdir docker_socket app_upgrade_workdir app_upgrade_command app_upgrade_timeout
 
   if [[ -f "$ENV_FILE" && "$FORCE" != "true" ]]; then
     log "Using existing env file: $ENV_FILE"
+    ensure_runtime_env_defaults "$ENV_FILE"
     ENV_CREATED_THIS_RUN=false
     BBS_NAME="$(read_env_value "WOLFBBS_BBS_NAME" "$ENV_FILE")"
     BBS_HOSTNAME="$(read_env_value "WOLFBBS_HOSTNAME" "$ENV_FILE")"
@@ -1739,6 +2089,7 @@ write_env_file() {
   if [[ -f "$ENV_FILE" && "$FORCE" == "true" ]]; then
     if ! confirm "Overwrite existing env file at ${ENV_FILE}?"; then
       log "Keeping existing env file."
+      ensure_runtime_env_defaults "$ENV_FILE"
       ENV_CREATED_THIS_RUN=false
       BBS_NAME="$(read_env_value "WOLFBBS_BBS_NAME" "$ENV_FILE")"
       BBS_HOSTNAME="$(read_env_value "WOLFBBS_HOSTNAME" "$ENV_FILE")"
@@ -1801,6 +2152,15 @@ write_env_file() {
     term_encoding="$WIZARD_TERM_ENCODING"
   fi
 
+  install_workdir="${WORK_DIR:-}"
+  if [[ -z "$install_workdir" ]]; then
+    install_workdir="$(managed_checkout_dir)"
+  fi
+  docker_socket="$(detect_docker_socket_path)"
+  app_upgrade_workdir="/wolfbbs-host"
+  app_upgrade_timeout="${WOLFBBS_APP_UPGRADE_TIMEOUT_SECONDS:-900}"
+  app_upgrade_command='docker compose -f /wolfbbs-host/docker-compose.yml --env-file /wolfbbs-prefix/.env up -d --build --remove-orphans'
+
   cat > "$ENV_FILE" <<EOF
 # Basic setup profile
 WOLFBBS_SETUP_PROFILE=${setup_profile}
@@ -1834,6 +2194,12 @@ WOLFBBS_MAILIN_PORT=${MAILIN_PORT}
 WOLFBBS_TERM_ENCODING=${term_encoding}
 WOLFBBS_MENU_ENABLE=${menu_enable}
 WOLFBBS_MENU_FILE=menus/main.hjson
+WOLFBBS_INSTALL_PREFIX=$(quote_env_literal "${PREFIX}")
+WOLFBBS_INSTALL_WORKDIR=$(quote_env_literal "${install_workdir}")
+WOLFBBS_DOCKER_SOCKET=$(quote_env_literal "${docker_socket}")
+WOLFBBS_APP_UPGRADE_WORKDIR=$(quote_env_literal "${app_upgrade_workdir}")
+WOLFBBS_APP_UPGRADE_COMMAND=$(quote_env_literal "${app_upgrade_command}")
+WOLFBBS_APP_UPGRADE_TIMEOUT_SECONDS=${app_upgrade_timeout}
 
 # Bootstrap users
 WOLFBBS_BOOTSTRAP_ADMIN_HANDLE=${bootstrap_admin_handle}
@@ -2491,10 +2857,12 @@ doctor_report() {
   echo "Recommended commands:"
   if (( failures > 0 )); then
     echo "  - Fix blocking issues, then rerun: bash install.sh --doctor"
+    echo "  - Capture context for support: bash install.sh --debug-bundle"
     echo "  - If this is a clean machine, use: curl -fsSL https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh | bash"
   else
     echo "  - Check runtime + next steps: bash install.sh --status"
     echo "  - If a service looks unhealthy: bash install.sh --repair"
+    echo "  - Capture context for support: bash install.sh --debug-bundle"
   fi
   if [[ -n "$docs_root" ]]; then
     echo "Operator docs:"
@@ -2512,6 +2880,452 @@ doctor_report() {
   fi
   echo "Doctor completed with no blocking issues."
   return 0
+}
+
+resolve_runtime_context_if_available() {
+  local detected_compose=""
+  detected_compose="$(find_compose_file || true)"
+  if [[ -z "$detected_compose" ]]; then
+    detected_compose="$(find_installed_compose_file || true)"
+  fi
+  if [[ -n "$detected_compose" ]]; then
+    compose_file="$detected_compose"
+    WORK_DIR="$(dirname "$detected_compose")"
+  fi
+  ENV_FILE="$(resolve_env_file || true)"
+}
+
+compose_context_available() {
+  [[ -n "${compose_file:-}" && -f "${compose_file:-}" ]]
+}
+
+ensure_action_compose_context() {
+  resolve_runtime_context_if_available
+  if compose_context_available; then
+    return 0
+  fi
+  echo "No compose file found for this action."
+  echo "Checked current directory and install prefix:"
+  echo "  - work dir: ${WORK_DIR}"
+  echo "  - prefix: ${PREFIX}"
+  echo "If this is a first install, run: bash install.sh"
+  echo "If this is an existing install, rerun with --prefix <install_dir>."
+  return 1
+}
+
+derive_compose_project_candidates() {
+  local seen=" "
+  local raw=""
+  local normalized=""
+  local candidates=(
+    "wolfbbs"
+    "$(basename "${WORK_DIR:-wolfbbs}")"
+    "$(basename "${PREFIX:-wolfbbs}")"
+  )
+
+  if [[ -n "${compose_file:-}" ]]; then
+    candidates+=("$(basename "$(dirname "$compose_file")")")
+  fi
+
+  for raw in "${candidates[@]}"; do
+    normalized="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')"
+    if [[ -z "$normalized" ]]; then
+      continue
+    fi
+    case "$seen" in
+      *" ${normalized} "*)
+        ;;
+      *)
+        printf '%s\n' "$normalized"
+        seen="${seen}${normalized} "
+        ;;
+    esac
+  done
+}
+
+docker_cleanup_without_compose() {
+  local remove_volumes="${1:-false}"
+  local project=""
+  local container_ids=""
+  local network_ids=""
+  local volume_ids=""
+  local legacy_container=""
+  local legacy_network=""
+  local legacy_volume=""
+
+  if ! command -v docker >/dev/null 2>&1; then
+    log "Docker CLI not found; skipping compose-less cleanup."
+    return 0
+  fi
+  if ! eval "$DOCKER_BIN info" >/dev/null 2>&1; then
+    log "Docker daemon is unreachable; skipping compose-less cleanup."
+    return 0
+  fi
+
+  while IFS= read -r project; do
+    if [[ -z "$project" ]]; then
+      continue
+    fi
+    container_ids="$(eval "$DOCKER_BIN ps -aq --filter label=com.docker.compose.project=${project}" 2>/dev/null || true)"
+    if [[ -n "$container_ids" ]]; then
+      run "$DOCKER_BIN rm -f ${container_ids}" || true
+    fi
+
+    network_ids="$(eval "$DOCKER_BIN network ls -q --filter label=com.docker.compose.project=${project}" 2>/dev/null || true)"
+    if [[ -n "$network_ids" ]]; then
+      run "$DOCKER_BIN network rm ${network_ids}" || true
+    fi
+
+    if [[ "$remove_volumes" == "true" ]]; then
+      volume_ids="$(eval "$DOCKER_BIN volume ls -q --filter label=com.docker.compose.project=${project}" 2>/dev/null || true)"
+      if [[ -n "$volume_ids" ]]; then
+        run "$DOCKER_BIN volume rm -f ${volume_ids}" || true
+      fi
+    fi
+  done < <(derive_compose_project_candidates)
+
+  for legacy_container in wolfbbs-bbs-1 wolfbbs-web-1 wolfbbs-irc-1 wolfbbs-mailin-1 wolfbbs-postgres-1; do
+    run "$DOCKER_BIN rm -f '$legacy_container' >/dev/null 2>&1 || true"
+  done
+  for legacy_network in wolfbbs_default; do
+    run "$DOCKER_BIN network rm '$legacy_network' >/dev/null 2>&1 || true"
+  done
+  if [[ "$remove_volumes" == "true" ]]; then
+    for legacy_volume in wolfbbs_pgdata; do
+      run "$DOCKER_BIN volume rm -f '$legacy_volume' >/dev/null 2>&1 || true"
+    done
+  fi
+}
+
+remove_install_prefix() {
+  local resolved=""
+  if [[ ! -d "$PREFIX" ]]; then
+    return 0
+  fi
+
+  resolved="$(cd "$PREFIX" 2>/dev/null && pwd || true)"
+  if [[ -z "$resolved" ]]; then
+    resolved="$PREFIX"
+  fi
+
+  case "$resolved" in
+    ""|"/"|"/Users"|"/home"|"/opt"|"/usr"|"/var"|"/tmp"|"$HOME")
+      echo "Safety stop: refusing to remove protected path: ${resolved}"
+      return 1
+      ;;
+  esac
+
+  if [[ -d "${resolved}/.git" && "$FORCE" != "true" ]]; then
+    echo "Refusing to remove git checkout at ${resolved} without --force."
+    echo "Run with --clean-uninstall --force to delete this checkout."
+    return 1
+  fi
+
+  rm -rf "$resolved"
+  echo "Removed ${resolved}."
+}
+
+port_listener_details() {
+  local port="$1"
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | sed -n '2,5p' || true
+    return
+  fi
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltnp 2>/dev/null | awk -v match=":${port}" '
+      index($4, match) > 0 { print; found = 1 }
+      END { if (found != 1) exit 1 }
+    ' || true
+    return
+  fi
+  echo "listener ownership unavailable (install lsof or ss)"
+}
+
+port_audit() {
+  local runtime_ssh_port="$SSH_PORT"
+  local runtime_web_port="$WEB_PORT"
+  local runtime_irc_port="$IRC_PORT"
+  local runtime_mailin_port="$MAILIN_PORT"
+  local open_count=0
+  local closed_count=0
+  local unknown_count=0
+  local pair=""
+  local label=""
+  local port=""
+  local state=""
+  local details=""
+  local env_ssh=""
+  local env_web=""
+  local env_irc=""
+  local env_mailin=""
+
+  resolve_runtime_context_if_available
+  if [[ -n "${ENV_FILE:-}" && -f "$ENV_FILE" ]]; then
+    env_ssh="$(read_env_value "WOLFBBS_SSH_PORT" "$ENV_FILE")"
+    env_web="$(read_env_value "WOLFBBS_WEB_PORT" "$ENV_FILE")"
+    env_irc="$(read_env_value "WOLFBBS_IRC_PORT" "$ENV_FILE")"
+    env_mailin="$(read_env_value "WOLFBBS_MAILIN_PORT" "$ENV_FILE")"
+    if [[ -n "$env_ssh" ]]; then
+      runtime_ssh_port="$env_ssh"
+    fi
+    if [[ -n "$env_web" ]]; then
+      runtime_web_port="$env_web"
+    fi
+    if [[ -n "$env_irc" ]]; then
+      runtime_irc_port="$env_irc"
+    fi
+    if [[ -n "$env_mailin" ]]; then
+      runtime_mailin_port="$env_mailin"
+    fi
+  fi
+
+  echo "WolfBBS port audit"
+  echo "  prefix=${PREFIX}"
+  echo "  compose=${compose_file:-not detected}"
+  echo "  env=${ENV_FILE:-not found}"
+  echo
+  for pair in \
+    "SSH BBS:${runtime_ssh_port}" \
+    "Web UI:${runtime_web_port}" \
+    "IRC:${runtime_irc_port}" \
+    "Mail Ingest:${runtime_mailin_port}"; do
+    label="${pair%%:*}"
+    port="${pair##*:}"
+    if command -v nc >/dev/null 2>&1; then
+      if nc -z 127.0.0.1 "$port" >/dev/null 2>&1; then
+        state="LISTENING"
+        open_count=$((open_count + 1))
+      else
+        state="CLOSED"
+        closed_count=$((closed_count + 1))
+      fi
+    else
+      state="UNKNOWN (nc unavailable)"
+      unknown_count=$((unknown_count + 1))
+    fi
+    echo "  - ${label} (${port}): ${state}"
+    details="$(port_listener_details "$port" || true)"
+    if [[ -n "$details" ]]; then
+      while IFS= read -r detail_line; do
+        if [[ -n "$detail_line" ]]; then
+          echo "      ${detail_line}"
+        fi
+      done <<<"$details"
+    fi
+  done
+  echo
+  echo "Port audit summary: open=${open_count} closed=${closed_count} unknown=${unknown_count}"
+  if (( closed_count > 0 )); then
+    echo "Recommended next steps:"
+    echo "  - If services should be running: bash install.sh --restart"
+    echo "  - If restart fails: bash install.sh --repair"
+    echo "  - For deeper context: bash install.sh --debug-bundle"
+  fi
+  return 0
+}
+
+redact_env_line() {
+  local line="$1"
+  local key=""
+  if [[ -z "$line" || "$line" == \#* || "$line" != *=* ]]; then
+    printf '%s\n' "$line"
+    return
+  fi
+  key="${line%%=*}"
+  if [[ "$key" =~ (PASSWORD|SECRET|TOKEN|DATABASE_URL|SESSION|COOKIE|KEY) ]]; then
+    printf '%s=%s\n' "$key" "<redacted>"
+    return
+  fi
+  printf '%s\n' "$line"
+}
+
+debug_bundle_report() {
+  local ts=""
+  local out_file=""
+  local cmd=""
+  local compose_base=""
+  local runtime_ssh_port="$SSH_PORT"
+  local runtime_web_port="$WEB_PORT"
+  local runtime_irc_port="$IRC_PORT"
+  local runtime_mailin_port="$MAILIN_PORT"
+  local doctor_output=""
+  local env_line=""
+  local env_web=""
+  local env_ssh=""
+  local env_irc=""
+  local env_mailin=""
+
+  resolve_runtime_context_if_available
+  if [[ -n "${ENV_FILE:-}" && -f "$ENV_FILE" ]]; then
+    env_ssh="$(read_env_value "WOLFBBS_SSH_PORT" "$ENV_FILE")"
+    env_web="$(read_env_value "WOLFBBS_WEB_PORT" "$ENV_FILE")"
+    env_irc="$(read_env_value "WOLFBBS_IRC_PORT" "$ENV_FILE")"
+    env_mailin="$(read_env_value "WOLFBBS_MAILIN_PORT" "$ENV_FILE")"
+    if [[ -n "$env_ssh" ]]; then
+      runtime_ssh_port="$env_ssh"
+    fi
+    if [[ -n "$env_web" ]]; then
+      runtime_web_port="$env_web"
+    fi
+    if [[ -n "$env_irc" ]]; then
+      runtime_irc_port="$env_irc"
+    fi
+    if [[ -n "$env_mailin" ]]; then
+      runtime_mailin_port="$env_mailin"
+    fi
+  fi
+
+  ts="$(date -u +'%Y%m%dT%H%M%SZ')"
+  out_file="${PREFIX}/WOLFBBS_DIAGNOSTICS_${ts}.txt"
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "DRY-RUN: would write diagnostics bundle to ${out_file}"
+    return 0
+  fi
+  if ! mkdir -p "$PREFIX" >/dev/null 2>&1; then
+    out_file="${SCRIPT_PATH}/WOLFBBS_DIAGNOSTICS_${ts}.txt"
+  fi
+
+  {
+    echo "WolfBBS Diagnostics Bundle"
+    echo "Generated: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+    echo "OS: ${OS}"
+    echo "Distro: ${DISTRO}"
+    echo "Arch: ${ARCH}"
+    echo "Package manager: ${PKG_MGR:-none}"
+    echo "Prefix: ${PREFIX}"
+    echo "Work dir: ${WORK_DIR}"
+    echo "Compose file: ${compose_file:-not detected}"
+    echo "Env file: ${ENV_FILE:-not found}"
+    echo "Log file: ${LOG_FILE}"
+  } >"$out_file"
+
+  {
+    echo
+    echo "== Tool Versions =="
+    echo "bash: $(bash --version 2>/dev/null | head -n 1 || echo unavailable)"
+    if command -v curl >/dev/null 2>&1; then
+      echo "curl: $(curl --version 2>/dev/null | head -n 1 || echo available)"
+    else
+      echo "curl: missing"
+    fi
+    if command -v docker >/dev/null 2>&1; then
+      echo "docker: $(docker --version 2>/dev/null || echo available)"
+      echo "docker daemon: $(docker info --format '{{.ServerVersion}}' 2>/dev/null || echo unreachable)"
+    else
+      echo "docker: missing"
+    fi
+    cmd="$(compose_cmd)"
+    if [[ -n "$cmd" ]]; then
+      echo "compose: ${cmd}"
+    else
+      echo "compose: missing"
+    fi
+    if command -v git >/dev/null 2>&1; then
+      echo "git: $(git --version 2>/dev/null || echo available)"
+    else
+      echo "git: missing"
+    fi
+  } >>"$out_file"
+
+  {
+    echo
+    echo "== Host Capacity =="
+    df -h "$PREFIX" 2>/dev/null || df -h . 2>/dev/null || true
+    if command -v docker >/dev/null 2>&1; then
+      docker system df 2>/dev/null || true
+    fi
+  } >>"$out_file"
+
+  {
+    echo
+    echo "== Runtime Probes =="
+    if command -v curl >/dev/null 2>&1; then
+      if curl -fsS "http://127.0.0.1:${runtime_web_port}/healthz" >/dev/null 2>&1; then
+        echo "PASS web healthz http://127.0.0.1:${runtime_web_port}/healthz"
+      else
+        echo "WARN web healthz unreachable http://127.0.0.1:${runtime_web_port}/healthz"
+      fi
+      if curl -fsS "http://127.0.0.1:${runtime_web_port}/readyz" >/dev/null 2>&1; then
+        echo "PASS web readyz http://127.0.0.1:${runtime_web_port}/readyz"
+      else
+        echo "WARN web readyz unreachable http://127.0.0.1:${runtime_web_port}/readyz"
+      fi
+    else
+      echo "WARN curl unavailable; HTTP probes skipped"
+    fi
+    if command -v nc >/dev/null 2>&1; then
+      if nc -z 127.0.0.1 "$runtime_ssh_port" >/dev/null 2>&1; then
+        echo "PASS ssh port ${runtime_ssh_port} reachable"
+      else
+        echo "WARN ssh port ${runtime_ssh_port} unreachable"
+      fi
+      if nc -z 127.0.0.1 "$runtime_irc_port" >/dev/null 2>&1; then
+        echo "PASS irc port ${runtime_irc_port} reachable"
+      else
+        echo "WARN irc port ${runtime_irc_port} unreachable"
+      fi
+      if nc -z 127.0.0.1 "$runtime_mailin_port" >/dev/null 2>&1; then
+        echo "PASS mail ingest port ${runtime_mailin_port} reachable"
+      else
+        echo "WARN mail ingest port ${runtime_mailin_port} unreachable"
+      fi
+    else
+      echo "WARN nc unavailable; TCP probes skipped"
+    fi
+  } >>"$out_file"
+
+  {
+    echo
+    echo "== Port Audit =="
+    port_audit 2>&1
+  } >>"$out_file"
+
+  {
+    echo
+    echo "== Redacted Env Snapshot =="
+    if [[ -n "${ENV_FILE:-}" && -f "$ENV_FILE" ]]; then
+      while IFS= read -r env_line || [[ -n "$env_line" ]]; do
+        redact_env_line "$env_line"
+      done <"$ENV_FILE"
+    else
+      echo "No env file detected."
+    fi
+  } >>"$out_file"
+
+  {
+    echo
+    echo "== Doctor Report =="
+    if doctor_output="$(doctor_report 2>&1)"; then
+      printf '%s\n' "$doctor_output"
+    else
+      printf '%s\n' "$doctor_output"
+    fi
+  } >>"$out_file"
+
+  cmd="$(compose_cmd)"
+  if [[ -n "$cmd" && -n "${compose_file:-}" && -f "${compose_file:-}" ]]; then
+    compose_base="$cmd -f \"$compose_file\""
+    if [[ -n "${ENV_FILE:-}" && -f "$ENV_FILE" ]]; then
+      compose_base="${compose_base} --env-file \"$ENV_FILE\""
+    fi
+    {
+      echo
+      echo "== Compose Status =="
+      eval "$compose_base ps" 2>&1 || true
+      echo
+      echo "== Compose Logs (tail 200) =="
+      eval "$compose_base logs --tail=200" 2>&1 || true
+    } >>"$out_file"
+  else
+    {
+      echo
+      echo "== Compose Status =="
+      echo "Compose context not detected."
+    } >>"$out_file"
+  fi
+
+  echo "Debug bundle written: ${out_file}"
+  echo "Share this file when opening an install/runtime support issue."
 }
 
 parse_args() {
@@ -2593,6 +3407,12 @@ parse_args() {
         UNINSTALL=true
         shift
         ;;
+      --clean-uninstall)
+        UNINSTALL=true
+        PURGE=true
+        CLEAN_UNINSTALL=true
+        shift
+        ;;
       --purge)
         PURGE=true
         shift
@@ -2611,6 +3431,14 @@ parse_args() {
         ;;
       --doctor)
         DOCTOR=true
+        shift
+        ;;
+      --debug-bundle)
+        DEBUG_BUNDLE=true
+        shift
+        ;;
+      --port-audit)
+        PORT_AUDIT=true
         shift
         ;;
       --start)
@@ -2663,6 +3491,8 @@ validate_action_flags() {
     "$RAPID_UPGRADE"
     "$STATUS"
     "$DOCTOR"
+    "$DEBUG_BUNDLE"
+    "$PORT_AUDIT"
     "$START"
     "$STOP"
     "$RESTART"
@@ -2678,7 +3508,7 @@ validate_action_flags() {
   done
   if (( action_count > 1 )); then
     echo "Only one action mode can be used at a time:"
-    echo "  --doctor | --status | --start | --stop | --restart | --logs | --repair | --upgrade | --rapid-upgrade | --uninstall | --deps-only"
+    echo "  --doctor | --debug-bundle | --port-audit | --status | --start | --stop | --restart | --logs | --repair | --upgrade | --rapid-upgrade | --uninstall | --clean-uninstall | --deps-only"
     exit 1
   fi
 }
@@ -2708,6 +3538,14 @@ main() {
     doctor_report
     exit $?
   fi
+  if [[ "$PORT_AUDIT" == "true" ]]; then
+    port_audit
+    exit $?
+  fi
+  if [[ "$DEBUG_BUNDLE" == "true" ]]; then
+    debug_bundle_report
+    exit $?
+  fi
   if [[ "$OS" == "unknown" || ( "$OS" == "linux" && "$PKG_MGR" == "" ) || ( "$OS" == "linux" && "$DISTRO" == "unknown" ) ]]; then
     echo "Unsupported operating system. Supported: Linux (Debian/Ubuntu, Fedora/RHEL/CentOS, Arch) and macOS."
     echo "Required commands for manual install: curl, tar, openssl, sed, awk, grep, docker, docker compose."
@@ -2728,7 +3566,7 @@ main() {
 
   if [[ "$DRY_RUN" == "false" ]]; then
     ensure_rootless_permissions
-    if [[ "$STATUS" != "true" && "$START" != "true" && "$STOP" != "true" && "$RESTART" != "true" && "$LOGS" != "true" && "$UNINSTALL" != "true" ]]; then
+    if [[ "$STATUS" != "true" && "$START" != "true" && "$STOP" != "true" && "$RESTART" != "true" && "$LOGS" != "true" && "$UNINSTALL" != "true" && "$UPGRADE" != "true" && "$RAPID_UPGRADE" != "true" && "$REPAIR" != "true" && "$DEBUG_BUNDLE" != "true" && "$PORT_AUDIT" != "true" ]]; then
       check_space "$PREFIX"
     else
       log "Skipping disk-space check for non-install action mode."
@@ -2741,8 +3579,14 @@ main() {
   if [[ -z "$compose_file" ]]; then
     adopt_installed_compose_if_present || true
   fi
-  if [[ -z "$compose_file" && "$STATUS" != "true" ]]; then
-    ensure_compose_file
+  if [[ -n "$compose_file" ]]; then
+    WORK_DIR="$(dirname "$compose_file")"
+  fi
+
+  if [[ "$UNINSTALL" != "true" && "$UPGRADE" != "true" && "$RAPID_UPGRADE" != "true" && "$STATUS" != "true" && "$START" != "true" && "$STOP" != "true" && "$RESTART" != "true" && "$LOGS" != "true" && "$REPAIR" != "true" && "$DEPS_ONLY" != "true" ]]; then
+    if [[ -z "$compose_file" ]]; then
+      ensure_compose_file
+    fi
   fi
 
   if [[ -n "$compose_file" ]]; then
@@ -2750,19 +3594,28 @@ main() {
   fi
 
   if [[ "$STATUS" == "true" ]]; then
+    if ! ensure_action_compose_context; then
+      exit 1
+    fi
     ENV_FILE="$(resolve_env_file || true)"
     if [[ -z "$ENV_FILE" ]]; then
       echo "No env file found for status check."
       exit 1
     fi
-    compose_file="$(find_compose_file || true)"
+    ensure_runtime_env_defaults "$ENV_FILE"
     status_view
     exit 0
   fi
 
   if [[ "$START" == "true" || "$STOP" == "true" || "$RESTART" == "true" || "$LOGS" == "true" || "$REPAIR" == "true" ]]; then
+    if ! ensure_action_compose_context; then
+      exit 1
+    fi
     ensure_docker
     ENV_FILE="$(resolve_env_file || true)"
+    if [[ -n "$ENV_FILE" ]]; then
+      ensure_runtime_env_defaults "$ENV_FILE"
+    fi
     if [[ "$START" == "true" || "$RESTART" == "true" || "$REPAIR" == "true" ]]; then
       if [[ -z "$ENV_FILE" ]]; then
         write_env_file
@@ -2815,21 +3668,43 @@ main() {
   fi
 
   if [[ "$UNINSTALL" == "true" ]]; then
+    local can_use_compose=false
+    resolve_runtime_context_if_available
     ENV_FILE="$(resolve_env_file || true)"
+    if [[ -n "$ENV_FILE" ]]; then
+      ensure_runtime_env_defaults "$ENV_FILE"
+    fi
+    if compose_context_available && [[ -n "$(compose_cmd)" ]]; then
+      can_use_compose=true
+    fi
     if [[ "$DRY_RUN" == "false" ]]; then
       if ! confirm "Stop WolfBBS services from ${PREFIX}?"; then
         echo "Aborted."
         exit 0
       fi
-      docker_compose_down
-      if [[ "$PURGE" == "true" ]] || confirm "Remove volumes and all installed data? (run with --purge to auto-confirm)"; then
-        docker_compose_down_purge
+      if [[ "$can_use_compose" == "true" ]]; then
+        docker_compose_down || true
+      else
+        log "Compose context unavailable; using compose-less Docker cleanup fallback."
+        docker_cleanup_without_compose false
       fi
-      if [[ -d "${PREFIX}/.git" ]]; then
-        echo "Install directory appears to be a git checkout; skipping directory deletion to protect source."
-      elif confirm "Remove install directory ${PREFIX}?"; then
-        rm -rf "$PREFIX"
-        echo "Removed ${PREFIX}."
+      if [[ "$PURGE" == "true" ]] || confirm "Remove volumes and all installed data? (run with --purge to auto-confirm)"; then
+        if [[ "$can_use_compose" == "true" ]]; then
+          docker_compose_down_purge || true
+        else
+          docker_cleanup_without_compose true
+        fi
+      fi
+      if [[ "$CLEAN_UNINSTALL" == "true" ]]; then
+        if ! remove_install_prefix; then
+          exit 1
+        fi
+      else
+        if [[ -d "${PREFIX}/.git" ]]; then
+          echo "Install directory appears to be a git checkout; skipping directory deletion to protect source."
+        elif confirm "Remove install directory ${PREFIX}?"; then
+          remove_install_prefix || true
+        fi
       fi
     else
       log "DRY-RUN: would stop/remove services in ${PREFIX}"
@@ -2842,12 +3717,16 @@ main() {
       echo "No existing install in ${PREFIX}"
       exit 1
     fi
+    if ! ensure_action_compose_context; then
+      exit 1
+    fi
     ensure_docker
     ENV_FILE="$(resolve_env_file || true)"
     if [[ -z "$ENV_FILE" ]]; then
       write_env_file
       ENV_FILE="${PREFIX}/.env"
     fi
+    ensure_runtime_env_defaults "$ENV_FILE"
     docker_compose_pull_restart
     verify_install
     echo "Upgrade complete."
@@ -2859,12 +3738,16 @@ main() {
       echo "No existing install in ${PREFIX}"
       exit 1
     fi
+    if ! ensure_action_compose_context; then
+      exit 1
+    fi
     ensure_docker
     ENV_FILE="$(resolve_env_file || true)"
     if [[ -z "$ENV_FILE" ]]; then
       write_env_file
       ENV_FILE="${PREFIX}/.env"
     fi
+    ensure_runtime_env_defaults "$ENV_FILE"
     docker_compose_rapid_upgrade
     verify_install
     echo "Rapid upgrade complete."

@@ -7,6 +7,7 @@ cd "$ROOT_DIR"
 OUT_DIR="$ROOT_DIR/dist"
 VERSION="${WOLFBBS_VERSION:-}"
 PLATFORMS=()
+CLEAN_OUT=false
 
 usage() {
   cat <<'USAGE'
@@ -19,11 +20,13 @@ Options:
   --out <dir>             output directory (default: dist/)
   --version <value>       release version label
   --platform <os/arch>    build a platform bundle; may be repeated
+  --clean                 wipe output directory before packaging
   -h, --help              show this help
 
 Examples:
   scripts/package-dist.sh
   scripts/package-dist.sh --platform linux/amd64 --platform linux/arm64
+  scripts/package-dist.sh --clean --version v1.0.0
   scripts/package-dist.sh --version v0.9.0-rc1 --out ./dist
 USAGE
 }
@@ -54,6 +57,9 @@ while [[ $# -gt 0 ]]; do
       PLATFORMS+=("$2")
       shift
       ;;
+    --clean)
+      CLEAN_OUT=true
+      ;;
     -h|--help)
       usage
       exit 0
@@ -66,6 +72,10 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+if [[ "$CLEAN_OUT" == "true" ]]; then
+  rm -rf "$OUT_DIR"
+fi
 
 if [[ -z "$VERSION" ]]; then
   VERSION="$(git describe --tags --always --dirty 2>/dev/null || git rev-parse --short HEAD)"
@@ -93,6 +103,32 @@ build_bin() {
   local pkg="$4"
   CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "$output" "$pkg"
 }
+
+doc_list=(
+  "docs/README.md"
+  "docs/START_HERE.md"
+  "docs/QUICKSTART.md"
+  "docs/INSTALL.md"
+  "docs/OPERATIONS.md"
+  "docs/PRODUCT_GUIDE.md"
+  "docs/DATASHEET.md"
+  "docs/SHOWCASE.md"
+  "docs/ACCEPTANCE_SPEC.md"
+  "docs/feature-reference.md"
+  "docs/irc-compat.md"
+  "docs/doors.md"
+  "docs/chat.md"
+  "docs/admin.md"
+  "docs/LAUNCH_CHECKLIST.md"
+  "docs/TROUBLESHOOTING.md"
+  "docs/OPERATOR_PLAYBOOK.md"
+)
+if [[ -f "docs/releases/$VERSION.md" ]]; then
+  doc_list+=("docs/releases/$VERSION.md")
+fi
+if [[ -f "docs/releases/README.md" ]]; then
+  doc_list+=("docs/releases/README.md")
+fi
 
 release_dir="$OUT_DIR/$VERSION"
 rm -rf "$release_dir"
@@ -132,7 +168,11 @@ for platform in "${PLATFORMS[@]}"; do
   done
 
   cp README.md docker-compose.yml .env.example install.sh bootstrap.sh "$bundle_root/"
-  cp docs/START_HERE.md docs/QUICKSTART.md docs/INSTALL.md docs/OPERATIONS.md docs/PRODUCT_GUIDE.md docs/DATASHEET.md docs/ACCEPTANCE_SPEC.md docs/feature-reference.md docs/irc-compat.md docs/doors.md docs/chat.md docs/admin.md docs/LAUNCH_CHECKLIST.md docs/TROUBLESHOOTING.md docs/OPERATOR_PLAYBOOK.md "$bundle_root/docs/"
+  for doc in "${doc_list[@]}"; do
+    rel="${doc#docs/}"
+    mkdir -p "$bundle_root/docs/$(dirname "$rel")"
+    cp "$doc" "$bundle_root/docs/$rel"
+  done
   cp scripts/verify.sh scripts/build.sh "$bundle_root/scripts/"
   chmod +x "$bundle_root/install.sh" "$bundle_root/bootstrap.sh" "$bundle_root/scripts/verify.sh" "$bundle_root/scripts/build.sh"
   chmod +x "$bundle_root/bin/"*
@@ -147,7 +187,7 @@ Contents:
 - install.sh: installer and upgrade entrypoint
 - bootstrap.sh: one-line downloader/bootstrap entrypoint
 - docker-compose.yml + .env.example: default stack runtime
-- docs/: start-here, quickstart, install, operations, product guide, datasheet, launch checklist, troubleshooting, operator playbook, acceptance, feature reference, irc compatibility, doors, chat, and admin references
+- docs/: documentation hub, install/start guides, datasheet, showcase, launch checklist, operator playbook, acceptance, feature reference, and release notes
 - scripts/: verify and build helpers
 
 Quick start:
@@ -166,7 +206,7 @@ EOF
     echo "$bundle_name"
     echo "  tarball: $(basename "$tarball")"
     echo "  binaries: ${#targets[@]}"
-    echo "  docs: START_HERE, QUICKSTART, INSTALL, OPERATIONS, PRODUCT_GUIDE, DATASHEET, LAUNCH_CHECKLIST, TROUBLESHOOTING, OPERATOR_PLAYBOOK, ACCEPTANCE_SPEC, feature-reference, irc-compat, doors, chat, admin"
+    echo "  docs: ${#doc_list[@]} files copied (README/START_HERE/INSTALL/SHOWCASE/DATASHEET/ACCEPTANCE/etc)"
   } >>"$manifest_file"
   rm -rf "$stage_dir"
 done

@@ -193,10 +193,13 @@ Enter selection:
 ### Gateway menu
 ```text
 ┌──────────────────── Gateway Menu ────────────────────┐
-│ [E]mail Gateway - send BBS mail to external SMTP   │
-│ [W]eb Gateway   - read and trim HTML pages         │
-│ [O]ffline Save  - stash pages for later          │
-│ [B]ack                                            │
+│ [W]eb browser   - read URL in ANSI pager + save   │
+│ [E]mail gateway - send external mail through SMTP  │
+│ [F]eed reader   - compact RSS/Atom headlines       │
+│ [S]ummarizer    - article bullets + excerpt        │
+│ [J]SON explorer - pretty-print JSON payloads       │
+│ [A]I assistant  - prompt configured model          │
+│ [R]eturn [Q]uit [?]Help                            │
 └────────────────────────────────────────────────────┘
 ```
 

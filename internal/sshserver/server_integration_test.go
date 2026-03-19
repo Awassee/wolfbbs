@@ -536,3 +536,164 @@ func TestSSHNewscanDigestShowsRecentTraffic(t *testing.T) {
 	_ = session.Wait()
 	<-done
 }
+
+func TestSSHGatewayModernDoorsFlow(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	boardRepo := repository.NewInMemoryBoardRepository()
+	msgRepo := repository.NewInMemoryMessageRepository()
+	mailRepo := repository.NewInMemoryPrivateMailRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
+	doorRepo := repository.NewInMemoryDoorRepository()
+
+	authSvc := auth.NewService(userRepo)
+	if _, err := authSvc.Register("gatewayuser", "password123"); err != nil {
+		t.Fatalf("register user: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := sshserver.New("127.0.0.1:0", logger, authSvc)
+	srv.SetRepositories(userRepo, boardRepo, msgRepo, mailRepo, adminRepo, doorRepo)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() { _ = srv.Serve(ln) }()
+	defer srv.Shutdown(context.Background())
+
+	cfg := &ssh.ClientConfig{
+		User:            "ignored",
+		Auth:            []ssh.AuthMethod{ssh.Password("ignored")},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         5 * time.Second,
+	}
+	client, err := ssh.Dial("tcp", ln.Addr().String(), cfg)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client.Close()
+
+	session, err := client.NewSession()
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	defer session.Close()
+	if err := session.RequestPty("xterm", 25, 80, ssh.TerminalModes{ssh.ECHO: 1}); err != nil {
+		t.Fatalf("request pty: %v", err)
+	}
+
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		t.Fatalf("stdin pipe: %v", err)
+	}
+	if err := session.Shell(); err != nil {
+		t.Fatalf("shell: %v", err)
+	}
+
+	var out safeBuffer
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = io.Copy(&out, stdout)
+	}()
+
+	lastIdx := 0
+	waitFor := func(substr string) {
+		t.Helper()
+		deadline := time.Now().Add(8 * time.Second)
+		for time.Now().Before(deadline) {
+			time.Sleep(20 * time.Millisecond)
+			curr := out.String()
+			if lastIdx > len(curr) {
+				lastIdx = len(curr)
+			}
+			next := curr[lastIdx:]
+			if idx := strings.Index(next, substr); idx >= 0 {
+				lastIdx += idx + len(substr)
+				return
+			}
+		}
+		t.Fatalf("timed out waiting for %q", substr)
+	}
+
+	waitFor("Press any key to continue")
+	_, _ = stdin.Write([]byte("x"))
+	waitFor("Handle:")
+	_, _ = stdin.Write([]byte("gatewayuser\n"))
+	waitFor("Password:")
+	_, _ = stdin.Write([]byte("password123\n"))
+	waitFor("Any key to return.")
+	_, _ = stdin.Write([]byte("x"))
+	waitFor("Enter selection:")
+
+	// Email gateway validation path.
+	_, _ = stdin.Write([]byte("G"))
+	waitFor("Gateway Menu")
+	_, _ = stdin.Write([]byte("E"))
+	waitFor("To external email:")
+	_, _ = stdin.Write([]byte("\n"))
+	waitFor("Subject:")
+	_, _ = stdin.Write([]byte("gateway test\n"))
+	waitFor("Body")
+	_, _ = stdin.Write([]byte("body\n.\n"))
+	waitFor("To/subject/body required. Press any key.")
+	_, _ = stdin.Write([]byte("x"))
+	waitFor("Enter selection:")
+
+	// Text web browser validation path.
+	_, _ = stdin.Write([]byte("G"))
+	waitFor("Gateway Menu")
+	_, _ = stdin.Write([]byte("W"))
+	waitFor("URL:")
+	_, _ = stdin.Write([]byte("ftp://example.org\n"))
+	waitFor("Gateway blocked: url must use http or https")
+	_, _ = stdin.Write([]byte("x"))
+	waitFor("Enter selection:")
+
+	// Feed reader validation path.
+	_, _ = stdin.Write([]byte("G"))
+	waitFor("Gateway Menu")
+	_, _ = stdin.Write([]byte("F"))
+	waitFor("Feed URL:")
+	_, _ = stdin.Write([]byte("\n"))
+	waitFor("Feed URL required. Press any key.")
+	_, _ = stdin.Write([]byte("x"))
+	waitFor("Enter selection:")
+
+	// Summarizer validation path.
+	_, _ = stdin.Write([]byte("G"))
+	waitFor("Gateway Menu")
+	_, _ = stdin.Write([]byte("S"))
+	waitFor("Article URL:")
+	_, _ = stdin.Write([]byte("\n"))
+	waitFor("Article URL required. Press any key.")
+	_, _ = stdin.Write([]byte("x"))
+	waitFor("Enter selection:")
+
+	// JSON explorer validation path.
+	_, _ = stdin.Write([]byte("G"))
+	waitFor("Gateway Menu")
+	_, _ = stdin.Write([]byte("J"))
+	waitFor("JSON URL:")
+	_, _ = stdin.Write([]byte("\n"))
+	waitFor("JSON URL required. Press any key.")
+	_, _ = stdin.Write([]byte("x"))
+	waitFor("Enter selection:")
+
+	// AI door default-not-configured path.
+	_, _ = stdin.Write([]byte("G"))
+	waitFor("Gateway Menu")
+	_, _ = stdin.Write([]byte("A"))
+	waitFor("AI gateway is disabled. Configure /admin/gateways and set API key. Press any key.")
+	_, _ = stdin.Write([]byte("x"))
+	waitFor("Enter selection:")
+
+	_, _ = stdin.Write([]byte("Q"))
+	_ = session.Wait()
+	<-done
+}

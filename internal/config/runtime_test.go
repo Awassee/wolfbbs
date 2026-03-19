@@ -6,7 +6,47 @@ import (
 	"testing"
 )
 
+func clearRuntimeEnvForTest(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{
+		"WOLFBBS_MENU_ENABLE",
+		"WOLFBBS_MENU_FILE",
+		"WOLFBBS_ACS_STRICT",
+		"WOLFBBS_CONTENT_HOST",
+		"WOLFBBS_GOPHER_LISTEN",
+		"WOLFBBS_NNTP_LISTEN",
+		"WOLFBBS_NNTPS_LISTEN",
+		"WOLFBBS_NNTPS_CERT",
+		"WOLFBBS_NNTPS_KEY",
+		"WOLFBBS_ACTIVITYPUB_ENABLE",
+		"WOLFBBS_ACTIVITYPUB_BASE_URL",
+		"WOLFBBS_DOORPARTY_ENABLE",
+		"WOLFBBS_DOORPARTY_COMMAND",
+		"WOLFBBS_DOORPARTY_ARGS",
+		"WOLFBBS_BBSLINK_ENABLE",
+		"WOLFBBS_BBSLINK_COMMAND",
+		"WOLFBBS_BBSLINK_ARGS",
+		"WOLFBBS_TELNET_BRIDGE_ENABLE",
+		"WOLFBBS_TELNET_BRIDGE_COMMAND",
+		"WOLFBBS_TELNET_BRIDGE_ARGS",
+		"WOLFBBS_TELNET_ENABLE",
+		"WOLFBBS_TELNET_LISTEN",
+		"WOLFBBS_WS_ENABLE",
+		"WOLFBBS_WS_LISTEN",
+		"WOLFBBS_WS_PATH",
+		"WOLFBBS_WSS_ENABLE",
+		"WOLFBBS_WSS_LISTEN",
+		"WOLFBBS_WSS_PATH",
+		"WOLFBBS_WSS_CERT",
+		"WOLFBBS_WSS_KEY",
+		"WOLFBBS_TRUSTED_PROXIES",
+	} {
+		t.Setenv(key, "")
+	}
+}
+
 func TestDefaultRuntimeLoginServersDisabled(t *testing.T) {
+	clearRuntimeEnvForTest(t)
 	cfg := DefaultRuntime()
 	if cfg.Login.Telnet.Enabled {
 		t.Fatal("telnet should be disabled by default")
@@ -36,6 +76,7 @@ func TestDefaultRuntimeLoginServersDisabled(t *testing.T) {
 
 func TestLoadRuntimeHJSONAndEnvOverride(t *testing.T) {
 	ResetCacheForTest()
+	clearRuntimeEnvForTest(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "wolfbbs.hjson")
 	body := `
@@ -69,6 +110,7 @@ func TestLoadRuntimeHJSONAndEnvOverride(t *testing.T) {
 
 func TestLoadRuntimeValidation(t *testing.T) {
 	ResetCacheForTest()
+	clearRuntimeEnvForTest(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "wolfbbs.hjson")
 	body := `
@@ -86,6 +128,7 @@ func TestLoadRuntimeValidation(t *testing.T) {
 
 func TestLoadRuntimeConnectorValidation(t *testing.T) {
 	ResetCacheForTest()
+	clearRuntimeEnvForTest(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "wolfbbs.hjson")
 	body := `
@@ -122,6 +165,7 @@ func TestLoadRuntimeConnectorValidation(t *testing.T) {
 
 func TestLoadRuntimeLoginValidation(t *testing.T) {
 	ResetCacheForTest()
+	clearRuntimeEnvForTest(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "wolfbbs.hjson")
 	body := `
@@ -150,6 +194,7 @@ func TestLoadRuntimeLoginValidation(t *testing.T) {
 
 func TestLoadRuntimeWSSValidation(t *testing.T) {
 	ResetCacheForTest()
+	clearRuntimeEnvForTest(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "wolfbbs.hjson")
 	body := `
