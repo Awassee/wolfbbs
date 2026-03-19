@@ -158,6 +158,43 @@ EOF
   assert_not_contains "$out_file" "--env-file \"\"" \
     "uninstall --purge should not emit blank env-file argument"
 
+  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$out_file" \
+    --yes --status --prefix "$prefix_rapid"
+  assert_contains "$out_file" "WolfBBS install status: ${prefix_rapid}" \
+    "status should render install summary"
+  assert_contains "$docker_log" "compose -f ${prefix_rapid}/app/docker-compose.yml --env-file ${prefix_rapid}/.env ps" \
+    "status should inspect compose ps with resolved env-file"
+
+  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$out_file" \
+    --yes --repair --prefix "$prefix_rapid"
+  assert_contains "$out_file" "Repair complete." \
+    "repair should report success"
+  assert_contains "$docker_log" "compose -f ${prefix_rapid}/app/docker-compose.yml --env-file ${prefix_rapid}/.env up -d --build" \
+    "repair should rebuild and start services with env-file"
+
+  local prefix_clean="${TMP_WORK}/WolfBBSCase/InstallC"
+  mkdir -p "${prefix_clean}/app"
+  cat > "${prefix_clean}/app/docker-compose.yml" <<'EOF'
+services:
+  web:
+    image: wolfbbs-web:latest
+EOF
+  cat > "${prefix_clean}/.env" <<'EOF'
+WOLFBBS_WEB_PORT=8080
+WOLFBBS_SSH_PORT=2222
+WOLFBBS_IRC_PORT=6667
+WOLFBBS_MAILIN_PORT=8091
+EOF
+  local prefix_clean_resolved
+  prefix_clean_resolved="$(cd "${prefix_clean}" && pwd)"
+  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$out_file" \
+    --yes --uninstall --clean-uninstall --prefix "$prefix_clean"
+  assert_contains "$out_file" "Removed ${prefix_clean_resolved}." \
+    "clean uninstall should remove install directory"
+  if [[ -d "$prefix_clean" ]]; then
+    fail "clean uninstall should delete prefix directory"
+  fi
+
   echo "PASS: installer regression harness"
 }
 

@@ -14,6 +14,31 @@ func TestRenderTopBarWithClock12Hour(t *testing.T) {
 	}
 }
 
+func TestRenderTopBarCompressesForNarrowWidths(t *testing.T) {
+	now := time.Date(2026, 3, 19, 21, 5, 0, 0, time.UTC)
+	narrow := stripANSIEscapes(RenderTopBarWithClock(34, "WolfBBS Showcase", "retrocaller", now, "Node 12", DefaultTheme(), true))
+	if !strings.Contains(narrow, "21:05") {
+		t.Fatalf("expected short clock in narrow top bar, got %q", narrow)
+	}
+	if strings.Contains(narrow, "User:") {
+		t.Fatalf("expected compressed narrow top bar without verbose label, got %q", narrow)
+	}
+	if got := runeLen(narrow); got != 34 {
+		t.Fatalf("expected narrow top bar width 34, got %d (%q)", got, narrow)
+	}
+
+	medium := stripANSIEscapes(RenderTopBarWithClock(52, "WolfBBS Showcase", "retrocaller", now, "Node 12", DefaultTheme(), true))
+	if !strings.Contains(medium, "Node") {
+		t.Fatalf("expected node label in medium top bar, got %q", medium)
+	}
+	if strings.Contains(medium, "2006-03-19 21:05") {
+		t.Fatalf("expected compressed medium clock, got %q", medium)
+	}
+	if got := runeLen(medium); got != 52 {
+		t.Fatalf("expected medium top bar width 52, got %d (%q)", got, medium)
+	}
+}
+
 func TestRenderHelpPanels(t *testing.T) {
 	cases := []struct {
 		name     string

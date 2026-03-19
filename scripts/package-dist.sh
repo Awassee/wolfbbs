@@ -122,6 +122,8 @@ doc_list=(
   "docs/LAUNCH_CHECKLIST.md"
   "docs/TROUBLESHOOTING.md"
   "docs/OPERATOR_PLAYBOOK.md"
+  "docs/FIRST_30_MINUTES.md"
+  "docs/RUNNING_A_COMMUNITY.md"
 )
 if [[ -f "docs/releases/$VERSION.md" ]]; then
   doc_list+=("docs/releases/$VERSION.md")

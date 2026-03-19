@@ -42,18 +42,19 @@ type ircState struct {
 }
 
 type ircClient struct {
-	nick   string
-	conn   net.Conn
-	state  *ircState
-	writer *bufio.Writer
-	mu     sync.Mutex
+	nick     string
+	conn     net.Conn
+	state    *ircState
+	writer   *bufio.Writer
+	linePoll chan string
+	mu       sync.Mutex
 }
 
 const serverName = "wolfbbs"
 
 var (
 	// ircVersion is overridden in CI/release builds via -ldflags -X main.ircVersion=...
-	ircVersion = "1.0.0"
+	ircVersion    = "1.0.0"
 	maxConn       = 512
 	maxPerIP      = 16
 	floodWindow   = 1500 * time.Millisecond
@@ -248,10 +249,13 @@ func handleIRCConn(conn net.Conn, svc *chat.Service, authSvc *auth.Service, ip s
 		connectedAt: now,
 		lastActive:  now,
 	}
+	linePoll := make(chan string, 32)
+	done := make(chan struct{})
 	client := &ircClient{
-		conn:   conn,
-		state:  state,
-		writer: w,
+		conn:     conn,
+		state:    state,
+		writer:   w,
+		linePoll: linePoll,
 	}
 
 	_ = replyfConn(client, ":%s 001 * :Welcome to WolfBBS IRC", serverName)
@@ -261,9 +265,6 @@ func handleIRCConn(conn net.Conn, svc *chat.Service, authSvc *auth.Service, ip s
 	_ = replyfConn(client, ":%s 375 * :- WolfBBS Message of the day", serverName)
 	_ = replyfConn(client, ":%s 372 * :- Authenticate with PASS, NICK, USER then join a channel", serverName)
 	_ = replyfConn(client, ":%s 376 * :End of /MOTD command", serverName)
-
-	linePoll := make(chan string, 32)
-	done := make(chan struct{})
 
 	go startChatPoller(client, svc, linePoll, done)
 	defer close(done)
@@ -463,12 +464,11 @@ func handleIRCConn(conn net.Conn, svc *chat.Service, authSvc *auth.Service, ip s
 				continue
 			}
 			svc.JoinChannel(state.nick, channel)
-			moveClient(client, channel)
-			select {
-			case linePoll <- channel:
-			default:
+			setClientChannel(client, channel)
+			joinLine := fmt.Sprintf(":%s JOIN :%s", nickOrStar(state.nick), channel)
+			if !broadcastToChannel(channel, joinLine) {
+				_ = replyfConn(client, "%s", joinLine)
 			}
-			_ = replyfConn(client, ":%s JOIN :%s", nickOrStar(state.nick), channel)
 			members := channelMembers(channel)
 			_ = replyfConn(client, ":%s 353 %s = %s :%s", serverName, nickOrStar(state.nick), channel, strings.Join(members, " "))
 			_ = replyfConn(client, ":%s 366 %s %s :End of /NAMES list", serverName, nickOrStar(state.nick), channel)
@@ -484,13 +484,12 @@ func handleIRCConn(conn net.Conn, svc *chat.Service, authSvc *auth.Service, ip s
 				_ = replyfConn(client, ":%s 461 %s PART :Not enough parameters", serverName, nickOrStar(state.nick))
 				continue
 			}
-			svc.LeaveChannel(state.nick, channel)
-			moveClient(client, "")
-			select {
-			case linePoll <- "":
-			default:
+			partLine := fmt.Sprintf(":%s PART %s :left", nickOrStar(state.nick), channel)
+			if !broadcastToChannel(channel, partLine) {
+				_ = replyfConn(client, "%s", partLine)
 			}
-			_ = replyfConn(client, ":%s PART %s :left", nickOrStar(state.nick), channel)
+			svc.LeaveChannel(state.nick, channel)
+			setClientChannel(client, "")
 		case "PRIVMSG", "NOTICE":
 			target, message, ok := parseTargetAndBody(raw)
 			if !ok {
@@ -611,8 +610,18 @@ func handleIRCConn(conn net.Conn, svc *chat.Service, authSvc *auth.Service, ip s
 				_ = replyfConn(client, ":%s 482 %s %s :You're not channel operator", serverName, nickOrStar(state.nick), channel)
 				continue
 			}
+			targetClient, _ := clientByNick(target)
+			kickLine := fmt.Sprintf(":%s KICK %s %s :irc kick", nickOrStar(state.nick), channel, target)
+			if !broadcastToChannel(channel, kickLine) {
+				_ = replyfConn(client, "%s", kickLine)
+				if targetClient != nil && targetClient != client {
+					_ = replyfConn(targetClient, "%s", kickLine)
+				}
+			}
 			svc.Kick(channel, state.nick, target, "irc kick")
-			_ = replyfConn(client, ":%s KICK %s %s :irc kick", nickOrStar(state.nick), channel, target)
+			if targetClient != nil {
+				setClientChannel(targetClient, "")
+			}
 		case "QUIT":
 			reason := strings.TrimLeft(strings.TrimPrefix(raw, ":"), " ")
 			if reason == "" {
@@ -744,6 +753,20 @@ func moveClient(client *ircClient, channel string) {
 		channelPeers[channel] = map[string]*ircClient{}
 	}
 	channelPeers[channel][strings.ToLower(client.nick)] = client
+}
+
+func setClientChannel(client *ircClient, channel string) {
+	if client == nil {
+		return
+	}
+	moveClient(client, channel)
+	if client.linePoll == nil {
+		return
+	}
+	select {
+	case client.linePoll <- channel:
+	default:
+	}
 }
 
 func unregisterClientByConn(conn net.Conn) {

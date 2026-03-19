@@ -54,7 +54,24 @@ func RenderTopBarWithClock(width int, boardName, user string, now time.Time, nod
 	if !time24h {
 		clock = now.Format("2006-01-02 03:04 PM")
 	}
-	line := fmt.Sprintf(" %s | User: %-12s | %s | %s ", area, user, clock, node)
+	shortClock := now.Format("15:04")
+	if !time24h {
+		shortClock = now.Format("03:04PM")
+	}
+	line := ""
+	switch {
+	case width <= 40:
+		userWidth := 6
+		areaWidth := width - (1 + userWidth + len(shortClock) + 8)
+		if areaWidth < 6 {
+			areaWidth = 6
+		}
+		line = fmt.Sprintf(" %s | %s | %s ", compactTopBarValue(area, areaWidth), compactTopBarValue(user, userWidth), shortClock)
+	case width <= 56:
+		line = fmt.Sprintf(" %s | %s | %s | %s ", compactTopBarValue(area, 12), compactTopBarValue(user, 8), shortClock, compactTopBarValue(node, 8))
+	default:
+		line = fmt.Sprintf(" %s | User: %-12s | %s | %s ", area, user, clock, node)
+	}
 	line = padOrTrim(line, width, " ")
 	return th.StatusBg + th.StatusFg + Bold + line + Reset
 }
@@ -692,6 +709,21 @@ func clampLines(width int, lines []string) string {
 		lines[i] = trimANSIVisible(line, width)
 	}
 	return strings.Join(lines, "\r\n")
+}
+
+func compactTopBarValue(value string, width int) string {
+	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	if width <= 0 {
+		return ""
+	}
+	r := []rune(value)
+	if len(r) <= width {
+		return value
+	}
+	if width <= 3 {
+		return string(r[:width])
+	}
+	return string(r[:width-1]) + "+"
 }
 
 func padOrTrim(value string, width int, pad string) string {

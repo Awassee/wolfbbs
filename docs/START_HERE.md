@@ -91,9 +91,11 @@ bash install.sh --repair
 
 ## Read next
 
+- [First 30 Minutes As Sysop](FIRST_30_MINUTES.md)
 - [Quickstart](QUICKSTART.md)
 - [Launch Checklist](LAUNCH_CHECKLIST.md)
 - [Operator Playbook](OPERATOR_PLAYBOOK.md)
+- [Running A Community](RUNNING_A_COMMUNITY.md)
 - [Install Guide](INSTALL.md)
 - [Troubleshooting](TROUBLESHOOTING.md)
 - [Operations Guide](OPERATIONS.md)

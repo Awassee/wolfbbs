@@ -2406,7 +2406,7 @@ seed_admin_check() {
     return
   fi
   local handle
-  handle="$(grep '^WOLFBBS_BOOTSTRAP_ADMIN_HANDLE=' "$ENV_FILE" | head -n1 | cut -d= -f2-)"
+  handle="$(grep '^WOLFBBS_BOOTSTRAP_ADMIN_HANDLE=' "$ENV_FILE" | head -n1 | cut -d= -f2- || true)"
   if [[ -z "$handle" ]]; then
     log "Warning: no bootstrap sysop configured in ${ENV_FILE}."
   else
@@ -3676,11 +3676,8 @@ main() {
           exit 1
         fi
       else
-        if [[ -d "${PREFIX}/.git" ]]; then
-          echo "Install directory appears to be a git checkout; skipping directory deletion to protect source."
-        elif confirm "Remove install directory ${PREFIX}?"; then
-          remove_install_prefix || true
-        fi
+        echo "Preserved install directory: ${PREFIX}"
+        echo "Use --clean-uninstall to remove the install directory too."
       fi
     else
       log "DRY-RUN: would stop/remove services in ${PREFIX}"

@@ -921,6 +921,14 @@ func TestAdminUsersCreateValidationAndDuplicateErrors(t *testing.T) {
 		protectedUsers.ServeHTTP(rr, req)
 		return rr
 	}
+	getUsersPage := func() *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/admin/users", nil)
+		req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sessionID})
+		rr := httptest.NewRecorder()
+		protectedUsers.ServeHTTP(rr, req)
+		return rr
+	}
 
 	rr := postCreate("", "password123", "user")
 	if rr.Code != http.StatusBadRequest {
@@ -939,11 +947,20 @@ func TestAdminUsersCreateValidationAndDuplicateErrors(t *testing.T) {
 	}
 
 	rr = postCreate("alphauser", "password123", "moderator")
-	if rr.Code != http.StatusOK {
+	if rr.Code != http.StatusFound {
 		t.Fatalf("valid create status = %d body=%q", rr.Code, rr.Body.String())
 	}
-	if !strings.Contains(rr.Body.String(), "created user alphauser") {
-		t.Fatalf("expected create success message, got %q", rr.Body.String())
+	if location := rr.Result().Header.Get("Location"); !strings.Contains(location, "/admin/users?notice=") {
+		t.Fatalf("expected create redirect, got %q", location)
+	}
+	rr = getUsersPage()
+	if rr.Code != http.StatusOK {
+		t.Fatalf("admin users page status = %d", rr.Code)
+	}
+	for _, needle := range []string{"One-time credential receipts", "alphauser", "password123"} {
+		if !strings.Contains(rr.Body.String(), needle) {
+			t.Fatalf("expected receipt %q on users page, got %q", needle, rr.Body.String())
+		}
 	}
 	created, err := authSvc.GetUser("alphauser")
 	if err != nil {
@@ -1008,6 +1025,34 @@ func TestAdminUsersLifecycleActionsAndAuthEffects(t *testing.T) {
 		protectedUsers.ServeHTTP(rr, req)
 		return rr
 	}
+	getUsersPage := func() *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/admin/users", nil)
+		req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sessionID})
+		rr := httptest.NewRecorder()
+		protectedUsers.ServeHTTP(rr, req)
+		return rr
+	}
+	extractReceiptPassword := func(body, handle string) string {
+		t.Helper()
+		prefix := `<strong>Temporary password:</strong> <code>`
+		handleNeedle := `<strong>Handle:</strong> <code>` + handle + `</code>`
+		idx := strings.Index(body, handleNeedle)
+		if idx < 0 {
+			t.Fatalf("missing receipt for %s in body %q", handle, body)
+		}
+		body = body[idx:]
+		start := strings.Index(body, prefix)
+		if start < 0 {
+			t.Fatalf("missing password prefix in body %q", body)
+		}
+		body = body[start+len(prefix):]
+		end := strings.Index(body, "</code>")
+		if end < 0 {
+			t.Fatalf("missing password suffix in body %q", body)
+		}
+		return strings.TrimSpace(body[:end])
+	}
 
 	create := url.Values{}
 	create.Set("action", "create")
@@ -1015,8 +1060,12 @@ func TestAdminUsersLifecycleActionsAndAuthEffects(t *testing.T) {
 	create.Set("password", "qa123456")
 	create.Set("role", "user")
 	rr := postUsers(create)
-	if rr.Code != http.StatusOK {
+	if rr.Code != http.StatusFound {
 		t.Fatalf("create user status = %d body=%q", rr.Code, rr.Body.String())
+	}
+	rr = getUsersPage()
+	if !strings.Contains(rr.Body.String(), "qa123456") {
+		t.Fatalf("expected create credential receipt on page, got %q", rr.Body.String())
 	}
 
 	disable := url.Values{}
@@ -1113,15 +1162,14 @@ func TestAdminUsersLifecycleActionsAndAuthEffects(t *testing.T) {
 	reset.Set("action", "reset")
 	reset.Set("handle", "qauser")
 	rr = postUsers(reset)
-	if rr.Code != http.StatusOK {
+	if rr.Code != http.StatusFound {
 		t.Fatalf("reset password status = %d body=%q", rr.Code, rr.Body.String())
 	}
-	resetMsg := strings.TrimSpace(rr.Body.String())
-	const resetPrefix = "reset password for qauser to "
-	if !strings.HasPrefix(resetMsg, resetPrefix) {
-		t.Fatalf("unexpected reset response: %q", resetMsg)
+	rr = getUsersPage()
+	if rr.Code != http.StatusOK {
+		t.Fatalf("admin users page status = %d", rr.Code)
 	}
-	newPassword := strings.TrimSpace(strings.TrimPrefix(resetMsg, resetPrefix))
+	newPassword := extractReceiptPassword(rr.Body.String(), "qauser")
 	if len(newPassword) < 8 {
 		t.Fatalf("expected generated password length >= 8, got %q", newPassword)
 	}

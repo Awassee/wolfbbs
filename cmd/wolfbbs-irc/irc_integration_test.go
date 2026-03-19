@@ -302,6 +302,157 @@ func TestIRCGatewayNoticeAndCTCPRelay(t *testing.T) {
 	assertContainsLine(t, actionLines, "\u0001ACTION waves\u0001")
 }
 
+func TestIRCGatewayPartBroadcastsToPeers(t *testing.T) {
+	resetIRCStateForTest()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	svc := chat.NewServiceForTest()
+	repo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(repo)
+	_, _ = authSvc.Register("ircuser", "ircpass1")
+	_, _ = authSvc.Register("ircviewer", "ircpass2")
+
+	go func() {
+		for i := 0; i < 2; i++ {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go handleIRCConn(conn, svc, authSvc, "127.0.0.1")
+		}
+	}()
+
+	sender, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("dial sender: %v", err)
+	}
+	defer sender.Close()
+	receiver, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("dial receiver: %v", err)
+	}
+	defer receiver.Close()
+
+	senderReader := bufio.NewReader(sender)
+	receiverReader := bufio.NewReader(receiver)
+
+	if !waitForReaderLineContains(sender, senderReader, "Welcome", 3*time.Second) {
+		t.Fatal("sender did not receive IRC welcome")
+	}
+	if !waitForReaderLineContains(receiver, receiverReader, "Welcome", 3*time.Second) {
+		t.Fatal("receiver did not receive IRC welcome")
+	}
+
+	_, _ = sender.Write([]byte("PASS ircpass1\r\n"))
+	_, _ = sender.Write([]byte("NICK ircuser\r\n"))
+	_, _ = sender.Write([]byte("USER ircuser 0 * :ircuser\r\n"))
+	_, _ = sender.Write([]byte("JOIN #lobby\r\n"))
+	joinLines := collectReaderLinesUntil(sender, senderReader, " 366 ", 3*time.Second)
+	if !lineSliceContains(joinLines, " 366 ") {
+		t.Fatalf("sender join did not complete; lines=%#v", joinLines)
+	}
+
+	_, _ = receiver.Write([]byte("PASS ircpass2\r\n"))
+	_, _ = receiver.Write([]byte("NICK ircviewer\r\n"))
+	_, _ = receiver.Write([]byte("USER ircviewer 0 * :ircviewer\r\n"))
+	_, _ = receiver.Write([]byte("JOIN #lobby\r\n"))
+	joinLines = collectReaderLinesUntil(receiver, receiverReader, " 366 ", 3*time.Second)
+	if !lineSliceContains(joinLines, " 366 ") {
+		t.Fatalf("receiver join did not complete; lines=%#v", joinLines)
+	}
+
+	_, _ = receiver.Write([]byte("PART #lobby\r\n"))
+	partLines := collectReaderLinesUntil(sender, senderReader, " PART #lobby ", 3*time.Second)
+	assertContainsLine(t, partLines, ":ircviewer PART #lobby :left")
+}
+
+func TestIRCGatewayKickBroadcastsAndAllowsRejoin(t *testing.T) {
+	resetIRCStateForTest()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	svc := chat.NewServiceForTest()
+	repo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(repo)
+	if _, err := authSvc.Register("sysop", "syspass12"); err != nil {
+		t.Fatalf("register sysop: %v", err)
+	}
+	if err := authSvc.SetRole("sysop", "sysop"); err != nil {
+		t.Fatalf("set sysop role: %v", err)
+	}
+	if _, err := authSvc.Register("reader", "readerpass1"); err != nil {
+		t.Fatalf("register reader: %v", err)
+	}
+
+	go func() {
+		for i := 0; i < 2; i++ {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go handleIRCConn(conn, svc, authSvc, "127.0.0.1")
+		}
+	}()
+
+	sysopConn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("dial sysop: %v", err)
+	}
+	defer sysopConn.Close()
+	readerConn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("dial reader: %v", err)
+	}
+	defer readerConn.Close()
+
+	sysopReader := bufio.NewReader(sysopConn)
+	readerReader := bufio.NewReader(readerConn)
+
+	if !waitForReaderLineContains(sysopConn, sysopReader, "Welcome", 3*time.Second) {
+		t.Fatal("sysop welcome missing")
+	}
+	if !waitForReaderLineContains(readerConn, readerReader, "Welcome", 3*time.Second) {
+		t.Fatal("reader welcome missing")
+	}
+
+	_, _ = sysopConn.Write([]byte("PASS syspass12\r\n"))
+	_, _ = sysopConn.Write([]byte("NICK sysop\r\n"))
+	_, _ = sysopConn.Write([]byte("USER sysop 0 * :sysop\r\n"))
+	_, _ = sysopConn.Write([]byte("JOIN #lobby\r\n"))
+	joinLines := collectReaderLinesUntil(sysopConn, sysopReader, " 366 ", 3*time.Second)
+	if !lineSliceContains(joinLines, " 366 ") {
+		t.Fatalf("sysop join did not complete; lines=%#v", joinLines)
+	}
+
+	_, _ = readerConn.Write([]byte("PASS readerpass1\r\n"))
+	_, _ = readerConn.Write([]byte("NICK reader\r\n"))
+	_, _ = readerConn.Write([]byte("USER reader 0 * :reader\r\n"))
+	_, _ = readerConn.Write([]byte("JOIN #lobby\r\n"))
+	joinLines = collectReaderLinesUntil(readerConn, readerReader, " 366 ", 3*time.Second)
+	if !lineSliceContains(joinLines, " 366 ") {
+		t.Fatalf("reader join did not complete; lines=%#v", joinLines)
+	}
+
+	_, _ = sysopConn.Write([]byte("KICK #lobby reader\r\n"))
+	kickLines := collectReaderLinesUntil(sysopConn, sysopReader, " KICK #lobby reader ", 3*time.Second)
+	assertContainsLine(t, kickLines, ":sysop KICK #lobby reader :irc kick")
+	kickLines = collectReaderLinesUntil(readerConn, readerReader, " KICK #lobby reader ", 3*time.Second)
+	assertContainsLine(t, kickLines, ":sysop KICK #lobby reader :irc kick")
+
+	_, _ = readerConn.Write([]byte("JOIN #lobby\r\n"))
+	rejoinLines := collectReaderLinesUntil(readerConn, readerReader, " 366 ", 3*time.Second)
+	if !lineSliceContains(rejoinLines, " 366 ") {
+		t.Fatalf("reader rejoin did not complete; lines=%#v", rejoinLines)
+	}
+}
+
 func TestIRCGatewayAwayReportsOnPrivmsgAndWhois(t *testing.T) {
 	resetIRCStateForTest()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

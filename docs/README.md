@@ -5,6 +5,7 @@ This directory is organized for three common audiences: operators, contributors,
 ## Most-Used Pages
 
 - [START_HERE.md](START_HERE.md): fastest path from install to usable system
+- [FIRST_30_MINUTES.md](FIRST_30_MINUTES.md): first operator runbook after install
 - [INSTALL.md](INSTALL.md): installer modes, upgrade, uninstall, troubleshooting flags
 - [SHOWCASE.md](SHOWCASE.md): product tour for GitHub visitors and release notes
 - [ACCEPTANCE_SPEC.md](ACCEPTANCE_SPEC.md): acceptance contract and MUST checks
@@ -29,6 +30,8 @@ This directory is organized for three common audiences: operators, contributors,
 
 - [LAUNCH_CHECKLIST.md](LAUNCH_CHECKLIST.md): launch readiness pass
 - [OPERATOR_PLAYBOOK.md](OPERATOR_PLAYBOOK.md): day-to-day operations rhythm
+- [FIRST_30_MINUTES.md](FIRST_30_MINUTES.md): first operator half-hour checklist
+- [RUNNING_A_COMMUNITY.md](RUNNING_A_COMMUNITY.md): community cadence and retention playbook
 - [OPERATIONS.md](OPERATIONS.md): production maintenance and incident handling
 - [admin.md](admin.md): admin panels and workflows
 

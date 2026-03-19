@@ -669,6 +669,36 @@ func (s *Server) handleSession(sess gssh.Session) {
 					state = stateLastCallers
 				case "system.who_online":
 					state = stateWhoOnline
+				case "files.open":
+					if !evaluateAccess(strings.TrimSpace(os.Getenv("WOLFBBS_ACS_FILES_READ")), currentAccount, currentUser, map[string]string{"area": "files"}, acsStrict, s.logger) {
+						io.WriteString(sess, "\r\nAccess denied by ACS rule. Press any key.")
+						_, _ = readKey(reader)
+						touch()
+						break
+					}
+					setArea("Files")
+					s.runFiles(sess, reader, termWidth, renderWidth, currentUser, currentAccount, th, sessionANSI, sessionEncoding, sessionTime24h, nodeLabel, touch)
+					setArea("Main Menu")
+				case "files.collections":
+					if !evaluateAccess(strings.TrimSpace(os.Getenv("WOLFBBS_ACS_FILES_READ")), currentAccount, currentUser, map[string]string{"area": "files"}, acsStrict, s.logger) {
+						io.WriteString(sess, "\r\nAccess denied by ACS rule. Press any key.")
+						_, _ = readKey(reader)
+						touch()
+						break
+					}
+					setArea("Featured Collections")
+					s.runFeaturedCollections(sess, reader, termWidth, renderWidth, currentUser, currentAccount, th, sessionANSI, sessionEncoding, sessionTime24h, nodeLabel, touch)
+					setArea("Main Menu")
+				case "files.offline":
+					if !evaluateAccess(strings.TrimSpace(os.Getenv("WOLFBBS_ACS_FILES_READ")), currentAccount, currentUser, map[string]string{"area": "files"}, acsStrict, s.logger) {
+						io.WriteString(sess, "\r\nAccess denied by ACS rule. Press any key.")
+						_, _ = readKey(reader)
+						touch()
+						break
+					}
+					setArea("Offline Center")
+					s.runOfflineCenter(sess, reader, termWidth, renderWidth, currentUser, currentAccount, th, sessionANSI, sessionEncoding, sessionTime24h, nodeLabel, touch)
+					setArea("Main Menu")
 				case "settings.open":
 					updated, updateErr := s.runSettingsMCI(sess, reader, termWidth, renderWidth, currentUser, currentAccount, sessionANSI, sessionEncoding, sessionTime24h, nodeLabel, touch)
 					if updateErr != nil {
@@ -688,6 +718,16 @@ func (s *Server) handleSession(sess gssh.Session) {
 							sessionEncoding = string(termProfile.Encoding)
 						}
 					}
+				case "admin.open":
+					if !evaluateAccess("role=sysop", currentAccount, currentUser, map[string]string{"area": "admin"}, acsStrict, s.logger) {
+						io.WriteString(sess, "\r\nAdmin access denied. Press any key.")
+						_, _ = readKey(reader)
+						touch()
+						break
+					}
+					setArea("Admin")
+					s.runAdminCenter(sess, reader, termWidth, renderWidth, currentUser, currentAccount, th, sessionANSI, sessionEncoding, sessionTime24h, nodeLabel, touch)
+					setArea("Main Menu")
 				case "system.config_center":
 					state = stateConfigCenter
 				case "system.status_center":
@@ -1875,8 +1915,12 @@ func quickJumpToAction(raw string) string {
 		return "system.status_center"
 	case "a", "admin", "sysop":
 		return "admin.open"
-	case "f", "files", "filebase", "collection", "collections", "offline", "packets":
+	case "f", "files", "filebase":
 		return "files.open"
+	case "collection", "collections":
+		return "files.collections"
+	case "offline", "packets":
+		return "files.offline"
 	case "showcase", "tour":
 		return "system.showcase"
 	case "u", "upgrade", "update", "app", "app-upgrade", "app upgrade", "/app", "/app upgrade":

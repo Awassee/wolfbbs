@@ -16,6 +16,8 @@ Quick links:
 - [Release v1.1.21 notes](docs/releases/v1.1.21.md)
 - [Screenshot showcase](docs/SHOWCASE.md)
 - [Feature datasheet](docs/DATASHEET.md)
+- [First 30 minutes as sysop](docs/FIRST_30_MINUTES.md)
+- [Running a community](docs/RUNNING_A_COMMUNITY.md)
 - [Documentation hub](docs/README.md)
 - [Releases](https://github.com/Awassee/wolfbbs/releases)
 

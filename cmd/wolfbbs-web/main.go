@@ -612,12 +612,13 @@ type launchCheckpoint struct {
 }
 
 type sessionState struct {
-	handle     string
-	expire     time.Time
-	csrf       string
-	transport  string
-	secure     bool
-	authFactor int
+	handle             string
+	expire             time.Time
+	csrf               string
+	transport          string
+	secure             bool
+	authFactor         int
+	credentialReceipts []adminCredentialReceipt
 }
 
 const (
@@ -3306,6 +3307,8 @@ func (a *webApp) handleFirstCallSession(w http.ResponseWriter, r *http.Request) 
 				redirectWithError(w, r, "/first-call", "Could not create starter post.")
 				return
 			}
+			a.recordOperatorInsight("first_call.starter_post", user.Handle, "/first-call")
+			a.recordFirstCallTransition(user, snapshot, "/first-call")
 			redirectWithNotice(w, r, "/first-call", "Starter board post created.")
 			return
 		case "starter_chat":
@@ -3325,6 +3328,8 @@ func (a *webApp) handleFirstCallSession(w http.ResponseWriter, r *http.Request) 
 				redirectWithError(w, r, "/first-call", "Could not send lobby message.")
 				return
 			}
+			a.recordOperatorInsight("first_call.starter_chat", user.Handle, "/first-call")
+			a.recordFirstCallTransition(user, snapshot, "/first-call")
 			redirectWithNotice(w, r, "/first-call", "Starter lobby message sent.")
 			return
 		case "starter_mail":
@@ -3363,6 +3368,8 @@ func (a *webApp) handleFirstCallSession(w http.ResponseWriter, r *http.Request) 
 				redirectWithError(w, r, "/first-call", "Could not send starter mail.")
 				return
 			}
+			a.recordOperatorInsight("first_call.starter_mail", user.Handle, "/first-call")
+			a.recordFirstCallTransition(user, snapshot, "/first-call")
 			redirectWithNotice(w, r, "/first-call", "Starter private mail sent.")
 			return
 		case "save_home_route":
@@ -3372,6 +3379,8 @@ func (a *webApp) handleFirstCallSession(w http.ResponseWriter, r *http.Request) 
 				return
 			}
 			a.persistHomeRoute(user.Handle, route)
+			a.recordOperatorInsight("first_call.home_route", user.Handle, route)
+			a.recordFirstCallTransition(user, snapshot, route)
 			redirectWithNotice(w, r, "/first-call", "Home route saved.")
 			return
 		default:
@@ -16934,6 +16943,7 @@ func (a *webApp) handleFeedback(w http.ResponseWriter, r *http.Request) {
 		if a.eventBus != nil {
 			a.eventBus.Publish("feedback.sent", map[string]string{"from": user.Handle, "to": sysop.Handle, "category": category})
 		}
+		a.recordOperatorInsight("feedback.sent", user.Handle, "/feedback")
 		redirectWithNotice(w, r, "/feedback", "Feedback delivered to "+sysop.Handle+".")
 		return
 	}
@@ -20944,8 +20954,12 @@ func (a *webApp) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			a.recordAdminAction(user.Handle, created.Handle, "create_user", "role="+role)
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("created user " + created.Handle + " with password " + password))
+			_ = a.queueAdminCredentialReceipt(r, adminCredentialReceipt{
+				Action:   "create",
+				Handle:   created.Handle,
+				Password: password,
+			})
+			redirectWithNotice(w, r, "/admin/users", "Created user "+created.Handle+".")
 			return
 		case "disable":
 			if err := a.authSvc.SetEnabled(target, false); err != nil {
@@ -20984,8 +20998,12 @@ func (a *webApp) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			a.recordAdminAction(user.Handle, target, "reset_password", "")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("reset password for " + target + " to " + pw))
+			_ = a.queueAdminCredentialReceipt(r, adminCredentialReceipt{
+				Action:   "reset",
+				Handle:   target,
+				Password: pw,
+			})
+			redirectWithNotice(w, r, "/admin/users", "Reset password for "+target+".")
 			return
 		case "verify":
 			if err := a.authSvc.SetVerified(target, true); err != nil {
@@ -21012,6 +21030,7 @@ func (a *webApp) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 
 	filter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
 	csrf := a.csrfHiddenInput(r)
+	messageBlock := pageMessageBlock(r) + renderAdminCredentialReceiptBlock(a.popAdminCredentialReceipts(r))
 	rows := strings.Builder{}
 	for _, u := range users {
 		if filter != "" && !strings.Contains(strings.ToLower(u.Handle), filter) {
@@ -21081,6 +21100,7 @@ func (a *webApp) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	helperBlock := `<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Create callers fast</strong><p>If you leave password blank, WolfBBS generates one so you can hand off access quickly.</p></article><article class="wolfbbs-helper-card"><strong>Be deliberate with bans and resets</strong><p>User actions below now require confirmation to reduce accidental admin mistakes.</p></article><article class="wolfbbs-helper-card"><strong>Validate with a real account</strong><p>After creating a user, sign in with it and walk boards, chat, doors, and mail.</p></article></section>`
 
 	page := `<html><body><h1>Sysop Users</h1><p><a href="/admin">back</a> | <a href="/admin/audit">audit</a> | <a href="/help">help</a></p>` +
+		messageBlock +
 		helperBlock + filterSummary +
 		`<h2>Create User</h2><form method="POST">` + csrf +
 		`<input type="hidden" name="action" value="create">` +

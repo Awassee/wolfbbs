@@ -16,12 +16,14 @@ jobs:
       - name: Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck ripgrep
       - name: Validate installer syntax
-        run: bash -n install.sh && bash -n bootstrap.sh && bash -n scripts/verify.sh && bash -n scripts/test-installer-regressions.sh
+        run: bash -n install.sh && bash -n bootstrap.sh && bash -n scripts/verify.sh && bash -n scripts/test-installer-regressions.sh && bash -n scripts/release.sh
       - name: Run shellcheck
-        run: shellcheck install.sh bootstrap.sh scripts/verify.sh scripts/test-installer-regressions.sh
+        run: shellcheck install.sh bootstrap.sh scripts/verify.sh scripts/test-installer-regressions.sh scripts/release.sh
       - name: Validate dry-run
         run: bash install.sh --dry-run --yes --with-docker
       - name: Run installer regression harness
         run: scripts/test-installer-regressions.sh
+      - name: Validate release helper
+        run: scripts/release.sh --version v9.9.9-test --no-verify --allow-dirty --no-sync-refs
       - name: Verify acceptance fast checks
         run: scripts/verify.sh --fast

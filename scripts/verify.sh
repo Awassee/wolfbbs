@@ -512,8 +512,12 @@ run_smoke_checks() {
 
   local smoke_admin_handle="${WOLFBBS_SMOKE_ADMIN_HANDLE:-sysop}"
   local smoke_admin_password="${WOLFBBS_SMOKE_ADMIN_PASSWORD:-password123}"
+  local smoke_user_handle="${WOLFBBS_SMOKE_USER_HANDLE:-caller}"
+  local smoke_user_password="${WOLFBBS_SMOKE_USER_PASSWORD:-password123}"
   export WOLFBBS_BOOTSTRAP_ADMIN_HANDLE="$smoke_admin_handle"
   export WOLFBBS_BOOTSTRAP_ADMIN_PASSWORD="$smoke_admin_password"
+  export WOLFBBS_BOOTSTRAP_USER_HANDLE="$smoke_user_handle"
+  export WOLFBBS_BOOTSTRAP_USER_PASSWORD="$smoke_user_password"
 
   if ! run_with_timeout "$COMPOSE_CMD_TIMEOUT_SECONDS" run_compose "$ccmd" -f "$cfile" config >/dev/null 2>&1; then
     fail_must "C-001" "docker compose config is valid"
@@ -634,7 +638,9 @@ run_smoke_checks() {
 
   local irc_user="${IRC_TEST_USER:-$smoke_admin_handle}"
   local irc_pass="${IRC_TEST_PASS:-$smoke_admin_password}"
-  if IRC_HOST=127.0.0.1 IRC_PORT="$IRC_PORT" IRC_TEST_USER="${irc_user:-sysop}" IRC_TEST_PASS="${irc_pass:-password123}" \
+  local irc_user2="${IRC_TEST_USER2:-$smoke_user_handle}"
+  local irc_pass2="${IRC_TEST_PASS2:-$smoke_user_password}"
+  if IRC_HOST=127.0.0.1 IRC_PORT="$IRC_PORT" IRC_TEST_USER="${irc_user:-sysop}" IRC_TEST_PASS="${irc_pass:-password123}" IRC_TEST_USER2="${irc_user2:-caller}" IRC_TEST_PASS2="${irc_pass2:-password123}" \
     python3 scripts/test_irc.py >/dev/null; then
     pass "IRC-003" "unauthenticated join fails and authenticated join succeeds"
     pass "IRC-006" "welcome/motd/names numerics observed in scripted irc test"

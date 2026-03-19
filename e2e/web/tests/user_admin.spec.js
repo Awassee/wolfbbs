@@ -24,7 +24,7 @@ async function csrfFrom(page) {
 }
 
 async function postForm(page, path, form, expectedStatuses = [200, 302]) {
-  const response = await page.request.post(path, { form });
+  const response = await page.request.post(path, { form, maxRedirects: 0 });
   const status = response.status();
   if (!expectedStatuses.includes(status)) {
     const body = await response.text();
@@ -478,10 +478,12 @@ test("admin journey enforces RBAC and exposes sysop pages", async ({ browser }) 
     handle: qaHandle,
     password: "qa123456",
     role: "user",
-  }, [200]);
-  await expect(res.text()).resolves.toContain(`created user ${qaHandle}`);
+  }, [302]);
+  expect(res.headers()["location"] || "").toContain("/admin/users?notice=");
   await adminPage.goto("/admin/users");
   await expect(adminPage.locator("body")).toContainText(qaHandle);
+  await expect(adminPage.locator("body")).toContainText("One-time credential receipts");
+  await expect(adminPage.locator("body")).toContainText("qa123456");
   csrf = await csrfFrom(adminPage);
   await postForm(adminPage, "/admin/users", { csrf_token: csrf, action: "disable", handle: qaHandle });
   const disabledCtx = await browser.newContext();
@@ -1010,7 +1012,7 @@ test("support, discovery, reset, and activitypub surfaces behave like real user 
     handle: resetHandle,
     password: "resetpass1",
     role: "user",
-  }, [200]);
+  }, [302]);
   await adminCtx.close();
 
   await page.goto("/logout");

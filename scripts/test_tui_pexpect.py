@@ -6,8 +6,9 @@ Covers:
 - new user registration/login
 - main-menu navigation and status/config visibility
 - quick-jump navigation
-- deep terminal UX checks: menu traversal, compose editing, paging/wrapping, and input correction
-- sysop role elevation via oputil and admin terminal entrypoint
+- deep terminal UX checks: menu traversal, compose editing, paging/wrapping, resize/redraw, and input correction
+- offline/collections/settings parity checks
+- sysop role elevation via oputil and deeper admin terminal traversal
 """
 
 from __future__ import annotations
@@ -240,6 +241,33 @@ def type_with_backspace(child: pexpect.spawn, value: str, extra_char: str = "x")
     child.sendline("")
 
 
+def expect_main_menu_ready(child: pexpect.spawn) -> None:
+    child.expect("Enter selection:")
+
+
+def expect_after_optional_pager(child: pexpect.spawn, pattern: str, timeout: int = 25) -> None:
+    while True:
+        idx = child.expect([pattern, "-- More --"], timeout=timeout)
+        if idx == 0:
+            return
+        child.send(" ")
+
+
+def exit_optional_pager(child: pexpect.spawn, next_pattern: str, timeout: int = 25) -> None:
+    while True:
+        idx = child.expect([next_pattern, "-- More --"], timeout=timeout)
+        if idx == 0:
+            return
+        child.send("Q")
+
+
+def quick_jump(child: pexpect.spawn, target: str, heading: str) -> None:
+    child.send("/")
+    child.expect("Jump target")
+    child.sendline(target)
+    child.expect(heading)
+
+
 def seed_file_fixture(files_root: Path) -> None:
     files_root.mkdir(parents=True, exist_ok=True)
     (files_root / "welcome-guide.txt").write_text("WolfBBS fixture file\n", encoding="utf-8")
@@ -436,6 +464,34 @@ def run_regular_user_deep(child: pexpect.spawn) -> None:
     child.expect("New Files")
     child.send("x")
     child.expect("Selection:")
+    child.sendline("C")
+    child.expect("Featured Collections")
+    child.sendline("Q")
+    child.expect("Selection:")
+    child.sendline("O")
+    child.expect("Offline Center")
+    child.send("J")
+    child.expect("Offline Packet JSON")
+    expect_after_optional_pager(child, "Save artifact to offline path")
+    child.sendline("N")
+    child.expect("Selection:")
+    child.send("T")
+    child.expect("Offline Packet Text")
+    expect_after_optional_pager(child, "Save artifact to offline path")
+    child.sendline("Y")
+    child.expect("Saved text packet:")
+    child.send("x")
+    child.expect("Selection:")
+    child.send("I")
+    child.expect("Paste JSON reply payload")
+    child.sendline('[{"to":"e2eadmin","subject":"Offline reply","body":"hello from packet"}]')
+    child.sendline(".")
+    child.expect("Imported 1 offline mail replie")
+    child.send("x")
+    child.expect("Selection:")
+    child.send("Q")
+    child.expect("Files")
+    child.expect("Selection:")
     child.sendline("S")
     child.expect("Search query:")
     type_with_backspace(child, "welcome-guide")
@@ -597,6 +653,24 @@ def run_regular_user_deep(child: pexpect.spawn) -> None:
 
     child.send("S")
     child.expect("MCI Preferences")
+    child.send("B")
+    child.expect("Bookmarks")
+    child.sendline("Q")
+    child.expect("Selection:")
+    child.send("O")
+    child.expect("Circles")
+    child.sendline("Q")
+    child.expect("Selection:")
+    child.send("X")
+    child.expect("Profile Export")
+    expect_after_optional_pager(child, "Save JSON export to offline path")
+    child.sendline("N")
+    child.expect("Selection:")
+    child.send("E")
+    child.expect("Attention Export")
+    expect_after_optional_pager(child, "Save JSON export to offline path")
+    child.sendline("N")
+    child.expect("Selection:")
     child.send("A")
     child.expect("MCI Preferences")
     child.send("P")
@@ -606,7 +680,31 @@ def run_regular_user_deep(child: pexpect.spawn) -> None:
     child.send("S")
     child.expect("Preferences saved. Press any key.")
     child.send("x")
-    child.expect("Enter selection:")
+    expect_main_menu_ready(child)
+
+    # Quick-jump parity and terminal resize/redraw.
+    quick_jump(child, "collections", "Featured Collections")
+    child.sendline("Q")
+    expect_main_menu_ready(child)
+    quick_jump(child, "offline", "Offline Center")
+    child.send("Q")
+    expect_main_menu_ready(child)
+    quick_jump(child, "showcase", "Product Showcase")
+    child.send("x")
+    expect_main_menu_ready(child)
+    child.setwinsize(18, 34)
+    time.sleep(0.2)
+    child.send("?")
+    child.expect("Main Menu Key Guide")
+    child.send("x")
+    expect_main_menu_ready(child)
+    child.send("Y")
+    child.expect("Status Center")
+    child.send("J")
+    expect_after_optional_pager(child, '"area"')
+    exit_optional_pager(child, "Selection:")
+    child.send("Q")
+    expect_main_menu_ready(child)
 
 
 def run_regular_user_flow(
@@ -645,10 +743,32 @@ def run_admin_flow(port: int, *, term_name: str, cols: int, rows: int) -> None:
         )
         if idx == 2:
             child.send("x")
-            child.expect("Enter selection:")
+            expect_main_menu_ready(child)
         else:
+            for key, ready_pattern, exit_action in [
+                ("C", "Command:", "BACK\n"),
+                ("D", "Command:", "BACK\n"),
+                ("E", "Command:", "BACK\n"),
+                ("F", "Command:", "BACK\n"),
+                ("G", "Command:", "BACK\n"),
+                ("H", "Command:", "BACK\n"),
+                ("I", "Command:", "BACK\n"),
+                ("J", "Command:", "BACK\n"),
+                ("L", "Press any key.", "x"),
+                ("O", "Command:", "BACK\n"),
+                ("R", "Selection:", "Q"),
+                ("U", "Command:", "BACK\n"),
+                ("B", "Command:", "BACK\n"),
+                ("M", "Command:", "BACK\n"),
+                ("A", "Press any key.", "x"),
+                ("N", "Press any key.", "x"),
+            ]:
+                child.send(key)
+                child.expect(ready_pattern)
+                child.send(exit_action)
+                child.expect("Admin Control Deck")
             child.send("Q")
-            child.expect("Enter selection:")
+            expect_main_menu_ready(child)
         child.send("Q")
         child.expect(pexpect.EOF)
     finally:

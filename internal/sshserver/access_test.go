@@ -53,11 +53,11 @@ func TestQuickJumpToAction(t *testing.T) {
 	if got := quickJumpToAction("circles"); got != "settings.open" {
 		t.Fatalf("expected settings.open for circles alias, got %q", got)
 	}
-	if got := quickJumpToAction("collections"); got != "files.open" {
-		t.Fatalf("expected files.open for collections alias, got %q", got)
+	if got := quickJumpToAction("collections"); got != "files.collections" {
+		t.Fatalf("expected files.collections for collections alias, got %q", got)
 	}
-	if got := quickJumpToAction("offline"); got != "files.open" {
-		t.Fatalf("expected files.open for offline alias, got %q", got)
+	if got := quickJumpToAction("offline"); got != "files.offline" {
+		t.Fatalf("expected files.offline for offline alias, got %q", got)
 	}
 	if got := quickJumpToAction("statusz"); got != "system.status_center" {
 		t.Fatalf("expected system.status_center for statusz alias, got %q", got)

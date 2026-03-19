@@ -102,15 +102,33 @@ def expect(client: IRCClient, needle: str, timeout: float, message: str, clients
 
 
 def auth_register(client: IRCClient, handle: str, password: str) -> None:
-	client.send(f"PASS {password}")
-	client.send(f"NICK {handle}")
-	client.send(f"USER {handle} 0 * :{handle}")
+    client.send(f"PASS {password}")
+    client.send(f"NICK {handle}")
+    client.send(f"USER {handle} 0 * :{handle}")
 
 
 def send_paced(client: IRCClient, line: str, delay: float = PACE_SECONDS) -> None:
     client.send(line)
     if delay > 0:
         time.sleep(delay)
+
+
+def auth_and_join(client: IRCClient, handle: str, password: str, channel: str, clients: List[IRCClient]) -> int:
+    auth_register(client, handle, password)
+    if expect(client, " 001 ", 5.0, f"missing 001 welcome numeric for {handle}", clients):
+        return 1
+    if expect(client, " 376 ", 5.0, f"missing 376 end-of-motd numeric for {handle}", clients):
+        return 1
+    return join_channel(client, channel, handle, clients)
+
+
+def join_channel(client: IRCClient, channel: str, label: str, clients: List[IRCClient]) -> int:
+    send_paced(client, f"JOIN {channel}")
+    if expect(client, " 353 ", 5.0, f"missing 353 names reply after JOIN for {label}", clients):
+        return 1
+    if expect(client, " 366 ", 5.0, f"missing 366 end-of-names after JOIN for {label}", clients):
+        return 1
+    return 0
 
 
 def run_basic_auth_matrix(host: str, port: int, auth_user: str, auth_pass: str) -> int:
@@ -265,16 +283,90 @@ def run_sasl_matrix(host: str, port: int, auth_user: str, auth_pass: str) -> int
     return 0
 
 
+def run_multi_client_matrix(
+    host: str,
+    port: int,
+    auth_user: str,
+    auth_pass: str,
+    auth_user2: str,
+    auth_pass2: str,
+) -> int:
+    if POST_FLOOD_COOLDOWN_SECONDS > 0:
+        time.sleep(POST_FLOOD_COOLDOWN_SECONDS)
+    clients: List[IRCClient] = []
+    channel = "#lobby"
+    try:
+        primary = IRCClient(host, port)
+        secondary = IRCClient(host, port)
+        clients.extend([primary, secondary])
+    except OSError as exc:
+        return fail(f"could not connect for multi-client matrix ({exc})", clients)
+
+    try:
+        if auth_and_join(primary, auth_user, auth_pass, channel, clients):
+            return 1
+        if auth_and_join(secondary, auth_user2, auth_pass2, channel, clients):
+            return 1
+
+        marker = f"cross-client-{now_utc_suffix()}"
+        send_paced(primary, f"PRIVMSG {channel} :{marker}")
+        if expect(secondary, f"PRIVMSG {channel} :{marker}", 5.0, "secondary client did not receive cross-client PRIVMSG", clients):
+            return 1
+
+        notice_marker = f"direct-notice-{now_utc_suffix()}"
+        send_paced(primary, f"NOTICE {auth_user2} :{notice_marker}")
+        if expect(secondary, f"NOTICE {auth_user2} :{notice_marker}", 5.0, "secondary client did not receive direct NOTICE", clients):
+            return 1
+
+        dm_marker = f"direct-privmsg-{now_utc_suffix()}"
+        send_paced(secondary, f"PRIVMSG {auth_user} :{dm_marker}")
+        if expect(primary, f"PRIVMSG {auth_user} :{dm_marker}", 5.0, "primary client did not receive direct PRIVMSG", clients):
+            return 1
+
+        send_paced(secondary, f"PART {channel}")
+        if expect(primary, f" PART {channel} ", 5.0, "primary client did not observe secondary PART", clients):
+            return 1
+        if join_channel(secondary, channel, auth_user2, clients):
+            return 1
+
+        send_paced(primary, f"KICK {channel} {auth_user2}")
+        kick_line = primary.wait_contains(f"KICK {channel} {auth_user2}", timeout=5.0)
+        if kick_line is None:
+            return fail("operator KICK did not echo to primary client", clients)
+        if expect(secondary, f"KICK {channel} {auth_user2}", 5.0, "secondary client did not receive KICK", clients):
+            return 1
+
+        if join_channel(secondary, channel, auth_user2, clients):
+            return 1
+    finally:
+        for client in clients:
+            client.close()
+    return 0
+
+
 def main() -> int:
     host = os.environ.get("IRC_HOST", "127.0.0.1")
     port = int(os.environ.get("IRC_PORT", "6667"))
     auth_user = os.environ.get("IRC_TEST_USER", "sysop")
     auth_pass = os.environ.get("IRC_TEST_PASS", "password123")
+    auth_user2 = (
+        os.environ.get("IRC_TEST_USER2")
+        or os.environ.get("WOLFBBS_BOOTSTRAP_USER_HANDLE")
+        or "caller"
+    )
+    auth_pass2 = (
+        os.environ.get("IRC_TEST_PASS2")
+        or os.environ.get("WOLFBBS_BOOTSTRAP_USER_PASSWORD")
+        or "password123"
+    )
 
     rc = run_basic_auth_matrix(host, port, auth_user, auth_pass)
     if rc != 0:
         return rc
     rc = run_sasl_matrix(host, port, auth_user, auth_pass)
+    if rc != 0:
+        return rc
+    rc = run_multi_client_matrix(host, port, auth_user, auth_pass, auth_user2, auth_pass2)
     if rc != 0:
         return rc
 

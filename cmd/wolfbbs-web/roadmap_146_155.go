@@ -125,14 +125,16 @@ type webhookDeliveryLog struct {
 }
 
 type analyticsWindow struct {
-	Label            string
-	Days             int
-	BoardPosts       int
-	ChatMessages     int
-	DoorRuns         int
-	EventCheckins    int
-	ActiveCallers    int
-	ReturningCallers int
+	Label                string
+	Days                 int
+	BoardPosts           int
+	ChatMessages         int
+	DoorRuns             int
+	EventCheckins        int
+	ActiveCallers        int
+	ReturningCallers     int
+	FirstCallCompletions int
+	FeedbackItems        int
 }
 
 type callerActivity struct {
@@ -1385,6 +1387,19 @@ func (a *webApp) collectWindowActivity(windowDays int) analyticsWindow {
 			ensureDay(handle, at.UTC().Format("2006-01-02"))
 		}
 	}
+	for _, row := range a.loadOperatorInsightEvents() {
+		if row.At.Before(since) {
+			continue
+		}
+		switch row.Kind {
+		case "first_call.complete":
+			out.FirstCallCompletions++
+			ensureDay(row.Handle, row.At.UTC().Format("2006-01-02"))
+		case "feedback.sent":
+			out.FeedbackItems++
+			ensureDay(row.Handle, row.At.UTC().Format("2006-01-02"))
+		}
+	}
 	out.ActiveCallers = len(active)
 	for _, days := range active {
 		if len(days) >= 2 {
@@ -1412,6 +1427,12 @@ func buildAnalyticsRecommendations(daily, weekly, monthly analyticsWindow) []str
 	if weekly.EventCheckins == 0 {
 		out = append(out, "No event check-ins recorded this week. Promote recurring events and make check-in visible in announcements.")
 	}
+	if weekly.FirstCallCompletions == 0 {
+		out = append(out, "No first-call completions landed this week. Run a real new-user path and tighten onboarding before you chase more traffic.")
+	}
+	if weekly.FeedbackItems == 0 {
+		out = append(out, "No feedback reached the sysop inbox this week. Add a visible ask on /today or /showcase so callers know where to send friction notes.")
+	}
 	if len(out) == 0 {
 		out = append(out, "Engagement profile is balanced. Keep cadence with weekly events, spotlights, and release notes.")
 	}
@@ -1437,15 +1458,15 @@ func (a *webApp) handleAdminAnalytics(w http.ResponseWriter, r *http.Request) {
 		recoRows.WriteString(`<li>` + htmlEscape(row) + `</li>`)
 	}
 	windowRows := func(row analyticsWindow) string {
-		return `<tr><td>` + htmlEscape(row.Label) + `</td><td>` + strconv.Itoa(row.ActiveCallers) + `</td><td>` + strconv.Itoa(row.ReturningCallers) + `</td><td>` + strconv.Itoa(row.BoardPosts) + `</td><td>` + strconv.Itoa(row.ChatMessages) + `</td><td>` + strconv.Itoa(row.DoorRuns) + `</td><td>` + strconv.Itoa(row.EventCheckins) + `</td></tr>`
+		return `<tr><td>` + htmlEscape(row.Label) + `</td><td>` + strconv.Itoa(row.ActiveCallers) + `</td><td>` + strconv.Itoa(row.ReturningCallers) + `</td><td>` + strconv.Itoa(row.BoardPosts) + `</td><td>` + strconv.Itoa(row.ChatMessages) + `</td><td>` + strconv.Itoa(row.DoorRuns) + `</td><td>` + strconv.Itoa(row.EventCheckins) + `</td><td>` + strconv.Itoa(row.FirstCallCompletions) + `</td><td>` + strconv.Itoa(row.FeedbackItems) + `</td></tr>`
 	}
 	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Product Analytics Summary</title></head><body>
 <p><a href="/admin">admin</a> | <a href="/admin/analytics">analytics</a> | <a href="/admin/challenges">challenges</a> | <a href="/admin/missions">missions</a> | <a href="/admin/release">release</a></p>
 ` + pageMessageBlock(r) + `
 <h1>Embedded Product Analytics</h1>
-<p>Roadmap 149: bounded daily/weekly/monthly KPI summaries for boards/chat/doors/events with no new PII exposure.</p>
-<section class="wolfbbs-kpi-grid"><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(monthly.ActiveCallers) + `</strong><span>monthly active callers</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(weekly.ReturningCallers) + `</strong><span>weekly returners</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(weekly.BoardPosts+weekly.ChatMessages+weekly.DoorRuns) + `</strong><span>weekly core actions</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(weekly.EventCheckins) + `</strong><span>weekly event check-ins</span></article></section>
-<table border="1"><tr><th>Window</th><th>Active callers</th><th>Returning callers</th><th>Board posts</th><th>Chat messages</th><th>Door runs</th><th>Event check-ins</th></tr>` + windowRows(daily) + windowRows(weekly) + windowRows(monthly) + `</table>
+<p>Roadmap 149: bounded daily/weekly/monthly KPI summaries for boards/chat/doors/events plus onboarding and feedback loops, with no new PII exposure.</p>
+<section class="wolfbbs-kpi-grid"><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(monthly.ActiveCallers) + `</strong><span>monthly active callers</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(weekly.ReturningCallers) + `</strong><span>weekly returners</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(weekly.BoardPosts+weekly.ChatMessages+weekly.DoorRuns) + `</strong><span>weekly core actions</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(weekly.EventCheckins) + `</strong><span>weekly event check-ins</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(weekly.FirstCallCompletions) + `</strong><span>weekly first-call completes</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(weekly.FeedbackItems) + `</strong><span>weekly feedback items</span></article></section>
+<table border="1"><tr><th>Window</th><th>Active callers</th><th>Returning callers</th><th>Board posts</th><th>Chat messages</th><th>Door runs</th><th>Event check-ins</th><th>First-call completes</th><th>Feedback items</th></tr>` + windowRows(daily) + windowRows(weekly) + windowRows(monthly) + `</table>
 <h2>Recommendations</h2><ul>` + recoRows.String() + `</ul>
 </body></html>`
 	w.WriteHeader(http.StatusOK)

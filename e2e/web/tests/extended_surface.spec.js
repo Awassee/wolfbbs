@@ -160,7 +160,9 @@ test("extended admin routes and setup actions stay functional", async ({ browser
   await createUserForm.locator('input[name="password"]').fill(uiPassword);
   await createUserForm.locator('select[name="role"]').selectOption("user");
   await createUserForm.getByRole("button", { name: "Create" }).click();
-  await expect(adminPage.locator("body")).toContainText(`created user ${uiHandle}`);
+  await expect(adminPage.locator("body")).toContainText(`Created user ${uiHandle}.`);
+  await expect(adminPage.locator("body")).toContainText("One-time credential receipts");
+  await expect(adminPage.locator("body")).toContainText(uiPassword);
 
   await gotoHealthy(adminPage, "/admin/mentorship", /Mentorship Pairing Admin/i);
   await adminPage.fill('input[name="mentee"]', uiHandle);
