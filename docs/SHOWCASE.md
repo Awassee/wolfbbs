@@ -2,6 +2,12 @@
 
 Use this page for a quick product walk-through when introducing WolfBBS on GitHub, social posts, or release notes.
 
+Launch links:
+- [Install Guide](INSTALL.md)
+- [Start Here](START_HERE.md)
+- [Documentation Hub](README.md)
+- [GitHub Releases](https://github.com/Awassee/wolfbbs/releases)
+
 ## Product Description
 
 WolfBBS is a self-hosted community platform that blends a classic ANSI BBS experience with modern browser and operations tooling.

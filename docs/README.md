@@ -2,6 +2,14 @@
 
 This directory is organized for three common audiences: operators, contributors, and evaluators.
 
+## Most-Used Pages
+
+- [START_HERE.md](START_HERE.md): fastest path from install to usable system
+- [INSTALL.md](INSTALL.md): installer modes, upgrade, uninstall, troubleshooting flags
+- [SHOWCASE.md](SHOWCASE.md): product tour for GitHub visitors and release notes
+- [ACCEPTANCE_SPEC.md](ACCEPTANCE_SPEC.md): acceptance contract and MUST checks
+- [manual-acceptance-latest.md](manual-acceptance-latest.md): latest acceptance run report
+
 ## Start Here
 
 - [START_HERE.md](START_HERE.md): shortest path from install to a working board
