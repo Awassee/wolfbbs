@@ -184,7 +184,8 @@ commit_if_needed() {
   if [[ -z "$(git status --short)" ]]; then
     return
   fi
-  git add README.md docs/DATASHEET.md docs/INSTALL.md docs/README.md docs/SHOWCASE.md docs/START_HERE.md docs/releases/README.md "$NOTES_FILE" "dist/${VERSION}"
+  git add README.md docs/DATASHEET.md docs/INSTALL.md docs/README.md docs/SHOWCASE.md docs/START_HERE.md docs/releases/README.md "$NOTES_FILE"
+  git add -f "dist/${VERSION}"
   if [[ -n "$(git diff --cached --name-only)" ]]; then
     git commit -m "Ship ${VERSION}"
   fi

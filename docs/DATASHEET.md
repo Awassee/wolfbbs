@@ -7,7 +7,7 @@ WolfBBS is a self-hosted, SSH-first BBS platform that combines classic ANSI call
 | Attribute | Value |
 | --- | --- |
 | Product category | Self-hosted BBS / community platform |
-| Release target | `v1.1.21` (current public distro tag) |
+| Release target | `v1.1.22` (current public distro tag) |
 | Primary UX | SSH ANSI/TUI caller experience |
 | Secondary UX | Web companion for callers and operators |
 | Additional protocol | IRC bridge with shared chat layer |

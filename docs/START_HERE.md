@@ -2,7 +2,7 @@
 
 This is the shortest practical path from install to a usable WolfBBS board.
 
-Release baseline: `v1.1.21` (current public distro target).
+Release baseline: `v1.1.22` (current public distro target).
 
 ## Goal
 

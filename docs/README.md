@@ -10,7 +10,7 @@ This directory is organized for three common audiences: operators, contributors,
 - [SHOWCASE.md](SHOWCASE.md): product tour for GitHub visitors and release notes
 - [ACCEPTANCE_SPEC.md](ACCEPTANCE_SPEC.md): acceptance contract and MUST checks
 - [manual-acceptance-latest.md](manual-acceptance-latest.md): latest acceptance run report
-- [releases/v1.1.21.md](releases/v1.1.21.md): current distro release notes
+- [releases/v1.1.22.md](releases/v1.1.22.md): current distro release notes
 
 ## Start Here
 

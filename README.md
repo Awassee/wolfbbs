@@ -13,7 +13,7 @@ WolfBBS gives you classic BBS texture with a modern operator control plane and t
 
 Quick links:
 - [Install now](#quick-install-linux)
-- [Release v1.1.21 notes](docs/releases/v1.1.21.md)
+- [Release v1.1.22 notes](docs/releases/v1.1.22.md)
 - [Screenshot showcase](docs/SHOWCASE.md)
 - [Feature datasheet](docs/DATASHEET.md)
 - [First 30 minutes as sysop](docs/FIRST_30_MINUTES.md)
@@ -25,10 +25,10 @@ Quick links:
 
 ## Current Release Status
 
-WolfBBS is currently prepared for a `v1.1.21` distribution release with:
+WolfBBS is currently prepared for a `v1.1.22` distribution release with:
 
-- clean package generation via `scripts/package-dist.sh --clean --version v1.1.21`
-- checksum + manifest output per bundle under `dist/v1.1.21/`
+- clean package generation via `scripts/package-dist.sh --clean --version v1.1.22`
+- checksum + manifest output per bundle under `dist/v1.1.22/`
 - full acceptance validation (`go test`, verifier fast/smoke, automated manual acceptance)
 - updated GitHub-facing product pages (`README`, `docs/SHOWCASE.md`, `docs/DATASHEET.md`, `docs/PRODUCT_GUIDE.md`)
 
@@ -184,10 +184,10 @@ cd wolfbbs_<version>_<os>_<arch>
 bash install.sh --yes
 ```
 
-Build clean `v1.1.21` distro bundles locally:
+Build clean `v1.1.22` distro bundles locally:
 
 ```bash
-scripts/package-dist.sh --clean --version v1.1.21 \
+scripts/package-dist.sh --clean --version v1.1.22 \
   --platform linux/amd64 --platform linux/arm64 \
   --platform darwin/amd64 --platform darwin/arm64
 ```
