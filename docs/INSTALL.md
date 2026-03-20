@@ -133,10 +133,10 @@ If HTTPS clone is blocked in your environment, use SSH clone instead:
 git clone git@github.com:Awassee/wolfbbs.git wolfbbs && cd wolfbbs && bash install.sh --yes
 ```
 
-Build clean distro artifacts for `v1.1.24`:
+Build clean distro artifacts for `v1.1.25`:
 
 ```bash
-scripts/package-dist.sh --clean --version v1.1.24 \
+scripts/package-dist.sh --clean --version v1.1.25 \
   --platform linux/amd64 --platform linux/arm64 \
   --platform darwin/amd64 --platform darwin/arm64
 ```
@@ -226,9 +226,9 @@ Use this sequence:
 | uninstall services but keep files | `bash install.sh --uninstall --purge --yes` |
 | fully reset install for retesting | `bash install.sh --clean-uninstall --yes` |
 
-## Release v1.1.24 Surface Set
+## Release v1.1.25 Surface Set
 
-These operator surfaces are part of the `v1.1.24` distro baseline:
+These operator surfaces are part of the `v1.1.25` distro baseline:
 
 - `/admin/events`: schedule events and post event recaps.
 - `/events/recaps`: public recap feed with attendance outcomes.

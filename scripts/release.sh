@@ -191,14 +191,16 @@ run_verify() {
 }
 
 package_release() {
-  local selected_platforms=("${PLATFORMS[@]-}")
-  if [[ ${#selected_platforms[@]} -eq 0 ]]; then
+  local selected_platforms=()
+  if [[ ${#PLATFORMS[@]} -eq 0 ]]; then
     selected_platforms=(
       "linux/amd64"
       "linux/arm64"
       "darwin/amd64"
       "darwin/arm64"
     )
+  else
+    selected_platforms=("${PLATFORMS[@]}")
   fi
   local cmd=(scripts/package-dist.sh --clean --version "$VERSION")
   local platform=""
@@ -227,8 +229,8 @@ publish_git() {
   fi
   commit_if_needed
   git tag "$VERSION"
-  git push "$REMOTE" HEAD
-  git push "$REMOTE" "$VERSION"
+  git -c http.version=HTTP/1.1 -c http.postBuffer=524288000 push "$REMOTE" HEAD
+  git -c http.version=HTTP/1.1 -c http.postBuffer=524288000 push "$REMOTE" "$VERSION"
 }
 
 publish_github_release() {

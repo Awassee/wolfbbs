@@ -2,7 +2,7 @@
 
 This is the shortest practical path from install to a usable WolfBBS board.
 
-Release baseline: `v1.1.24` (current public release).
+Release baseline: `v1.1.25` (current public release).
 
 ## Goal
 
