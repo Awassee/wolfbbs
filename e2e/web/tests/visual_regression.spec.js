@@ -72,7 +72,10 @@ test.describe("secondary route visual regression", () => {
       // Dense caller chrome and live board counters create small rendering jitter between runs.
       maxDiffPixels: 4000,
     });
-    await expectRouteScreenshot(page, "/doors", /Door/i, "caller-doors.png");
+    await expectRouteScreenshot(page, "/doors", /Door/i, "caller-doors.png", {
+      // The doors grid has a small amount of browser/font jitter on CI macOS runners.
+      maxDiffPixels: 1800,
+    });
 
     await context.close();
   });
