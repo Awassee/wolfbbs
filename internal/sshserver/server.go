@@ -193,8 +193,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 	th := ui.DefaultTheme()
 	state := stateWelcome
 	termProfile := term.DetectProfile(pty.Term, os.Getenv("LANG"), strings.TrimSpace(os.Getenv("WOLFBBS_TERM_ENCODING")), termWidth, h, true)
-	sessionANSI := true
-	sessionEncoding := string(termProfile.Encoding)
+	sessionANSI, sessionEncoding := resolveSessionOutput(termProfile, true)
 	sessionTime24h := true
 	currentUser := "Guest"
 	currentAccount := &domain.User{Handle: "Guest", Role: "user", ANSIEnabled: true, TimeFormat24h: true, Theme: "retro-amber"}
@@ -347,7 +346,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 			writeClear(sess, sessionANSI)
 			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName(), currentUser, time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
 			io.WriteString(sess, "\r\n")
-			renderFrame(sess, termWidth, renderWidth, ui.RenderWelcome(renderWidth), sessionANSI, sessionEncoding)
+			renderFrame(sess, termWidth, renderWidth, ui.RenderWelcomeForProfile(renderWidth, termProfile.CompactUI, term.ProfileHints(termProfile)), sessionANSI, sessionEncoding)
 			io.WriteString(sess, ui.FooterPrompt(renderWidth, "Press any key to continue")+"\r\n")
 			if key, err := readKey(reader); err == nil {
 				touch()
@@ -364,7 +363,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 			touch()
 			writeClear(sess, sessionANSI)
 			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName(), "Guest", time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
-			renderFrame(sess, termWidth, renderWidth, ui.RenderLoginPromptWithGuest(renderWidth, s.guestTourEnabled())+"\r\n", sessionANSI, sessionEncoding)
+			renderFrame(sess, termWidth, renderWidth, ui.RenderLoginPromptProfile(renderWidth, s.guestTourEnabled(), termProfile.CompactUI)+"\r\n", sessionANSI, sessionEncoding)
 			io.WriteString(sess, "Handle: ")
 			handle, err := readLine(reader, 32)
 			if err != nil {
@@ -460,16 +459,11 @@ func (s *Server) handleSession(sess gssh.Session) {
 
 			currentUser = user.Handle
 			currentAccount = user
-			sessionANSI = user.ANSIEnabled
+			sessionANSI, sessionEncoding = resolveSessionOutput(termProfile, user.ANSIEnabled)
 			sessionTime24h = user.TimeFormat24h
 			th = ui.ThemeByName(user.Theme)
 			s.nodes.SetUser(sessionID, currentUser)
 			persistNode(true)
-			if !sessionANSI {
-				sessionEncoding = string(term.EncodingASCII)
-			} else {
-				sessionEncoding = string(termProfile.Encoding)
-			}
 			s.logger.Info("user authenticated", "user", currentUser, "session_id", sessionID, "node", nodeID, "remote_host", remoteHost, "remote_origin", remoteOrigin)
 			recordAudit(s.admin, currentUser, nodeLabel, "session_login",
 				fmt.Sprintf("origin=%s host=%s transport=ssh", strings.ToUpper(remoteOrigin), remoteHost))
@@ -709,14 +703,9 @@ func (s *Server) handleSession(sess gssh.Session) {
 					}
 					if updated != nil {
 						currentAccount = updated
-						sessionANSI = updated.ANSIEnabled
+						sessionANSI, sessionEncoding = resolveSessionOutput(termProfile, updated.ANSIEnabled)
 						sessionTime24h = updated.TimeFormat24h
 						th = ui.ThemeByName(updated.Theme)
-						if !sessionANSI {
-							sessionEncoding = string(term.EncodingASCII)
-						} else {
-							sessionEncoding = string(termProfile.Encoding)
-						}
 					}
 				case "admin.open":
 					if !evaluateAccess("role=sysop", currentAccount, currentUser, map[string]string{"area": "admin"}, acsStrict, s.logger) {
@@ -757,14 +746,9 @@ func (s *Server) handleSession(sess gssh.Session) {
 				}
 				if updated != nil {
 					currentAccount = updated
-					sessionANSI = updated.ANSIEnabled
+					sessionANSI, sessionEncoding = resolveSessionOutput(termProfile, updated.ANSIEnabled)
 					sessionTime24h = updated.TimeFormat24h
 					th = ui.ThemeByName(updated.Theme)
-					if !sessionANSI {
-						sessionEncoding = string(term.EncodingASCII)
-					} else {
-						sessionEncoding = string(termProfile.Encoding)
-					}
 				}
 			case "admin.open":
 				if !evaluateAccess("role=sysop", currentAccount, currentUser, map[string]string{"area": "admin"}, acsStrict, s.logger) {
@@ -1472,6 +1456,8 @@ func (s *Server) handleSession(sess gssh.Session) {
 			cfgLines := []string{
 				fmt.Sprintf("Theme: %s", currentAccount.Theme),
 				fmt.Sprintf("ANSI enabled: %s", boolText(currentAccount.ANSIEnabled)),
+				fmt.Sprintf("Session ANSI: %s", boolText(sessionANSI)),
+				fmt.Sprintf("Session encoding: %s", sessionEncoding),
 				fmt.Sprintf("Paging enabled: %s", boolText(currentAccount.PagingEnabled)),
 				fmt.Sprintf("24h clock: %s", boolText(currentAccount.TimeFormat24h)),
 				fmt.Sprintf("ACS strict: %s", boolText(s.flagFromConfig("runtime.acs.strict", "WOLFBBS_ACS_STRICT", false))),
@@ -1484,9 +1470,13 @@ func (s *Server) handleSession(sess gssh.Session) {
 				fmt.Sprintf("WebSocket login: %s (%s%s)", boolText(s.flagFromConfig("runtime.login.ws.enabled", "WOLFBBS_WS_ENABLE", false)), s.textFromConfig("runtime.login.ws.listen", "WOLFBBS_WS_LISTEN", ":6080"), s.textFromConfig("runtime.login.ws.path", "WOLFBBS_WS_PATH", "/ws-login")),
 				fmt.Sprintf("WebSocket TLS: %s (%s%s)", boolText(s.flagFromConfig("runtime.login.wss.enabled", "WOLFBBS_WSS_ENABLE", false)), s.textFromConfig("runtime.login.wss.listen", "WOLFBBS_WSS_LISTEN", ":6443"), s.textFromConfig("runtime.login.wss.path", "WOLFBBS_WSS_PATH", "/ws-login")),
 				"",
+			}
+			cfgLines = append(cfgLines, sessionProfileStatusLines(termProfile, sessionANSI, sessionEncoding)...)
+			cfgLines = append(cfgLines,
+				"",
 				"User preferences: press S at main menu for Settings.",
 				"Sysop runtime flags: /admin/config on web panel.",
-			}
+			)
 			renderFrame(sess, termWidth, renderWidth, ui.RenderConfigCenter(renderWidth, cfgLines), sessionANSI, sessionEncoding)
 			_, _ = readKey(reader)
 			touch()
@@ -1510,6 +1500,9 @@ func (s *Server) handleSession(sess gssh.Session) {
 					fmt.Sprintf("Remote host: %s", remoteHost),
 					fmt.Sprintf("Role: %s", currentAccount.Role),
 					fmt.Sprintf("Current area: %s", currentArea),
+				}
+				statusLines = append(statusLines, sessionProfileStatusLines(termProfile, sessionANSI, sessionEncoding)...)
+				statusLines = append(statusLines,
 					fmt.Sprintf("Boards backend ready: %s", boolText(s.boards != nil && s.msgs != nil)),
 					fmt.Sprintf("Mail backend ready: %s", boolText(s.mail != nil)),
 					fmt.Sprintf("Chat backend ready: %s", boolText(s.chatSvc != nil)),
@@ -1526,7 +1519,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 					fmt.Sprintf("WebSocket TLS enabled: %s", boolText(s.flagFromConfig("runtime.login.wss.enabled", "WOLFBBS_WSS_ENABLE", false))),
 					"",
 					"Commands: [J] status JSON (/statusz parity), [R]efresh, [Q] return",
-				}
+				)
 				writeClear(sess, sessionANSI)
 				renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "Status Center", currentUser, time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
 				renderFrame(sess, termWidth, renderWidth, ui.RenderStatusCenter(renderWidth, statusLines), sessionANSI, sessionEncoding)
@@ -1549,6 +1542,16 @@ func (s *Server) handleSession(sess gssh.Session) {
 						"remote_origin": strings.ToUpper(remoteOrigin),
 						"remote_host":   remoteHost,
 						"area":          currentArea,
+						"terminal": map[string]interface{}{
+							"type":     strings.TrimSpace(termProfile.TermName),
+							"width":    termProfile.Width,
+							"height":   termProfile.Height,
+							"compact":  termProfile.CompactUI,
+							"degraded": termProfile.Degraded,
+							"ansi":     sessionANSI,
+							"encoding": sessionEncoding,
+							"hints":    term.ProfileHints(termProfile),
+						},
 						"services": map[string]bool{
 							"boards": s.boards != nil && s.msgs != nil,
 							"mail":   s.mail != nil,

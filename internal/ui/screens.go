@@ -77,7 +77,35 @@ func RenderTopBarWithClock(width int, boardName, user string, now time.Time, nod
 }
 
 func RenderWelcome(width int) string {
+	return RenderWelcomeForProfile(width, false, nil)
+}
+
+func RenderWelcomeForProfile(width int, compact bool, hints []string) string {
 	width = normalizeScreenWidth(width)
+	if compact {
+		lines := []string{
+			"wolfbbs (c) 2026",
+			"Compact session profile active.",
+			"Using shorter, safer output for this terminal.",
+		}
+		for _, hint := range hints {
+			trimmed := strings.TrimSpace(hint)
+			if trimmed == "" {
+				continue
+			}
+			lines = append(lines, "- "+trimmed)
+		}
+		lines = append(lines, "Press ESC to quit, any other key to continue.")
+		panel := renderPanel(width, "WolfBBS Welcome", lines, FgYellow)
+		var b strings.Builder
+		for _, line := range strings.Split(strings.TrimSuffix(panel, "\r\n"), "\r\n") {
+			b.WriteString(FgYellow)
+			b.WriteString(line)
+			b.WriteString(Reset)
+			b.WriteString("\r\n")
+		}
+		return b.String()
+	}
 	lines := append([]string{}, welcomeWolfArt(width)...)
 	lines = append(lines,
 		"",
@@ -231,16 +259,33 @@ func RenderLoginPrompt(width int) string {
 }
 
 func RenderLoginPromptWithGuest(width int, guestTour bool) string {
+	return RenderLoginPromptProfile(width, guestTour, false)
+}
+
+func RenderLoginPromptProfile(width int, guestTour, compact bool) string {
 	lines := []string{
 		"Enter handle and password to continue.",
 		"Unknown handle may create a new account after login attempt.",
 		"Passwords are never stored in plaintext.",
 	}
+	if compact {
+		lines = []string{
+			"Compact session mode keeps screens shorter on this terminal.",
+			"Enter handle and password to continue.",
+		}
+	}
 	if guestTour {
-		lines = append([]string{
+		lead := []string{
 			"Enter handle and password to continue.",
 			"Type GUEST for a read-only guided tour.",
-		}, lines[1:]...)
+		}
+		if compact {
+			lead = []string{
+				"Compact session mode keeps screens shorter on this terminal.",
+				"Type GUEST for a read-only guided tour.",
+			}
+		}
+		lines = append(lead, lines[1:]...)
 	}
 	lines = append(lines, "Type RESET for password reset.", "Type ? for login help.")
 	return renderPanel(width, "Login", lines, FgGreen) + "\r\n"

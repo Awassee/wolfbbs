@@ -11,17 +11,24 @@ const (
 )
 
 type Profile struct {
-	TermName string
-	Width    int
-	Height   int
-	ANSI     bool
-	Encoding Encoding
-	SyncTERM bool
+	TermName  string
+	Width     int
+	Height    int
+	ANSI      bool
+	Encoding  Encoding
+	SyncTERM  bool
+	Narrow    bool
+	LowHeight bool
+	CompactUI bool
+	Degraded  bool
 }
 
 func DetectProfile(termName, locale, explicitEncoding string, width, height int, ansi bool) Profile {
 	termName = strings.ToLower(strings.TrimSpace(termName))
 	locale = strings.ToLower(strings.TrimSpace(locale))
+	if isPlainTerminal(termName) {
+		ansi = false
+	}
 	explicit := parseEncoding(explicitEncoding)
 	encoding := explicit
 	if encoding == "" {
@@ -33,14 +40,41 @@ func DetectProfile(termName, locale, explicitEncoding string, width, height int,
 	if !ansi && encoding != EncodingASCII {
 		encoding = EncodingASCII
 	}
+	narrow := width > 0 && width < 56
+	lowHeight := height > 0 && height < 22
+	degraded := isPlainTerminal(termName) || !ansi || (width > 0 && width < 40) || (height > 0 && height < 18)
 	return Profile{
-		TermName: termName,
-		Width:    width,
-		Height:   height,
-		ANSI:     ansi,
-		Encoding: encoding,
-		SyncTERM: strings.Contains(termName, "syncterm"),
+		TermName:  termName,
+		Width:     width,
+		Height:    height,
+		ANSI:      ansi,
+		Encoding:  encoding,
+		SyncTERM:  strings.Contains(termName, "syncterm"),
+		Narrow:    narrow,
+		LowHeight: lowHeight,
+		CompactUI: degraded || narrow || lowHeight,
+		Degraded:  degraded,
 	}
+}
+
+func ProfileHints(p Profile) []string {
+	out := make([]string, 0, 4)
+	if isPlainTerminal(p.TermName) {
+		out = append(out, "Plain terminal fallback active.")
+	}
+	if !p.ANSI {
+		out = append(out, "ANSI color is disabled for this client.")
+	}
+	if p.Narrow {
+		out = append(out, "Compact layout enabled for narrow width.")
+	}
+	if p.LowHeight {
+		out = append(out, "Short-page mode enabled for low terminal height.")
+	}
+	if len(out) == 0 && p.CompactUI {
+		out = append(out, "Compact layout enabled for this session.")
+	}
+	return out
 }
 
 func parseEncoding(value string) Encoding {
@@ -74,4 +108,13 @@ func detectEncoding(termName, locale string) Encoding {
 
 func SupportsUnicode(p Profile) bool {
 	return p.ANSI && p.Encoding == EncodingUTF8
+}
+
+func isPlainTerminal(termName string) bool {
+	switch strings.ToLower(strings.TrimSpace(termName)) {
+	case "", "dumb", "unknown":
+		return true
+	default:
+		return false
+	}
 }

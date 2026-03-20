@@ -206,6 +206,22 @@ func TestRenderLoginPromptWithGuestToggle(t *testing.T) {
 	}
 }
 
+func TestRenderCompactWelcomeAndLoginPrompt(t *testing.T) {
+	welcome := RenderWelcomeForProfile(72, true, []string{"Plain terminal fallback active.", "Short-page mode enabled for low terminal height."})
+	for _, want := range []string{"Compact session profile active.", "Plain terminal fallback active.", "Short-page mode enabled for low terminal height."} {
+		if !strings.Contains(welcome, want) {
+			t.Fatalf("compact welcome missing %q", want)
+		}
+	}
+
+	login := RenderLoginPromptProfile(72, true, true)
+	for _, want := range []string{"Compact session mode keeps screens shorter on this terminal.", "Type GUEST for a read-only guided tour.", "Type RESET for password reset."} {
+		if !strings.Contains(login, want) {
+			t.Fatalf("compact login missing %q", want)
+		}
+	}
+}
+
 func TestRenderWelcomeShowsWolfAndCopyright(t *testing.T) {
 	rendered := RenderWelcome(80)
 	for _, want := range []string{
