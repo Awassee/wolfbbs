@@ -1,0 +1,16 @@
+wolfbbs_v2.0.0_linux_amd64
+  tarball: wolfbbs_v2.0.0_linux_amd64.tar.gz
+  binaries: 6
+  docs: 21 files copied (README/START_HERE/INSTALL/SHOWCASE/DATASHEET/ACCEPTANCE/etc)
+wolfbbs_v2.0.0_linux_arm64
+  tarball: wolfbbs_v2.0.0_linux_arm64.tar.gz
+  binaries: 6
+  docs: 21 files copied (README/START_HERE/INSTALL/SHOWCASE/DATASHEET/ACCEPTANCE/etc)
+wolfbbs_v2.0.0_darwin_amd64
+  tarball: wolfbbs_v2.0.0_darwin_amd64.tar.gz
+  binaries: 6
+  docs: 21 files copied (README/START_HERE/INSTALL/SHOWCASE/DATASHEET/ACCEPTANCE/etc)
+wolfbbs_v2.0.0_darwin_arm64
+  tarball: wolfbbs_v2.0.0_darwin_arm64.tar.gz
+  binaries: 6
+  docs: 21 files copied (README/START_HERE/INSTALL/SHOWCASE/DATASHEET/ACCEPTANCE/etc)
