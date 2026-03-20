@@ -187,7 +187,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 	doors.SeedFromEnv(doorRegistry)
 	offlineDir := strings.TrimSpace(os.Getenv("WOLFBBS_OFFLINE_DIR"))
 	if offlineDir == "" {
-		offlineDir = ".wolfbbs/offline"
+		offlineDir = filepath.Join(installPrefixPathSSH(), "offline")
 	}
 	emailGateway := s.activeEmailGateway()
 	th := ui.DefaultTheme()

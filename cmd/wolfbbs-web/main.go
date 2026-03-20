@@ -14,6 +14,7 @@ import (
 	"net/mail"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -959,7 +960,7 @@ func main() {
 		offlineDir: func() string {
 			dir := strings.TrimSpace(os.Getenv("WOLFBBS_OFFLINE_DIR"))
 			if dir == "" {
-				dir = ".wolfbbs/offline"
+				dir = filepath.Join(installPrefixPath(), "offline")
 			}
 			return dir
 		}(),

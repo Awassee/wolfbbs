@@ -3,6 +3,7 @@ package loginserver
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -27,7 +28,7 @@ type sessionServices struct {
 
 func defaultSessionServices() sessionServices {
 	return sessionServices{
-		offlineDir: ".wolfbbs/offline",
+		offlineDir: filepath.Join(defaultInstallPrefixPath(), "offline"),
 	}
 }
 
@@ -38,9 +39,20 @@ func (s *sessionServices) set(boards repository.BoardRepository, msgs repository
 	s.chat = chatSvc
 	offlineDir = strings.TrimSpace(offlineDir)
 	if offlineDir == "" {
-		offlineDir = ".wolfbbs/offline"
+		offlineDir = filepath.Join(defaultInstallPrefixPath(), "offline")
 	}
 	s.offlineDir = offlineDir
+}
+
+func defaultInstallPrefixPath() string {
+	if prefix := strings.TrimSpace(os.Getenv("WOLFBBS_INSTALL_PREFIX")); prefix != "" {
+		return filepath.Clean(prefix)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return filepath.Clean(".wolfbbs")
+	}
+	return filepath.Join(home, ".local", "share", "wolfbbs")
 }
 
 func runBoardsCommandMode(peer textPeer, authSvc *auth.Service, user *authUser, services sessionServices) {

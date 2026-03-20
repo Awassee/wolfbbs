@@ -537,7 +537,7 @@ func (s *Server) buildAttentionExportPayload(user *domain.User) map[string]inter
 func profileExportRootDir() string {
 	root := strings.TrimSpace(os.Getenv("WOLFBBS_OFFLINE_DIR"))
 	if root == "" {
-		root = ".wolfbbs/offline"
+		root = filepath.Join(installPrefixPathSSH(), "offline")
 	}
 	return filepath.Join(filepath.Clean(root), "caller")
 }

@@ -2,6 +2,7 @@ package sshserver
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -135,5 +136,16 @@ func TestDecodeTimeMapFromTimePayload(t *testing.T) {
 	decoded := decodeTimeMap(string(raw))
 	if decoded["k"] == "" {
 		t.Fatalf("expected decoded timestamp for key k, got %#v", decoded)
+	}
+}
+
+func TestProfileExportRootDirUsesInstallPrefixFallback(t *testing.T) {
+	t.Setenv("WOLFBBS_OFFLINE_DIR", "")
+	t.Setenv("WOLFBBS_INSTALL_PREFIX", filepath.Join(string(filepath.Separator), "tmp", "wolfbbs-release-test"))
+
+	got := profileExportRootDir()
+	want := filepath.Join(string(filepath.Separator), "tmp", "wolfbbs-release-test", "offline", "caller")
+	if got != want {
+		t.Fatalf("profileExportRootDir() = %q, want %q", got, want)
 	}
 }

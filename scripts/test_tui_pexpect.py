@@ -58,6 +58,7 @@ def start_bbs_server(db_path: Path, port: int, log_path: Path, files_root: Path)
     env.setdefault("WOLFBBS_QUICK_JUMP_ENABLE", "true")
     env.setdefault("WOLFBBS_GUEST_TOUR_ENABLE", "true")
     env.setdefault("WOLFBBS_FILES_ROOT", str(files_root))
+    env["WOLFBBS_OFFLINE_DIR"] = str(files_root / "offline")
     cmd = [
         "go",
         "run",
