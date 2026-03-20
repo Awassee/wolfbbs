@@ -15,6 +15,7 @@ import (
 
 type AIConfig struct {
 	BaseURL      string
+	AllowPrivate bool
 	APIKey       string
 	Model        string
 	SystemPrompt string
@@ -62,6 +63,9 @@ func (c *AIClient) Complete(ctx context.Context, prompt string) (string, error) 
 		return "", errors.New("ai gateway is not configured")
 	}
 	base := strings.TrimSpace(c.cfg.BaseURL)
+	if err := ValidateSafeHTTPURL(base, c.cfg.AllowPrivate); err != nil {
+		return "", fmt.Errorf("invalid ai base url: %w", err)
+	}
 	endpoint, err := url.Parse(base)
 	if err != nil {
 		return "", fmt.Errorf("invalid ai base url: %w", err)

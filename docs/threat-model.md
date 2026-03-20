@@ -18,6 +18,8 @@
 - ActivityPub endpoint scraping/abuse when experimental federation is enabled.
 - Command injection via malformed escape and terminal sequences.
 - External door sandbox escape or resource exhaustion.
+- AI gateway SSRF against private/loopback infrastructure when operators point it at arbitrary endpoints.
+- Oversized or policy-violating file uploads consuming storage or bypassing review controls.
 
 ## Controls in Place
 - Password hash policy: `bcrypt` and `pbkdf2-sha256` with optional upgrade-on-login path.
@@ -35,6 +37,8 @@
 - Inbound mail webhooks require shared-secret token auth; default dev tokens are limited to local callers only.
 - Websocket login rejects foreign browser origins.
 - JSON webhook/chat endpoints are size-bounded and strict-decoded.
+- AI gateway base URLs are syntax-validated on save and fully SSRF-checked at request time; private/loopback targets require explicit operator opt-in.
+- Admin file uploads are request-size bounded and support an optional policy/scanner hook before indexing.
 
 ## Planned Controls
 - Connection/IP/command-rate throttles for SSH flows beyond the current login throttles.

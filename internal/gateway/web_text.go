@@ -61,7 +61,7 @@ var DefaultFetchConfig = FetchConfig{
 // FetchText downloads a URL and returns wrapped, sanitized text.
 func FetchText(ctx context.Context, rawURL string, cfg FetchConfig) (string, error) {
 	cfg = sanitizeFetchConfig(cfg)
-	if err := validateGatewayURL(rawURL); err != nil {
+	if err := ValidateSafeHTTPURL(rawURL, false); err != nil {
 		return "", err
 	}
 
@@ -71,7 +71,7 @@ func FetchText(ctx context.Context, rawURL string, cfg FetchConfig) (string, err
 			if len(via) > cfg.MaxRedirects {
 				return fmt.Errorf("too many redirects (max=%d)", cfg.MaxRedirects)
 			}
-			return validateGatewayURL(req.URL.String())
+			return ValidateSafeHTTPURL(req.URL.String(), false)
 		},
 	}
 
@@ -188,7 +188,7 @@ func sanitizeFetchConfig(cfg FetchConfig) FetchConfig {
 	return cfg
 }
 
-func validateGatewayURL(raw string) error {
+func ValidateSafeHTTPURLConfig(raw string, allowPrivate bool) error {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
 		return err
@@ -199,24 +199,32 @@ func validateGatewayURL(raw string) error {
 	if parsed.Hostname() == "" {
 		return errors.New("url must include a host")
 	}
-	if isBlockedHostname(parsed.Hostname()) {
+	if !allowPrivate && isBlockedHostname(parsed.Hostname()) {
 		return errors.New("hostname blocked for SSRF safety")
 	}
 
 	ip := net.ParseIP(parsed.Hostname())
 	if ip != nil {
-		if isUnsafeIP(ip) {
+		if !allowPrivate && isUnsafeIP(ip) {
 			return errors.New("target ip blocked")
 		}
 		return nil
 	}
+	return nil
+}
+
+func ValidateSafeHTTPURL(raw string, allowPrivate bool) error {
+	if err := ValidateSafeHTTPURLConfig(raw, allowPrivate); err != nil {
+		return err
+	}
+	parsed, _ := url.Parse(strings.TrimSpace(raw))
 
 	addrs, err := net.LookupIP(parsed.Hostname())
 	if err != nil {
 		return fmt.Errorf("dns resolution failed: %w", err)
 	}
 	for _, addr := range addrs {
-		if isUnsafeIP(addr) {
+		if !allowPrivate && isUnsafeIP(addr) {
 			return errors.New("target ip blocked")
 		}
 	}

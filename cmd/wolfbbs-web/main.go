@@ -752,6 +752,7 @@ const (
 	maxFavoriteCallers               = 32
 	maxPageRequests                  = 200
 	maxStaffEscalations              = 200
+	maxAIGatewayPromptChars          = 4000
 )
 
 const (
@@ -8516,6 +8517,10 @@ func defaultAIGatewaySettingsFromEnv() aiGatewaySettings {
 	return cfg
 }
 
+func allowPrivateAIGatewayBaseURLs() bool {
+	return parseCheckbox(envFirst("WOLFBBS_GATEWAY_AI_ALLOW_PRIVATE", "WOLFBBS_AI_ALLOW_PRIVATE"))
+}
+
 func (a *webApp) loadAIGatewaySettings() aiGatewaySettings {
 	cfg := defaultAIGatewaySettingsFromEnv()
 	if a.adminRepo == nil {
@@ -8893,6 +8898,10 @@ func (a *webApp) handleGateway(w http.ResponseWriter, r *http.Request) {
 			redirectWithError(w, r, "/gateway?view=ai", "Prompt is required.")
 			return
 		}
+		if len([]rune(prompt)) > maxAIGatewayPromptChars {
+			redirectWithError(w, r, "/gateway?view=ai", fmt.Sprintf("Prompt exceeds %d characters.", maxAIGatewayPromptChars))
+			return
+		}
 		aiCfg := a.loadAIGatewaySettings()
 		if !aiCfg.Enabled {
 			redirectWithError(w, r, "/gateway?view=ai", "AI gateway is disabled. Enable it in /admin/gateways.")
@@ -8900,6 +8909,7 @@ func (a *webApp) handleGateway(w http.ResponseWriter, r *http.Request) {
 		}
 		client := gateway.NewAIClient(gateway.AIConfig{
 			BaseURL:      aiCfg.BaseURL,
+			AllowPrivate: allowPrivateAIGatewayBaseURLs(),
 			APIKey:       aiCfg.APIKey,
 			Model:        aiCfg.Model,
 			SystemPrompt: aiCfg.SystemPrompt,
@@ -11846,6 +11856,7 @@ func (a *webApp) handleAdminFiles(w http.ResponseWriter, r *http.Request) {
 			reviewHold := formHasValue(r, "review_hold")
 			reviewNotes := strings.TrimSpace(r.FormValue("review_notes"))
 			if a.adminRepo != nil && areaID > 0 {
+				r.Body = http.MaxBytesReader(w, r.Body, configuredUploadRequestMaxBytes())
 				areas, _ := a.adminRepo.ListFileAreas()
 				for _, area := range areas {
 					if area.ID != areaID {
@@ -11854,7 +11865,7 @@ func (a *webApp) handleAdminFiles(w http.ResponseWriter, r *http.Request) {
 					entry, err := a.importUploadedFile(r, area, user, strings.TrimSpace(r.FormValue("description")), strings.TrimSpace(r.FormValue("tags")))
 					if err != nil {
 						a.addAppError("admin.files", fmt.Errorf("upload file: %w", err))
-						redirectWithError(w, r, redirectURL, "Upload failed.")
+						redirectWithError(w, r, redirectURL, uploadFailureMessage(err))
 						return
 					}
 					if reviewHold {
@@ -12283,6 +12294,10 @@ func (a *webApp) handleAdminGateways(w http.ResponseWriter, r *http.Request) {
 		if aiCfg.MaxTokens <= 0 {
 			aiCfg.MaxTokens = 400
 		}
+		if err := gateway.ValidateSafeHTTPURLConfig(aiCfg.BaseURL, allowPrivateAIGatewayBaseURLs()); err != nil {
+			redirectWithError(w, r, "/admin/gateways", "AI base URL rejected: "+err.Error())
+			return
+		}
 		if a.adminRepo != nil {
 			if err := a.adminRepo.UpsertGatewaySettings(cfg); err == nil {
 				a.recordAdminAction(user.Handle, "gateway_settings", "update_gateway_settings", "saved")
@@ -12296,6 +12311,7 @@ func (a *webApp) handleAdminGateways(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := a.activeGatewaySettings()
 	aiCfg := a.loadAIGatewaySettings()
+	aiAllowPrivate := allowPrivateAIGatewayBaseURLs()
 	emailGateway := a.activeEmailGateway()
 	csrf := a.csrfHiddenInput(r)
 	messageBlock := pageMessageBlock(r)
@@ -12325,12 +12341,14 @@ func (a *webApp) handleAdminGateways(w http.ResponseWriter, r *http.Request) {
 		`<label>AI Timeout Sec <input name="ai_timeout_sec" value="` + strconv.Itoa(aiCfg.TimeoutSec) + `"></label><br>` +
 		`<label>AI Max Tokens <input name="ai_max_tokens" value="` + strconv.Itoa(aiCfg.MaxTokens) + `"></label><br>` +
 		`<label>AI System Prompt<br><textarea name="ai_system_prompt" rows="4" cols="84">` + htmlEscape(aiCfg.SystemPrompt) + `</textarea></label><br>` +
+		`<p class="wolfbbs-muted">Private or loopback AI endpoints stay blocked by default. Set <code>WOLFBBS_GATEWAY_AI_ALLOW_PRIVATE=1</code> only when you intentionally run a local/private model endpoint.</p>` +
 		`<button type="submit">Save</button></form>` +
 		`<h2>Diagnostics</h2><table border="1"><tr><th>Check</th><th>Status</th></tr>` +
 		`<tr><td>Email relay configured</td><td>` + boolToText(emailGateway.Enabled()) + `</td></tr>` +
 		`<tr><td>External email verification gate</td><td>` + boolToText(a.requireVerifiedEmail) + `</td></tr>` +
 		`<tr><td>AI gateway enabled</td><td>` + boolToText(aiCfg.Enabled) + `</td></tr>` +
 		`<tr><td>AI API key configured</td><td>` + boolToText(strings.TrimSpace(aiCfg.APIKey) != "") + `</td></tr>` +
+		`<tr><td>AI private/loopback override</td><td>` + boolToText(aiAllowPrivate) + `</td></tr>` +
 		`</table><p><a href="/gateway?view=email">Email door</a> | <a href="/gateway?view=ai">AI door</a> | <a href="/gateway?view=browser">Web browser door</a></p>` +
 		`<p>Use docs/web-gateway.md and docs/email-gateway.md for full policy.</p></body></html>`
 	w.WriteHeader(http.StatusOK)
@@ -16705,6 +16723,8 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 				statusHoldUntil: 0,
 				statusHoldTimer: null,
 			};
+			let onlineRefreshTimer = null;
+			let onlineRefreshInFlight = false;
 			let chatComposerPrimed = false;
 			function liveStatusText() {
 				const readOnly = streamState.locked.has(streamState.channel) && !canModerate;
@@ -17004,10 +17024,37 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 				noteSync();
 			}
 
+			function scheduleOnlineRefresh(delay) {
+				if (onlineRefreshTimer) {
+					window.clearTimeout(onlineRefreshTimer);
+				}
+				onlineRefreshTimer = window.setTimeout(async function(){
+					if (document.hidden) {
+						scheduleOnlineRefresh(15000);
+						return;
+					}
+					if (onlineRefreshInFlight) {
+						scheduleOnlineRefresh(5000);
+						return;
+					}
+					onlineRefreshInFlight = true;
+					try {
+						await loadOnline();
+					} finally {
+						onlineRefreshInFlight = false;
+						scheduleOnlineRefresh(document.hidden ? 15000 : 5000);
+					}
+				}, Math.max(500, delay || 5000));
+			}
+
 			function stopStream() {
 				if (streamState.reconnectTimer) {
 					window.clearTimeout(streamState.reconnectTimer);
 					streamState.reconnectTimer = null;
+				}
+				if (onlineRefreshTimer) {
+					window.clearTimeout(onlineRefreshTimer);
+					onlineRefreshTimer = null;
 				}
 				if (streamState.es) {
 					streamState.es.close();
@@ -17152,7 +17199,17 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 				await loadChannels();
 				streamState.channel = document.getElementById('channelSelect').value || '#lobby';
 				await refreshChannel(streamState.channel);
-				setInterval(loadOnline, 5000);
+				scheduleOnlineRefresh(5000);
+			});
+
+			document.addEventListener('visibilitychange', function(){
+				if (!document.hidden) {
+					loadOnline().finally(function(){
+						scheduleOnlineRefresh(5000);
+					});
+					return;
+				}
+				scheduleOnlineRefresh(15000);
 			});
 
 			window.addEventListener('beforeunload', () => {

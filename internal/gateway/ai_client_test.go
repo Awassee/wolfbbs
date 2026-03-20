@@ -29,9 +29,10 @@ func TestAIClientComplete(t *testing.T) {
 	defer server.Close()
 
 	client := NewAIClient(AIConfig{
-		BaseURL: server.URL,
-		APIKey:  "secret",
-		Model:   "gpt-test",
+		BaseURL:      server.URL,
+		AllowPrivate: true,
+		APIKey:       "secret",
+		Model:        "gpt-test",
 	})
 	reply, err := client.Complete(context.Background(), "hi")
 	if err != nil {
@@ -55,5 +56,22 @@ func TestAIClientCompleteRequiresPrompt(t *testing.T) {
 	_, err := client.Complete(context.Background(), "  ")
 	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "prompt") {
 		t.Fatalf("expected prompt error, got %v", err)
+	}
+}
+
+func TestAIClientCompleteRejectsPrivateBaseURLByDefault(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("request should not be attempted when base url is rejected")
+	}))
+	defer server.Close()
+
+	client := NewAIClient(AIConfig{
+		BaseURL: server.URL,
+		APIKey:  "secret",
+		Model:   "gpt-test",
+	})
+	_, err := client.Complete(context.Background(), "hi")
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "invalid ai base url") {
+		t.Fatalf("expected invalid ai base url error, got %v", err)
 	}
 }

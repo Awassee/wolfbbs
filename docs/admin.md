@@ -34,9 +34,11 @@ This version ships a read/write web-first control panel with role-aware routes a
   - per-file ratings and saved filters
   - per-user download queue management
   - issue temporary download tickets for `/gateway?download=<token>`
+  - bounded upload intake with optional env-driven policy/scanner hook
 - Gateways
   - SMTP relay settings, allow/deny list, global and per-user caps
   - web gateway SSRF blocklist and timeout policy
+  - AI gateway base URL validation with private/loopback override only via explicit env opt-in
 - Chat
   - channel list and lock/unlock state
   - create channels
@@ -91,6 +93,8 @@ This version ships a read/write web-first control panel with role-aware routes a
 - Optional 2FA (TOTP) for sysop accounts.
 - Audit trail required for all sysop/admin writes with actor, target, action, reason.
 - User settings updates (password/2FA/preferences) also require CSRF.
+- Admin file uploads enforce `WOLFBBS_UPLOAD_MAX_BYTES` and may be vetoed by `WOLFBBS_UPLOAD_POLICY_HOOK`.
+- AI gateway calls reject private/loopback targets unless `WOLFBBS_GATEWAY_AI_ALLOW_PRIVATE=1` is set intentionally.
 
 ## Read-only Mode Toggle
 - Runtime toggle keeps all mutating writes disabled.

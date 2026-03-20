@@ -43,6 +43,8 @@
 - Outbound redirect policy:
   - at most 5 hops
   - preserve denylist after redirect too
+- AI gateway uses the same outbound URL safety model for remote HTTPS endpoints.
+- Private or loopback AI endpoints require explicit operator opt-in with `WOLFBBS_GATEWAY_AI_ALLOW_PRIVATE=1`.
 
 ## Offline Reader
 - `Save for offline reading` stores extracted text in per-user folder path:
@@ -53,3 +55,10 @@
 - Tickets are stored server-side with expiry and one-time use semantics.
 - Default ticket TTL is 15 minutes.
 - Ticket access is scoped to the owning user unless a `sysop` is performing the request.
+
+## Upload Intake Safety
+- Admin upload requests are bounded by `WOLFBBS_UPLOAD_MAX_BYTES` (default `33554432` bytes / 32 MiB).
+- Optional upload policy hook:
+  - set `WOLFBBS_UPLOAD_POLICY_HOOK` to a command
+  - WolfBBS exports file metadata as env vars (`WOLFBBS_UPLOAD_PATH`, `WOLFBBS_UPLOAD_NAME`, `WOLFBBS_UPLOAD_SHA256`, `WOLFBBS_UPLOAD_SIZE_BYTES`, `WOLFBBS_UPLOAD_AREA_NAME`, `WOLFBBS_UPLOAD_UPLOADER`, etc.)
+  - non-zero exit rejects the upload and removes the staged file

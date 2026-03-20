@@ -125,7 +125,7 @@ Value: turns files into a collaborative feature.
 Status: later.
 37. Virus-scan and policy hooks for uploads.
 Value: reduces security risk.
-Status: later.
+Status: shipped in v1.1.26 as bounded upload intake with optional env-driven policy/scanner hook.
 38. Curated file collections and rotating featured packs.
 Value: adds editorial product value.
 Status: later.

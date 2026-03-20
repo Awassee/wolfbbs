@@ -1310,6 +1310,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 				}
 				client := gateway.NewAIClient(gateway.AIConfig{
 					BaseURL:      aiCfg.BaseURL,
+					AllowPrivate: allowPrivateAIGatewayBaseURLsSSH(),
 					APIKey:       aiCfg.APIKey,
 					Model:        aiCfg.Model,
 					SystemPrompt: aiCfg.SystemPrompt,
@@ -2254,6 +2255,10 @@ func defaultAIGatewaySettingsFromEnv() aiGatewaySettings {
 		cfg.Enabled = true
 	}
 	return cfg
+}
+
+func allowPrivateAIGatewayBaseURLsSSH() bool {
+	return envBool(envFirstValue("WOLFBBS_GATEWAY_AI_ALLOW_PRIVATE", "WOLFBBS_AI_ALLOW_PRIVATE"))
 }
 
 func (s *Server) loadAIGatewaySettings() aiGatewaySettings {

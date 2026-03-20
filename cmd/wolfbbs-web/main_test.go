@@ -1525,6 +1525,54 @@ func TestMailExternalSendUsesAdminGatewayLimits(t *testing.T) {
 	}
 }
 
+func TestAdminGatewaysRejectsUnsafeAIBaseURLByDefault(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
+	authSvc := auth.NewService(userRepo)
+	if _, err := authSvc.Register("sysop", "password123"); err != nil {
+		t.Fatalf("register sysop: %v", err)
+	}
+	if err := authSvc.SetRole("sysop", roleAdmin); err != nil {
+		t.Fatalf("set sysop role: %v", err)
+	}
+
+	app := &webApp{
+		authSvc:    authSvc,
+		adminRepo:  adminRepo,
+		sessions:   map[string]sessionState{},
+		rateLimits: map[string][]time.Time{},
+	}
+	sid, ok := app.createSession("sysop")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+
+	form := url.Values{}
+	form.Set("smtp_host", "smtp.example.com")
+	form.Set("smtp_port", "587")
+	form.Set("from_domain", "bbs.example.com")
+	form.Set("ai_enabled", "1")
+	form.Set("ai_base_url", "http://127.0.0.1:11434")
+	form.Set("ai_model", "gpt-unit")
+	form.Set("ai_api_key", "unit-secret")
+	form.Set("csrf_token", app.sessions[sid].csrf)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/gateways", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.mustBeRole(roleAdmin, app.handleAdminGateways).ServeHTTP(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("admin gateways post status = %d", rr.Code)
+	}
+	if got := rr.Header().Get("Location"); !strings.Contains(got, "/admin/gateways?error=") {
+		t.Fatalf("expected error redirect, got %q", got)
+	}
+	if got, err := adminRepo.GetSystemSetting(sysSettingGatewayAIBaseURL); err == nil && strings.TrimSpace(got) != "" {
+		t.Fatalf("expected unsafe ai base url to be rejected, got persisted value %q", got)
+	}
+}
+
 func TestChatChannelLockEnforcedForNonModerators(t *testing.T) {
 	userRepo := repository.NewInMemoryUserRepository()
 	authSvc := auth.NewService(userRepo)
@@ -4981,6 +5029,149 @@ func TestDigestTournamentAndAdminUploadReviewFlow(t *testing.T) {
 	app.handleGateway(rr, req)
 	if strings.Contains(rr.Body.String(), "wolfpack.ans") {
 		t.Fatalf("deleted upload should not be visible in gateway browser: %s", rr.Body.String())
+	}
+}
+
+func TestAdminFilesRejectsOversizedUpload(t *testing.T) {
+	t.Setenv("WOLFBBS_UPLOAD_MAX_BYTES", "1048576")
+
+	userRepo := repository.NewInMemoryUserRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
+	authSvc := auth.NewService(userRepo)
+	sysop, err := authSvc.Register("sysop", "password123")
+	if err != nil {
+		t.Fatalf("register sysop: %v", err)
+	}
+	if err := authSvc.SetRole(sysop.Handle, roleAdmin); err != nil {
+		t.Fatalf("set sysop role: %v", err)
+	}
+
+	app := &webApp{
+		authSvc:    authSvc,
+		adminRepo:  adminRepo,
+		sessions:   map[string]sessionState{},
+		rateLimits: map[string][]time.Time{},
+	}
+	sid, ok := app.createSession(sysop.Handle)
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+
+	tmpDir := t.TempDir()
+	if err := adminRepo.CreateFileArea(&domain.FileArea{Name: "Uploads", Path: tmpDir, Description: "qa uploads"}); err != nil {
+		t.Fatalf("create file area: %v", err)
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	_ = writer.WriteField("action", "upload")
+	_ = writer.WriteField("area_id", "1")
+	_ = writer.WriteField("description", "Too big")
+	_ = writer.WriteField("tags", "retro")
+	_ = writer.WriteField("csrf_token", app.sessions[sid].csrf)
+	fileWriter, err := writer.CreateFormFile("upload_file", "toolarge.ans")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := fileWriter.Write(bytes.Repeat([]byte("A"), 2*1024*1024)); err != nil {
+		t.Fatalf("write form file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/files", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.mustBeRole(roleAdmin, http.HandlerFunc(app.handleAdminFiles)).ServeHTTP(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("upload file status = %d", rr.Code)
+	}
+	if got := rr.Header().Get("Location"); !strings.Contains(got, "error=") {
+		t.Fatalf("expected error redirect, got %q", got)
+	}
+	files, err := adminRepo.ListFileEntries(0, "", nil, 10)
+	if err != nil {
+		t.Fatalf("list file entries: %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("expected oversized upload to be rejected, got %+v", files)
+	}
+}
+
+func TestAdminFilesUploadPolicyHookRejectsUpload(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "reject-upload.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho \"scan policy blocked $WOLFBBS_UPLOAD_NAME\"\nexit 1\n"), 0o755); err != nil {
+		t.Fatalf("write hook script: %v", err)
+	}
+	t.Setenv("WOLFBBS_UPLOAD_POLICY_HOOK", script)
+
+	userRepo := repository.NewInMemoryUserRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
+	authSvc := auth.NewService(userRepo)
+	sysop, err := authSvc.Register("sysop", "password123")
+	if err != nil {
+		t.Fatalf("register sysop: %v", err)
+	}
+	if err := authSvc.SetRole(sysop.Handle, roleAdmin); err != nil {
+		t.Fatalf("set sysop role: %v", err)
+	}
+
+	app := &webApp{
+		authSvc:    authSvc,
+		adminRepo:  adminRepo,
+		sessions:   map[string]sessionState{},
+		rateLimits: map[string][]time.Time{},
+	}
+	sid, ok := app.createSession(sysop.Handle)
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+
+	tmpDir := t.TempDir()
+	if err := adminRepo.CreateFileArea(&domain.FileArea{Name: "Uploads", Path: tmpDir, Description: "qa uploads"}); err != nil {
+		t.Fatalf("create file area: %v", err)
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	_ = writer.WriteField("action", "upload")
+	_ = writer.WriteField("area_id", "1")
+	_ = writer.WriteField("description", "Policy blocked")
+	_ = writer.WriteField("tags", "retro")
+	_ = writer.WriteField("csrf_token", app.sessions[sid].csrf)
+	fileWriter, err := writer.CreateFormFile("upload_file", "blocked.ans")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := fileWriter.Write([]byte("ANSI FILE CONTENT")); err != nil {
+		t.Fatalf("write form file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/files", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.mustBeRole(roleAdmin, http.HandlerFunc(app.handleAdminFiles)).ServeHTTP(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("upload file status = %d", rr.Code)
+	}
+	if got := rr.Header().Get("Location"); !strings.Contains(got, "error=") {
+		t.Fatalf("expected error redirect, got %q", got)
+	}
+	files, err := adminRepo.ListFileEntries(0, "", nil, 10)
+	if err != nil {
+		t.Fatalf("list file entries: %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("expected hook-rejected upload to be absent, got %+v", files)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "blocked.ans")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected rejected upload file to be removed, stat err=%v", err)
 	}
 }
 

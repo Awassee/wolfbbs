@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -23,9 +25,111 @@ import (
 )
 
 const (
-	maxSidecarBytes  = 8192
-	defaultTicketTTL = 15 * time.Minute
+	maxSidecarBytes            = 8192
+	defaultTicketTTL           = 15 * time.Minute
+	defaultUploadMaxBytes      = int64(32 << 20)
+	maxUploadCeilingBytes      = int64(512 << 20)
+	minUploadCeilingBytes      = int64(1 << 20)
+	uploadMultipartOverhead    = int64(1 << 20)
+	defaultUploadPolicyTimeout = 15 * time.Second
+	maxUploadPolicyOutputBytes = 240
 )
+
+func configuredUploadMaxBytes() int64 {
+	raw := strings.TrimSpace(envFirst("WOLFBBS_UPLOAD_MAX_BYTES", "WOLFBBS_FILE_UPLOAD_MAX_BYTES"))
+	if raw == "" {
+		return defaultUploadMaxBytes
+	}
+	v, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return defaultUploadMaxBytes
+	}
+	switch {
+	case v < minUploadCeilingBytes:
+		return minUploadCeilingBytes
+	case v > maxUploadCeilingBytes:
+		return maxUploadCeilingBytes
+	default:
+		return v
+	}
+}
+
+func configuredUploadRequestMaxBytes() int64 {
+	return configuredUploadMaxBytes() + uploadMultipartOverhead
+}
+
+func configuredUploadPolicyHook() string {
+	return strings.TrimSpace(envFirst("WOLFBBS_UPLOAD_POLICY_HOOK"))
+}
+
+func compactCommandOutput(raw []byte, limit int) string {
+	text := strings.Join(strings.Fields(strings.TrimSpace(string(raw))), " ")
+	if limit <= 0 || len(text) <= limit {
+		return text
+	}
+	if limit < 4 {
+		return text[:limit]
+	}
+	return text[:limit-3] + "..."
+}
+
+func uploadFailureMessage(err error) string {
+	if err == nil {
+		return "Upload failed."
+	}
+	msg := strings.TrimSpace(err.Error())
+	switch {
+	case strings.Contains(msg, "request body too large"),
+		strings.Contains(msg, "multipart: message too large"),
+		strings.Contains(msg, "upload exceeds max size"):
+		return fmt.Sprintf("Upload failed: file exceeds the configured %d-byte limit.", configuredUploadMaxBytes())
+	default:
+		if len(msg) > 180 {
+			msg = msg[:177] + "..."
+		}
+		if msg == "" {
+			return "Upload failed."
+		}
+		return "Upload failed: " + msg
+	}
+}
+
+func runUploadPolicyHook(entry *domain.FileEntry, area domain.FileArea, uploader *domain.User) error {
+	hook := configuredUploadPolicyHook()
+	if hook == "" {
+		return nil
+	}
+	if entry == nil {
+		return errors.New("upload entry is required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), defaultUploadPolicyTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", hook)
+	cmd.Env = append(os.Environ(),
+		"WOLFBBS_UPLOAD_PATH="+strings.TrimSpace(entry.Path),
+		"WOLFBBS_UPLOAD_NAME="+strings.TrimSpace(entry.Name),
+		"WOLFBBS_UPLOAD_SHA256="+strings.TrimSpace(entry.SHA256),
+		"WOLFBBS_UPLOAD_SIZE_BYTES="+strconv.FormatInt(entry.SizeBytes, 10),
+		"WOLFBBS_UPLOAD_AREA_ID="+strconv.FormatInt(area.ID, 10),
+		"WOLFBBS_UPLOAD_AREA_NAME="+strings.TrimSpace(area.Name),
+		"WOLFBBS_UPLOAD_UPLOADER="+defaultIfBlank(strings.TrimSpace(uploader.Handle), "unknown"),
+		"WOLFBBS_UPLOAD_UPLOADER_ID="+strconv.FormatInt(uploader.ID, 10),
+		"WOLFBBS_UPLOAD_TAGS="+strings.Join(entry.Tags, ","),
+		"WOLFBBS_UPLOAD_DESCRIPTION="+strings.TrimSpace(entry.Description),
+	)
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return errors.New("upload policy hook timed out")
+	}
+	if err != nil {
+		msg := compactCommandOutput(out, maxUploadPolicyOutputBytes)
+		if msg == "" {
+			msg = err.Error()
+		}
+		return fmt.Errorf("upload rejected by policy hook: %s", msg)
+	}
+	return nil
+}
 
 func (a *webApp) indexAreaFiles(area domain.FileArea, uploaderID int64) (int, int, error) {
 	if a.adminRepo == nil {
@@ -259,7 +363,11 @@ func (a *webApp) importUploadedFile(r *http.Request, area domain.FileArea, uploa
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, err
 	}
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
+	maxMemory := configuredUploadMaxBytes()
+	if maxMemory > 32<<20 {
+		maxMemory = 32 << 20
+	}
+	if err := r.ParseMultipartForm(maxMemory); err != nil {
 		return nil, fmt.Errorf("parse upload: %w", err)
 	}
 	src, header, err := r.FormFile("upload_file")
@@ -275,10 +383,16 @@ func (a *webApp) importUploadedFile(r *http.Request, area domain.FileArea, uploa
 	if err != nil {
 		return nil, err
 	}
-	if _, err := io.Copy(dst, src); err != nil {
+	written, err := io.Copy(dst, io.LimitReader(src, configuredUploadMaxBytes()+1))
+	if err != nil {
 		_ = dst.Close()
 		_ = os.Remove(destPath)
 		return nil, err
+	}
+	if written > configuredUploadMaxBytes() {
+		_ = dst.Close()
+		_ = os.Remove(destPath)
+		return nil, fmt.Errorf("upload exceeds max size (%d bytes)", configuredUploadMaxBytes())
 	}
 	if err := dst.Close(); err != nil {
 		_ = os.Remove(destPath)
@@ -309,6 +423,10 @@ func (a *webApp) importUploadedFile(r *http.Request, area domain.FileArea, uploa
 		SizeBytes:   info.Size(),
 		UploaderID:  uploader.ID,
 		UploadedAt:  info.ModTime().UTC(),
+	}
+	if err := runUploadPolicyHook(entry, area, uploader); err != nil {
+		_ = os.Remove(destPath)
+		return nil, err
 	}
 	if err := a.adminRepo.UpsertFileEntry(entry); err != nil {
 		_ = os.Remove(destPath)

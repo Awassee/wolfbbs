@@ -17,7 +17,13 @@ func TestFetchTextWrapsAndStrips(t *testing.T) {
 }
 
 func TestValidateGatewayURLRejectsLocalhost(t *testing.T) {
-	if err := validateGatewayURL("http://127.0.0.1"); err == nil {
+	if err := ValidateSafeHTTPURL("http://127.0.0.1", false); err == nil {
 		t.Fatal("expected error for localhost URL")
+	}
+}
+
+func TestValidateGatewayURLAllowsPrivateWhenExplicit(t *testing.T) {
+	if err := ValidateSafeHTTPURL("http://127.0.0.1", true); err != nil {
+		t.Fatalf("expected private url override to allow localhost, got %v", err)
 	}
 }

@@ -117,7 +117,7 @@ func SummarizeURL(ctx context.Context, rawURL string, cfg FetchConfig, maxBullet
 
 func fetchGatewayBody(ctx context.Context, rawURL string, cfg FetchConfig, allowedTypes []string) ([]byte, http.Header, string, error) {
 	cfg = sanitizeFetchConfig(cfg)
-	if err := validateGatewayURL(rawURL); err != nil {
+	if err := ValidateSafeHTTPURL(rawURL, false); err != nil {
 		return nil, nil, "", err
 	}
 	client := &http.Client{
@@ -126,7 +126,7 @@ func fetchGatewayBody(ctx context.Context, rawURL string, cfg FetchConfig, allow
 			if len(via) > cfg.MaxRedirects {
 				return fmt.Errorf("too many redirects (max=%d)", cfg.MaxRedirects)
 			}
-			return validateGatewayURL(req.URL.String())
+			return ValidateSafeHTTPURL(req.URL.String(), false)
 		},
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
