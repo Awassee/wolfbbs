@@ -139,13 +139,16 @@ sync_current_release_refs() {
     "docs/README.md"
     "docs/SHOWCASE.md"
     "docs/START_HERE.md"
-    "docs/releases/README.md"
   )
   local file=""
   for file in "${files[@]}"; do
     [[ -f "$file" ]] || continue
     perl -0pi -e "s/\\Q${previous_tag}\\E/${VERSION}/g" "$file"
   done
+  if [[ -f "docs/releases/README.md" ]]; then
+    perl -0pi -e 's/^Current public release: `[^`]+`$/Current public release: `'"${VERSION}"'`/m' "docs/releases/README.md"
+    perl -0pi -e 's/^- \\[v[^\\]]+\\]\\(v[^)]+\\.md\\): current public distribution release\\.$/- ['"${VERSION}"'](v'"${VERSION#v}"'.md): current public distribution release./m' "docs/releases/README.md"
+  fi
 }
 
 ensure_notes_file() {

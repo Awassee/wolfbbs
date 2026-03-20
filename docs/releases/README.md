@@ -7,7 +7,7 @@ Current public release: `v1.1.25`
 
 Recent historical notes:
 
-- [v1.1.25](v1.1.25.md)
+- [v1.1.23](v1.1.23.md)
 - [v1.1.20](v1.1.20.md)
 - [v1.1.19](v1.1.19.md)
 - [v1.1.18](v1.1.18.md)
