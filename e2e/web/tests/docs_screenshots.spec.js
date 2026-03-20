@@ -24,9 +24,19 @@ async function capture(page, route, filename, headingPattern) {
   } else {
     await expect(page.locator("body")).toBeVisible();
   }
-  await page.waitForTimeout(300);
-  await page.evaluate(() => window.scrollTo(0, 0));
-  await page.waitForTimeout(100);
+  await page.waitForTimeout(350);
+  await page.evaluate(() => {
+    const active = document.activeElement;
+    if (active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName)) {
+      active.blur();
+    }
+    const heading = document.querySelector("h1");
+    if (heading && typeof heading.scrollIntoView === "function") {
+      heading.scrollIntoView({ block: "start" });
+    }
+    window.scrollTo(0, 0);
+  });
+  await page.waitForTimeout(160);
   await page.screenshot({
     path: path.join(SCREENSHOT_DIR, filename),
     fullPage: false,

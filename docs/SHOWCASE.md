@@ -12,14 +12,14 @@ Launch links:
 
 ## Release v2.0.0 Snapshot
 
-This showcase tracks the `v2.0.0` distribution target: SSH-first caller flow, full admin parity, modern gateway surfaces, turnkey install/upgrade lifecycle, and the cleaned-up 2.0 web shell ready for public GitHub delivery.
+This showcase tracks the `v2.0.0` distribution target: SSH-first caller flow, full admin parity, modern gateway surfaces, turnkey install/upgrade lifecycle, and the calmer 2.0 web shell with grouped controls and compacted nav rails ready for public GitHub delivery.
 
 ## Product Description
 
 WolfBBS is a self-hosted community platform that blends a classic ANSI BBS experience with modern browser and operations tooling.
 
 - `Classic caller feel`: SSH-first menus, message boards, private mail, doors, scores, and newscan
-- `Modern access`: browser companion, admin console, account recovery, and live chat
+- `Modern access`: browser companion, admin console, account recovery, and live chat with a lower-noise shared shell
 - `Cross-client community`: IRC bridge with shared channel state
 - `Operator-ready`: setup wizard, config center, diagnostics, upgrades, and repair workflows
 

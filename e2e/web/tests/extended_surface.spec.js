@@ -80,6 +80,9 @@ test("extended caller surfaces and exports stay healthy", async ({ page }) => {
     return menu;
   };
   const body = page.locator("body");
+  const statusMenu = await openControlMenu("Status");
+  await expect(statusMenu.locator(".wolfbbs-status-grid")).toBeVisible();
+  await expect(statusMenu.locator(".wolfbbs-focus-pill")).toBeVisible();
   const viewMenu = await openControlMenu("View");
   const layoutButton = viewMenu.getByRole("button", { name: /Layout:/i });
   const layoutBefore = await body.getAttribute("data-layout-mode");
@@ -89,7 +92,7 @@ test("extended caller surfaces and exports stay healthy", async ({ page }) => {
   await expect(viewMenu.getByRole("button", { name: /Accent:/i })).toBeVisible();
   await expect(viewMenu.getByRole("button", { name: /Motion:/i })).toBeVisible();
   await expect(viewMenu.getByRole("button", { name: /Profile:/i })).toBeVisible();
-  await expect(prefControls.getByRole("button", { name: /Back:/i })).toBeVisible();
+  await expect(prefControls.getByRole("button", { name: "Back" })).toBeVisible();
   const compactControls = viewMenu.getByRole("button", { name: /Controls:/i });
   await compactControls.click();
   await expect(page.locator("body")).toHaveClass(/wolfbbs-controls-compact/);
@@ -121,7 +124,11 @@ test("extended caller surfaces and exports stay healthy", async ({ page }) => {
   await dockSearch.fill("pinned");
   await expect(actionDock).toContainText(/Pinned routes/i);
 
-  await expect(page.locator(".wolfbbs-section-nav").first().getByRole("button", { name: "Copy all links" })).toBeVisible();
+  const sectionTools = page.locator(".wolfbbs-section-nav-tools").first();
+  await expect(sectionTools).toBeVisible();
+  await sectionTools.locator("summary").click();
+  await expect(sectionTools.locator('input[type="search"]')).toBeVisible();
+  await expect(sectionTools.getByRole("button", { name: "Copy all links" })).toBeVisible();
 
   const helpMenuAgain = await openControlMenu("Help");
   await helpMenuAgain.getByRole("button", { name: "Bug report" }).click();
@@ -129,6 +136,9 @@ test("extended caller surfaces and exports stay healthy", async ({ page }) => {
   await expect(page.locator("#wolfbbsBugPayload")).toBeVisible();
   await page.locator("#wolfbbsBugClose").click();
   await expect(page.locator("#wolfbbsBugOverlay")).not.toHaveClass(/active/);
+
+  await gotoHealthy(page, "/boards", /Message Boards/i);
+  await expect(page.locator("body")).not.toContainText("Submit form");
 
   await gotoHealthy(page, "/directory", /Caller Directory/i);
   const stickyToggle = page.getByRole("button", { name: /Sticky head:/i }).first();

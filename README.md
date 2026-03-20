@@ -30,6 +30,8 @@ WolfBBS is currently shipped as `v2.0.0` with:
 - clean package generation via `scripts/package-dist.sh --clean --version v2.0.0`
 - checksum + manifest output per bundle under `dist/v2.0.0/`
 - full acceptance validation (`go test`, verifier fast/smoke, automated manual acceptance)
+- a simplified web shell with grouped status/tools menus, compact legacy nav rails, and lower-noise dense pages
+- refreshed screenshots and public docs that match the shipped UI
 - updated GitHub-facing product pages (`README`, `docs/SHOWCASE.md`, `docs/DATASHEET.md`, `docs/PRODUCT_GUIDE.md`)
 
 ## Product Snapshot

@@ -270,6 +270,59 @@ const modernUIScriptTag = `
       }
     });
   });
+  function compactNavRows() {
+    navRows.forEach((row) => {
+      if (!row || row.dataset.wolfbbsNavCompact === "1") return;
+      const items = Array.from(row.querySelectorAll("a[href]")).map((anchor) => ({
+        href: anchor.getAttribute("href") || "",
+        label: (anchor.textContent || "").replace(/\s+/g, " ").trim(),
+        active: anchor.classList.contains("wolfbbs-nav-active")
+      })).filter((item) => item.href && item.label);
+      if (items.length <= 8) {
+        row.dataset.wolfbbsNavCompact = "1";
+        return;
+      }
+      const keep = [];
+      const seen = new Set();
+      items.forEach((item, index) => {
+        const mustKeep = index < 5 || item.active;
+        if (!mustKeep) return;
+        const key = item.href + "::" + item.label;
+        if (seen.has(key)) return;
+        seen.add(key);
+        keep.push(item);
+      });
+      const overflow = items.filter((item) => !keep.some((entry) => entry.href === item.href && entry.label === item.label));
+      row.innerHTML = "";
+      keep.forEach((item) => {
+        const link = document.createElement("a");
+        link.href = item.href;
+        link.textContent = item.label;
+        if (item.active) link.classList.add("wolfbbs-nav-active");
+        row.appendChild(link);
+      });
+      if (overflow.length) {
+        const details = document.createElement("details");
+        details.className = "wolfbbs-nav-more";
+        const summary = document.createElement("summary");
+        summary.textContent = "More (" + overflow.length + ")";
+        const panel = document.createElement("div");
+        panel.className = "wolfbbs-nav-more-panel";
+        overflow.forEach((item) => {
+          const link = document.createElement("a");
+          link.href = item.href;
+          link.textContent = item.label;
+          if (item.active) link.classList.add("wolfbbs-nav-active");
+          panel.appendChild(link);
+        });
+        details.appendChild(summary);
+        details.appendChild(panel);
+        row.appendChild(details);
+      }
+      row.dataset.wolfbbsNavCompact = "1";
+    });
+  }
+  compactNavRows();
   function routeKind(pathname) {
     const p = String(pathname || "");
     if (p.startsWith("/admin")) return "admin";
@@ -363,11 +416,6 @@ const modernUIScriptTag = `
     laneChip.setAttribute("data-kind", kind);
     laneChip.textContent = routeLabel(kind);
     heroMeta.appendChild(laneChip);
-
-    const jumpChip = document.createElement("span");
-    jumpChip.className = "wolfbbs-hero-chip";
-    jumpChip.textContent = "Ctrl+K omnibar";
-    heroMeta.appendChild(jumpChip);
 
     h1.parentNode.insertBefore(hero, h1);
     hero.appendChild(heroMain);
@@ -1224,11 +1272,6 @@ const modernUIScriptTag = `
     const heroMeta = document.querySelector(".wolfbbs-page-hero-meta");
     if (!heroMeta || heroMeta.querySelector(".wolfbbs-pref-controls")) return;
     applyFocusMode(readFocusMode());
-    mountNetworkStatusChip(heroMeta);
-    mountLatencyChip(heroMeta);
-    mountTelemetryChip(heroMeta);
-    mountSessionDurationChip(heroMeta);
-    mountSessionTrailChip(heroMeta);
     const controls = document.createElement("div");
     controls.className = "wolfbbs-pref-controls";
     const menuDetails = [];
@@ -1266,10 +1309,18 @@ const modernUIScriptTag = `
       panel.appendChild(button);
       return button;
     }
+    const statusPanel = buildMenu("Status", "Connection, session health, and focus mode.");
+    const statusGrid = document.createElement("div");
+    statusGrid.className = "wolfbbs-status-grid";
+    statusPanel.appendChild(statusGrid);
+    mountNetworkStatusChip(statusGrid);
+    mountLatencyChip(statusGrid);
+    mountTelemetryChip(statusGrid);
+    mountSessionDurationChip(statusGrid);
+    mountSessionTrailChip(statusGrid);
     const viewPanel = buildMenu("View", "Theme, layout, motion, and reading comfort.");
     const routePanel = buildMenu("Route", "Save, pin, and share where you are.");
-    const deskPanel = buildMenu("Desk", "Notes, notifications, and saved work.");
-    const opsPanel = buildMenu("Ops", "Diagnostics, watchlists, and release helpers.");
+    const toolsPanel = buildMenu("Tools", "Notes, diagnostics, reminders, and operator utilities.");
     const helpPanel = buildMenu("Help", "Guides, shortcuts, and bug capture.");
 
     const profileKey = "wolfbbs:ui:profile:v1";
@@ -1513,7 +1564,7 @@ const modernUIScriptTag = `
       });
       trackTelemetry("route:copy");
     });
-    controls.appendChild(copyRoute);
+    mountMenuButton(routePanel, copyRoute);
 
     const trailBack = document.createElement("button");
     trailBack.type = "button";
@@ -1530,13 +1581,14 @@ const modernUIScriptTag = `
     }
     function syncTrailBackLabel() {
       const prevRoute = previousTrailRoute();
+      trailBack.textContent = "Back";
       if (!prevRoute) {
-        trailBack.textContent = "Back";
         trailBack.disabled = true;
+        trailBack.title = "No previous route yet";
         return;
       }
-      trailBack.textContent = "Back: " + humanizeRoutePart(prevRoute.split("/").filter(Boolean).slice(-1)[0] || "start");
       trailBack.disabled = false;
+      trailBack.title = "Back to " + humanizeRoutePart(prevRoute.split("/").filter(Boolean).slice(-1)[0] || "start");
     }
     trailBack.addEventListener("click", () => {
       const prevRoute = previousTrailRoute();
@@ -1658,7 +1710,7 @@ const modernUIScriptTag = `
     });
     syncAutoRefreshLabel();
     if (autoRefreshState.enabled) armAutoRefresh();
-    mountMenuButton(opsPanel, autoRefreshButton);
+    mountMenuButton(toolsPanel, autoRefreshButton);
 
     const exportTelemetry = document.createElement("button");
     exportTelemetry.type = "button";
@@ -1668,7 +1720,7 @@ const modernUIScriptTag = `
       showToast("UX telemetry exported", "ok");
       trackTelemetry("telemetry:export");
     });
-    mountMenuButton(opsPanel, exportTelemetry);
+    mountMenuButton(toolsPanel, exportTelemetry);
 
     const exportDiag = document.createElement("button");
     exportDiag.type = "button";
@@ -1687,7 +1739,7 @@ const modernUIScriptTag = `
       showToast("UI diagnostics exported", "ok");
       trackTelemetry("diagnostics:export");
     });
-    mountMenuButton(opsPanel, exportDiag);
+    mountMenuButton(toolsPanel, exportDiag);
 
     const toastCenter = document.createElement("button");
     toastCenter.type = "button";
@@ -1697,7 +1749,7 @@ const modernUIScriptTag = `
         window.wolfbbsOpenToastCenter();
       }
     });
-    mountMenuButton(deskPanel, toastCenter);
+    mountMenuButton(toolsPanel, toastCenter);
 
     const quickNotes = document.createElement("button");
     quickNotes.type = "button";
@@ -1710,7 +1762,7 @@ const modernUIScriptTag = `
       }
       showToast("Quick notes unavailable", "error");
     });
-    mountMenuButton(deskPanel, quickNotes);
+    mountMenuButton(toolsPanel, quickNotes);
 
     const workspace = document.createElement("button");
     workspace.type = "button";
@@ -1720,7 +1772,7 @@ const modernUIScriptTag = `
         window.wolfbbsOpenWorkspaceHub();
       }
     });
-    mountMenuButton(deskPanel, workspace);
+    mountMenuButton(toolsPanel, workspace);
 
     const checkpoints = document.createElement("button");
     checkpoints.type = "button";
@@ -1730,7 +1782,7 @@ const modernUIScriptTag = `
         window.wolfbbsOpenCheckpointHub();
       }
     });
-    mountMenuButton(deskPanel, checkpoints);
+    mountMenuButton(toolsPanel, checkpoints);
 
     const spotlight = document.createElement("button");
     spotlight.type = "button";
@@ -1740,7 +1792,7 @@ const modernUIScriptTag = `
         window.wolfbbsOpenSpotlight();
       }
     });
-    mountMenuButton(deskPanel, spotlight);
+    mountMenuButton(toolsPanel, spotlight);
 
     const drafts = document.createElement("button");
     drafts.type = "button";
@@ -1750,7 +1802,7 @@ const modernUIScriptTag = `
         window.wolfbbsOpenDraftCenter();
       }
     });
-    mountMenuButton(deskPanel, drafts);
+    mountMenuButton(toolsPanel, drafts);
 
     const kpiWatch = document.createElement("button");
     kpiWatch.type = "button";
@@ -1760,7 +1812,7 @@ const modernUIScriptTag = `
         window.wolfbbsOpenKPIWatchCenter();
       }
     });
-    mountMenuButton(opsPanel, kpiWatch);
+    mountMenuButton(toolsPanel, kpiWatch);
 
     const incidents = document.createElement("button");
     incidents.type = "button";
@@ -1770,7 +1822,7 @@ const modernUIScriptTag = `
         window.wolfbbsOpenIncidentConsole();
       }
     });
-    mountMenuButton(opsPanel, incidents);
+    mountMenuButton(toolsPanel, incidents);
 
     const playbook = document.createElement("button");
     playbook.type = "button";
@@ -1780,7 +1832,7 @@ const modernUIScriptTag = `
         window.wolfbbsOpenPlaybookRunner();
       }
     });
-    mountMenuButton(opsPanel, playbook);
+    mountMenuButton(toolsPanel, playbook);
 
     const reminders = document.createElement("button");
     reminders.type = "button";
@@ -1790,7 +1842,7 @@ const modernUIScriptTag = `
         window.wolfbbsOpenReminderScheduler();
       }
     });
-    mountMenuButton(opsPanel, reminders);
+    mountMenuButton(toolsPanel, reminders);
 
     const releaseGate = document.createElement("button");
     releaseGate.type = "button";
@@ -1800,7 +1852,7 @@ const modernUIScriptTag = `
         window.wolfbbsOpenReleaseGate();
       }
     });
-    mountMenuButton(opsPanel, releaseGate);
+    mountMenuButton(toolsPanel, releaseGate);
 
     const feedback = document.createElement("button");
     feedback.type = "button";
@@ -1948,7 +2000,7 @@ const modernUIScriptTag = `
     });
 
     heroMeta.appendChild(controls);
-    attachFocusTimerUI(heroMeta, controls);
+    attachFocusTimerUI(statusGrid, statusPanel);
   }
 
   function mountSectionToggles() {
@@ -2343,6 +2395,7 @@ const modernUIScriptTag = `
 
   function mountRouteScorecard() {
     if (document.querySelector(".wolfbbs-scorecard")) return;
+    if (routeKind(currentRoute) !== "admin" || currentRouteProfile.dense) return;
     const forms = document.querySelectorAll("form").length;
     const tables = document.querySelectorAll("table").length;
     const links = document.querySelectorAll("a[href]").length;
@@ -2352,25 +2405,18 @@ const modernUIScriptTag = `
     const structure = Math.min(30, document.querySelectorAll("section,article").length);
     const score = clamp(actionable + guidance + structure, 0, 100);
     const level = score >= 76 ? "strong" : score >= 56 ? "ok" : "warn";
+    if (score >= 76) return;
     const bar = document.createElement("div");
     bar.className = "wolfbbs-scorecard";
     const scorePill = document.createElement("span");
     scorePill.className = "wolfbbs-score-pill";
     scorePill.setAttribute("data-level", level === "strong" ? "strong" : level === "warn" ? "warn" : "ok");
-    scorePill.textContent = "Route readiness " + score + "/100";
+    scorePill.textContent = "Operator review " + score + "/100";
     bar.appendChild(scorePill);
-    const a = document.createElement("span");
-    a.className = "wolfbbs-score-pill";
-    a.textContent = "Actions " + actionable;
-    bar.appendChild(a);
-    const g = document.createElement("span");
-    g.className = "wolfbbs-score-pill";
-    g.textContent = "Guidance " + guidance;
-    bar.appendChild(g);
-    const s = document.createElement("span");
-    s.className = "wolfbbs-score-pill";
-    s.textContent = "Structure " + structure;
-    bar.appendChild(s);
+    const note = document.createElement("p");
+    note.className = "wolfbbs-scorecard-note";
+    note.textContent = actionable + " actions • " + guidance + " guidance cues • " + structure + " structure blocks";
+    bar.appendChild(note);
     const hero = document.querySelector(".wolfbbs-page-hero");
     if (hero && hero.parentNode) {
       hero.parentNode.insertBefore(bar, hero.nextSibling);
@@ -3924,7 +3970,7 @@ const modernUIScriptTag = `
     const hero = document.querySelector(".wolfbbs-page-hero");
     const heroMeta = document.querySelector(".wolfbbs-page-hero-meta");
     const navRow = document.querySelector("p.wolfbbs-nav-row");
-    const routeActions = actionsForRoute(currentRoute).slice(0, 4);
+    const routeActions = actionsForRoute(currentRoute).slice(0, currentRouteProfile.dense ? 2 : 3);
 
     // 1-4: route compass, context path, route actions, and surface metrics.
     if (!document.querySelector(".wolfbbs-ux20-compass")) {
@@ -3932,14 +3978,14 @@ const modernUIScriptTag = `
       compass.className = "wolfbbs-ux20-compass";
       const left = document.createElement("div");
       const heading = document.createElement("strong");
-      heading.textContent = "Route Compass";
+      heading.textContent = "On this page";
       left.appendChild(heading);
       const sub = document.createElement("p");
       const path = document.createElement("span");
       path.className = "wolfbbs-ux20-path";
       path.textContent = currentRoute || "/";
       sub.appendChild(path);
-      sub.appendChild(document.createTextNode(" \u2022 optimized flow mode"));
+      sub.appendChild(document.createTextNode(" \u2022 primary actions and structure at a glance"));
       left.appendChild(sub);
       if (routeActions.length) {
         const row = document.createElement("div");
@@ -3953,21 +3999,17 @@ const modernUIScriptTag = `
         });
         left.appendChild(row);
       }
-      compass.appendChild(left);
-      const metrics = document.createElement("div");
-      metrics.className = "wolfbbs-ux20-metrics";
       const stats = [
         { label: "Forms", value: document.querySelectorAll("form").length },
         { label: "Tables", value: document.querySelectorAll("table").length },
         { label: "Sections", value: document.querySelectorAll("main.wolfbbs-main > section, main.wolfbbs-main > article").length || document.querySelectorAll("section,article").length },
         { label: "Inputs", value: document.querySelectorAll("input,textarea,select").length }
       ];
-      stats.forEach((row) => {
-        const chip = document.createElement("span");
-        chip.textContent = row.label + " " + row.value;
-        metrics.appendChild(chip);
-      });
-      compass.appendChild(metrics);
+      const metrics = document.createElement("p");
+      metrics.className = "wolfbbs-ux20-metrics-summary";
+      metrics.textContent = stats.map((row) => row.label + " " + row.value).join(" \u2022 ");
+      left.appendChild(metrics);
+      compass.appendChild(left);
       if (hero && hero.parentNode) {
         hero.parentNode.insertBefore(compass, hero.nextSibling);
       } else if (navRow && navRow.parentNode) {
@@ -3977,21 +4019,8 @@ const modernUIScriptTag = `
       }
     }
 
-    // 5: floating primary action for faster loop execution.
-    if (routeActions.length && !document.getElementById("wolfbbsUX20PrimaryAction")) {
-      const primary = document.createElement("button");
-      primary.id = "wolfbbsUX20PrimaryAction";
-      primary.type = "button";
-      primary.textContent = "Next: " + routeActions[0].label;
-      primary.addEventListener("click", () => {
-        trackTelemetry("ux20:primary-action");
-        location.assign(routeActions[0].href);
-      });
-      document.body.appendChild(primary);
-    }
-
-    // 6: end-of-page next-step guide with route actions and trail.
-    if (main && !main.querySelector(".wolfbbs-ux20-next")) {
+    // 5-6: end-of-page next-step guide with route actions and trail.
+    if (main && !main.querySelector(".wolfbbs-ux20-next") && !currentRouteProfile.dense) {
       const next = document.createElement("section");
       next.className = "wolfbbs-ux20-next";
       const titleNode = document.createElement("strong");
@@ -4026,57 +4055,41 @@ const modernUIScriptTag = `
       main.appendChild(next);
     }
 
-    // 7-9: section filter, completion meter, and jump-to-next-incomplete.
+    // 7-9: section filter and jump-to-next-incomplete live inside the tools panel.
     const sectionNav = document.querySelector(".wolfbbs-section-nav");
     if (sectionNav && sectionNav.dataset.wolfbbsUx20Enhanced !== "1") {
       sectionNav.dataset.wolfbbsUx20Enhanced = "1";
-      const filter = document.createElement("input");
-      filter.type = "search";
-      filter.className = "wolfbbs-ux20-section-filter";
-      filter.placeholder = "Filter sections";
-      const meter = document.createElement("span");
-      meter.className = "wolfbbs-ux20-section-meter";
-      meter.textContent = "Done 0/0";
-      const jump = document.createElement("button");
-      jump.type = "button";
-      jump.className = "wolfbbs-toolbar-button";
-      jump.textContent = "Next open";
-      sectionNav.insertBefore(filter, sectionNav.firstChild);
-      sectionNav.insertBefore(meter, filter.nextSibling);
-      sectionNav.insertBefore(jump, meter.nextSibling);
-      filter.addEventListener("input", () => {
-        const q = (filter.value || "").trim().toLowerCase();
-        Array.from(sectionNav.querySelectorAll('a[href^="#"]')).forEach((link) => {
-          const hit = !q || (link.textContent || "").toLowerCase().includes(q);
-          link.style.display = hit ? "" : "none";
-          link.classList.toggle("wolfbbs-ux20-highlight", Boolean(q) && hit);
+      const toolsPanel = sectionNav.wolfbbsToolsPanel || sectionNav.querySelector(".wolfbbs-section-nav-tools-panel");
+      if (toolsPanel) {
+        const filter = document.createElement("input");
+        filter.type = "search";
+        filter.className = "wolfbbs-ux20-section-filter";
+        filter.placeholder = "Find section";
+        const jump = document.createElement("button");
+        jump.type = "button";
+        jump.className = "wolfbbs-toolbar-button wolfbbs-section-nav-tool-button";
+        jump.textContent = "Next open";
+        toolsPanel.insertBefore(filter, toolsPanel.firstChild || null);
+        toolsPanel.insertBefore(jump, filter.nextSibling);
+        filter.addEventListener("input", () => {
+          const q = (filter.value || "").trim().toLowerCase();
+          Array.from(sectionNav.querySelectorAll('a[href^="#"]')).forEach((link) => {
+            const hit = !q || (link.textContent || "").toLowerCase().includes(q);
+            link.style.display = hit ? "" : "none";
+            link.classList.toggle("wolfbbs-ux20-highlight", Boolean(q) && hit);
+          });
         });
-      });
-      jump.addEventListener("click", () => {
-        const nextHeading = Array.from(document.querySelectorAll("h2[id],h3[id]")).find((heading) => !heading.classList.contains("wolfbbs-section-done"));
-        if (!nextHeading) {
-          showToast("All visible sections marked done", "ok");
-          return;
-        }
-        location.hash = "#" + nextHeading.id;
-        nextHeading.scrollIntoView({ behavior: "smooth", block: "start" });
-        trackTelemetry("ux20:section-next-open");
-      });
-      const syncMeter = () => {
-        const headings = Array.from(document.querySelectorAll("h2[id],h3[id]"));
-        if (!headings.length) {
-          meter.textContent = "Done 0/0";
-          return;
-        }
-        const done = headings.filter((heading) => heading.classList.contains("wolfbbs-section-done")).length;
-        meter.textContent = "Done " + done + "/" + headings.length;
-      };
-      syncMeter();
-      document.addEventListener("click", (event) => {
-        if (event.target && event.target.classList && event.target.classList.contains("wolfbbs-section-done-toggle")) {
-          window.setTimeout(syncMeter, 0);
-        }
-      });
+        jump.addEventListener("click", () => {
+          const nextHeading = Array.from(document.querySelectorAll("h2[id],h3[id]")).find((heading) => !heading.classList.contains("wolfbbs-section-done"));
+          if (!nextHeading) {
+            showToast("All visible sections marked done", "ok");
+            return;
+          }
+          location.hash = "#" + nextHeading.id;
+          nextHeading.scrollIntoView({ behavior: "smooth", block: "start" });
+          trackTelemetry("ux20:section-next-open");
+        });
+      }
     }
 
     // 10-12: form completion meter, required markers, and quick reset helper.
@@ -4294,15 +4307,6 @@ const modernUIScriptTag = `
       });
     }
 
-    // 20: visible status chip so callers know UX pass is active.
-    if (heroMeta && !heroMeta.querySelector('[data-kind="ux20"]')) {
-      const chip = document.createElement("span");
-      chip.className = "wolfbbs-hero-chip";
-      chip.setAttribute("data-kind", "ux20");
-      chip.textContent = "UX20 active";
-      chip.title = "20 UX enhancements enabled";
-      heroMeta.appendChild(chip);
-    }
   }
 
   mountSkipAndScrollUI();
@@ -5496,12 +5500,10 @@ const modernUIScriptTag = `
       pinRail.innerHTML = "";
       const pinIDs = Object.keys(sectionPins).filter((id) => sectionPins[id]);
       if (!pinIDs.length) {
-        const note = document.createElement("span");
-        note.className = "wolfbbs-muted";
-        note.textContent = "Pin important sections for quick return.";
-        pinRail.appendChild(note);
+        pinRail.hidden = true;
         return;
       }
+      pinRail.hidden = false;
       pinIDs.forEach((id) => {
         const heading = document.getElementById(id);
         if (!heading) return;
@@ -5519,6 +5521,16 @@ const modernUIScriptTag = `
     progress.className = "wolfbbs-section-progress";
     progress.textContent = "Sections 0/" + sectionHeadings.length;
     nav.appendChild(progress);
+    const toolsMenu = document.createElement("details");
+    toolsMenu.className = "wolfbbs-section-nav-tools";
+    const toolsSummary = document.createElement("summary");
+    toolsSummary.textContent = "Tools";
+    const toolsPanel = document.createElement("div");
+    toolsPanel.className = "wolfbbs-section-nav-tools-panel";
+    toolsMenu.appendChild(toolsSummary);
+    toolsMenu.appendChild(toolsPanel);
+    nav.appendChild(toolsMenu);
+    nav.wolfbbsToolsPanel = toolsPanel;
     const collapseAll = document.createElement("button");
     collapseAll.type = "button";
     collapseAll.className = "wolfbbs-section-toggle";
@@ -5531,7 +5543,7 @@ const modernUIScriptTag = `
       });
       trackTelemetry("sections:collapse-all");
     });
-    nav.appendChild(collapseAll);
+    toolsPanel.appendChild(collapseAll);
     const expandAll = document.createElement("button");
     expandAll.type = "button";
     expandAll.className = "wolfbbs-section-toggle";
@@ -5544,7 +5556,7 @@ const modernUIScriptTag = `
       });
       trackTelemetry("sections:expand-all");
     });
-    nav.appendChild(expandAll);
+    toolsPanel.appendChild(expandAll);
     const copyAllLinks = document.createElement("button");
     copyAllLinks.type = "button";
     copyAllLinks.className = "wolfbbs-section-toggle";
@@ -5558,14 +5570,16 @@ const modernUIScriptTag = `
       });
       trackTelemetry("sections:copy-all");
     });
-    nav.appendChild(copyAllLinks);
+    toolsPanel.appendChild(copyAllLinks);
     const linkMap = new Map();
     const seenSection = new Set();
     sectionHeadings.forEach((heading, idx) => {
       if (!heading.id) heading.id = "wolfbbs-section-" + idx;
       const link = document.createElement("a");
       link.href = "#" + heading.id;
-      link.textContent = (heading.dataset.navLabel || headingBaseLabel(heading)) + " • " + readingMinutesForHeading(heading) + "m";
+      const label = heading.dataset.navLabel || headingBaseLabel(heading);
+      link.textContent = label;
+      link.title = label + " • about " + readingMinutesForHeading(heading) + " min";
       nav.appendChild(link);
       linkMap.set(heading.id, link);
     });
@@ -6540,22 +6554,26 @@ const modernUIScriptTag = `
         field.addEventListener("change", queueDraftSave);
       });
       const submitter = form.querySelector('button[type="submit"], input[type="submit"]');
+      const stickySubmitEnabled = Boolean(submitter) && form.hasAttribute("data-sticky-submit");
+      if (stickySubmitEnabled) {
+        const dock = document.createElement("div");
+        dock.className = "wolfbbs-form-actions-sticky";
+        const action = document.createElement("button");
+        action.type = "button";
+        const submitLabel = String(submitter.textContent || submitter.value || "Submit").replace(/\s+/g, " ").trim() || "Submit";
+        action.textContent = submitLabel;
+        action.title = "Primary action: " + submitLabel;
+        action.addEventListener("click", () => {
+          if (typeof form.requestSubmit === "function") {
+            form.requestSubmit(submitter);
+            return;
+          }
+          submitter.click();
+        });
+        dock.appendChild(action);
+        form.appendChild(dock);
+      }
       if (!submitter) return;
-      const dock = document.createElement("div");
-      dock.className = "wolfbbs-form-actions-sticky";
-      const action = document.createElement("button");
-      action.type = "button";
-      action.textContent = "Submit form";
-      action.title = "Primary action: " + (submitter.textContent || submitter.value || "Submit");
-      action.addEventListener("click", () => {
-        if (typeof form.requestSubmit === "function") {
-          form.requestSubmit(submitter);
-          return;
-        }
-        submitter.click();
-      });
-      dock.appendChild(action);
-      form.appendChild(dock);
       form.addEventListener("submit", () => {
         const values = captureReplayPayload(form);
         const hasAny = Object.values(values).some((value) => {
