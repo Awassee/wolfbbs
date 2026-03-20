@@ -7,12 +7,12 @@ Launch links:
 - [Start Here](START_HERE.md)
 - [Feature Datasheet](DATASHEET.md)
 - [Documentation Hub](README.md)
-- [Release v1.1.26 notes](releases/v1.1.26.md)
+- [Release v1.1.27 notes](releases/v1.1.27.md)
 - [GitHub Releases](https://github.com/Awassee/wolfbbs/releases)
 
-## Release v1.1.26 Snapshot
+## Release v1.1.27 Snapshot
 
-This showcase tracks the `v1.1.26` distribution target: SSH-first caller flow, full admin parity, modern gateway surfaces, and turnkey install/upgrade lifecycle ready for GitHub delivery.
+This showcase tracks the `v1.1.27` distribution target: SSH-first caller flow, full admin parity, modern gateway surfaces, and turnkey install/upgrade lifecycle ready for GitHub delivery.
 
 ## Product Description
 
