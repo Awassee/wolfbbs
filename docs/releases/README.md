@@ -1,8 +1,8 @@
 # WolfBBS Release Notes Index
 
-Current distro target: `v1.1.22`
+Current public release: `v1.1.23`
 
-- [v1.1.22](v1.1.22.md): current release candidate for public distribution.
+- [v1.1.23](v1.1.23.md): current public distribution release.
 - [v1.0.0](v1.0.0.md): original consumer-ready distro baseline.
 
 Recent historical notes:

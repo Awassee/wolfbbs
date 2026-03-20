@@ -34,8 +34,8 @@ Options:
   -h, --help              show this help
 
 Examples:
-  scripts/release.sh --version v1.1.22
-  scripts/release.sh --version v1.1.22 --publish --github-release --remote awassee
+  scripts/release.sh --version v1.1.23
+  scripts/release.sh --version v1.1.23 --publish --github-release --remote awassee
 USAGE
 }
 
@@ -134,6 +134,7 @@ sync_current_release_refs() {
   local files=(
     "README.md"
     "docs/DATASHEET.md"
+    "docs/FIRST_30_MINUTES.md"
     "docs/INSTALL.md"
     "docs/README.md"
     "docs/SHOWCASE.md"
@@ -162,6 +163,25 @@ ensure_notes_file() {
 EOF
 }
 
+remote_repo_slug() {
+  local remote="$1"
+  local url=""
+  url="$(git remote get-url "$remote" 2>/dev/null || true)"
+  if [[ -z "$url" ]]; then
+    echo "Unable to resolve git remote URL for ${remote}" >&2
+    exit 1
+  fi
+  url="${url%.git}"
+  url="${url#git@github.com:}"
+  url="${url#https://github.com/}"
+  url="${url#http://github.com/}"
+  if [[ "$url" != */* ]]; then
+    echo "Unable to derive GitHub repo slug from remote ${remote}: ${url}" >&2
+    exit 1
+  fi
+  printf '%s\n' "$url"
+}
+
 run_verify() {
   if [[ "$NO_VERIFY" == "true" ]]; then
     return
@@ -184,7 +204,7 @@ commit_if_needed() {
   if [[ -z "$(git status --short)" ]]; then
     return
   fi
-  git add README.md docs/DATASHEET.md docs/INSTALL.md docs/README.md docs/SHOWCASE.md docs/START_HERE.md docs/releases/README.md "$NOTES_FILE"
+  git add README.md docs/DATASHEET.md docs/FIRST_30_MINUTES.md docs/INSTALL.md docs/README.md docs/SHOWCASE.md docs/START_HERE.md docs/manual-acceptance-latest.md docs/releases/README.md scripts/release.sh "$NOTES_FILE"
   git add -f "dist/${VERSION}"
   if [[ -n "$(git diff --cached --name-only)" ]]; then
     git commit -m "Ship ${VERSION}"
@@ -217,7 +237,9 @@ publish_github_release() {
   local assets=("dist/${VERSION}"/*.tar.gz)
   local checksum="dist/${VERSION}/checksums.txt"
   local manifest="dist/${VERSION}/release-manifest.txt"
-  gh release create "$VERSION" --notes-file "$NOTES_FILE" "${assets[@]}" "$checksum" "$manifest"
+  local repo_slug=""
+  repo_slug="$(remote_repo_slug "$REMOTE")"
+  gh release create "$VERSION" -R "$repo_slug" --notes-file "$NOTES_FILE" "${assets[@]}" "$checksum" "$manifest"
 }
 
 previous_tag="$(current_release_tag)"
