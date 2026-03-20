@@ -1,0 +1,51 @@
+name: Bug report
+description: Report a user-facing regression or broken workflow.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Tag or commit where you saw the problem.
+      placeholder: v1.1.27
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - Web UI
+        - SSH / ANSI
+        - IRC
+        - Installer / Upgrade
+        - Mail
+        - Files / Doors
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: List the exact steps needed to trigger the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs, screenshots, or transcripts
+      description: Include `install.sh --status`, `--doctor`, or screenshots when relevant.

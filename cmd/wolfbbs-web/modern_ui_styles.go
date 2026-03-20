@@ -1823,10 +1823,14 @@ body[data-density="compact"] td{
 .wolfbbs-pref-controls{
   display:flex;
   flex-wrap:wrap;
-  gap:7px;
+  align-items:flex-start;
+  justify-content:flex-end;
+  gap:8px;
   margin-left:auto;
+  max-width:min(100%,52rem);
 }
-.wolfbbs-pref-controls button{
+.wolfbbs-pref-controls > button,
+.wolfbbs-pref-menu > summary{
   min-height:26px;
   padding:4px 10px;
   border-radius:999px;
@@ -1838,13 +1842,67 @@ body[data-density="compact"] td{
   font-family:"Manrope","Avenir Next","Segoe UI","Helvetica Neue",sans-serif;
   font-weight:760;
 }
-.wolfbbs-pref-controls button:hover{
+.wolfbbs-pref-controls > button:hover,
+.wolfbbs-pref-menu > summary:hover{
   background:#eaf2fb;
 }
-.wolfbbs-pref-controls button[data-control-priority="secondary"]{
-  opacity:.95;
+.wolfbbs-pref-menu{
+  position:relative;
 }
-body.wolfbbs-controls-compact .wolfbbs-pref-controls button[data-control-priority="secondary"]{
+.wolfbbs-pref-menu > summary{
+  display:inline-flex;
+  align-items:center;
+  list-style:none;
+  cursor:pointer;
+  white-space:nowrap;
+}
+.wolfbbs-pref-menu > summary::-webkit-details-marker{
+  display:none;
+}
+.wolfbbs-pref-menu[open] > summary{
+  background:#e2efff;
+}
+.wolfbbs-pref-menu-panel{
+  position:absolute;
+  top:calc(100% + 8px);
+  right:0;
+  z-index:54;
+  display:grid;
+  gap:8px;
+  width:min(320px,calc(100vw - 2rem));
+  padding:11px;
+  border:1px solid #c8d7ea;
+  border-radius:18px;
+  background:#fcfeff;
+  box-shadow:0 24px 44px rgba(9,41,81,.18);
+}
+.wolfbbs-help-copy{
+  margin:0;
+  padding:.75rem .9rem;
+  border:1px solid rgba(122,162,205,.26);
+  border-left:3px solid rgba(33,109,196,.68);
+  border-radius:14px;
+  background:linear-gradient(180deg,rgba(235,244,255,.9),rgba(248,251,255,.98));
+  color:#3e5b79;
+  font-size:.78rem;
+  line-height:1.55;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.72);
+}
+.wolfbbs-pref-menu-panel button{
+  display:flex;
+  align-items:center;
+  width:100%;
+  justify-content:flex-start;
+  text-align:left;
+  border-radius:12px;
+}
+.wolfbbs-pref-menu-note{
+  font-size:.75rem;
+}
+body.wolfbbs-controls-compact .wolfbbs-pref-controls{
+  gap:6px;
+}
+body.wolfbbs-controls-compact .wolfbbs-pref-menu-note{
   display:none;
 }
 .wolfbbs-favorites-rail{
@@ -2740,6 +2798,9 @@ body.wolfbbs-motion-reduced *::after{
   box-shadow:0 16px 26px rgba(9,41,81,.2);
   overflow:hidden;
 }
+#wolfbbsActionDock[data-collapsed="true"]{
+  width:auto;
+}
 #wolfbbsActionDock[data-side="left"]{
   right:auto;
   left:18px;
@@ -2757,6 +2818,9 @@ body.wolfbbs-motion-reduced *::after{
   letter-spacing:.02em;
   text-transform:uppercase;
   color:#234d7a;
+}
+#wolfbbsActionDock[data-collapsed="true"] .wolfbbs-action-dock-head{
+  padding:9px 10px;
 }
 .wolfbbs-action-dock-head button{
   min-height:30px;
@@ -2787,6 +2851,9 @@ body.wolfbbs-motion-reduced *::after{
 }
 #wolfbbsActionDock[data-collapsed="true"] .wolfbbs-action-dock-body{
   display:none;
+}
+#wolfbbsActionDock[data-collapsed="true"] .wolfbbs-inline-actions{
+  gap:0;
 }
 .wolfbbs-action-dock-group{
   display:grid;
@@ -2938,6 +3005,12 @@ h2.wolfbbs-section-done{
   font-weight:760;
   box-shadow:0 14px 22px rgba(9,41,81,.15);
 }
+#wolfbbsNotesButton,
+#wolfbbsUXDiagButton,
+#wolfbbsFeedbackButton,
+#wolfbbsBugButton{
+  display:none !important;
+}
 #wolfbbsBugOverlay{
   position:fixed;
   inset:0;
@@ -2985,6 +3058,9 @@ h2.wolfbbs-section-done{
   border-radius:14px;
   box-shadow:0 20px 34px rgba(9,41,81,.22);
   padding:14px;
+}
+#wolfbbsContextHelpBody{
+  margin:0 0 12px;
 }
 /* Nostalgia pass: preserve classic BBS feel while keeping modern usability. */
 :root{
@@ -3119,7 +3195,8 @@ button,input[type=submit],input[type=button],
 .wolfbbs-compose-toolbar button,
 .wolfbbs-handle-assist button,
 .wolfbbs-channel-badges button,
-.wolfbbs-pref-controls button{
+.wolfbbs-pref-controls button,
+.wolfbbs-pref-menu > summary{
   border:1px solid #5f88ac;
   color:#eef9ff;
   font-family:inherit;
@@ -3130,7 +3207,8 @@ button:hover,input[type=submit]:hover,input[type=button]:hover,
 .wolfbbs-compose-toolbar button:hover,
 .wolfbbs-handle-assist button:hover,
 .wolfbbs-channel-badges button:hover,
-.wolfbbs-pref-controls button:hover{
+.wolfbbs-pref-controls button:hover,
+.wolfbbs-pref-menu > summary:hover{
   background:linear-gradient(180deg,#3f6689,#2c4862);
   border-color:#81abd2;
 }
@@ -3979,6 +4057,7 @@ main.wolfbbs-main h3 > .wolfbbs-section-done-toggle{
 .wolfbbs-empty-actions a,
 .wolfbbs-action-dock-links a,
 .wolfbbs-palette-history button,
+.wolfbbs-pref-menu > summary,
 #wolfbbsNotesButton,
 #wolfbbsUXDiagButton,
 #wolfbbsFeedbackButton,
@@ -3996,6 +4075,7 @@ main.wolfbbs-main h3 > .wolfbbs-section-done-toggle{
 .wolfbbs-handoff-box,
 .wolfbbs-column-toggle-panel,
 #wolfbbsActionDock,
+.wolfbbs-pref-menu-panel,
 #wolfbbsNotesPanel,
 #wolfbbsMacroHelpPanel,
 #wolfbbsShortcutPanel,
@@ -4059,6 +4139,19 @@ main.wolfbbs-main h3 > .wolfbbs-section-done-toggle{
 }
 .wolfbbs-action-dock-group-title span{
   color:rgba(224,233,255,.62) !important;
+}
+.wolfbbs-pref-menu[open] > summary{
+  background:linear-gradient(180deg,rgba(58,84,122,.94),rgba(31,46,73,.96)) !important;
+}
+.wolfbbs-help-copy{
+  border-color:rgba(162,206,255,.18) !important;
+  border-left-color:rgba(108,188,255,.72) !important;
+  background:linear-gradient(180deg,rgba(24,35,54,.9),rgba(12,18,30,.96)) !important;
+  color:rgba(224,233,255,.78) !important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.05), 0 12px 26px rgba(0,0,0,.16);
+}
+.wolfbbs-pref-menu-note{
+  color:inherit !important;
 }
 .wolfbbs-toast{
   background:linear-gradient(180deg,rgba(17,24,38,.94),rgba(8,12,22,.94)) !important;

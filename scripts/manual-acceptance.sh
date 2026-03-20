@@ -182,8 +182,8 @@ run_auto_checks() {
     set_auto_result "BBS-004" "FAIL" "Terminal e2e failed; see scripts/test_tui_pexpect.py output"
   fi
 
-  echo "[auto] web e2e: scripts/run-e2e.sh --no-go --no-tui --web-timeout ${WEB_TIMEOUT_SECONDS}"
-  if scripts/run-e2e.sh --no-go --no-tui --web-timeout "$WEB_TIMEOUT_SECONDS"; then
+  echo "[auto] web e2e: scripts/run-e2e.sh --no-go --no-tui --web-functional-only --web-timeout ${WEB_TIMEOUT_SECONDS}"
+  if scripts/run-e2e.sh --no-go --no-tui --web-functional-only --web-timeout "$WEB_TIMEOUT_SECONDS"; then
     web_ok=true
     set_auto_result "BBS-005" "PASS" "Web e2e validated board list/read/post/reply"
     set_auto_result "BBS-009" "PASS" "Web e2e validated ANSI preference toggle in settings"

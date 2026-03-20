@@ -13,6 +13,11 @@ NO_VERIFY=false
 NO_SYNC_REFS=false
 REMOTE="origin"
 PLATFORMS=()
+RUN_SMOKE=false
+RUN_FUNCTIONAL=false
+RUN_MANUAL=false
+RUN_SECURITY=false
+WEB_TIMEOUT_SECONDS="${WOLFBBS_RELEASE_WEB_TIMEOUT_SECONDS:-900}"
 
 usage() {
   cat <<'USAGE'
@@ -28,6 +33,12 @@ Options:
   --publish               commit synced docs/notes, create tag, and push branch + tag
   --github-release        create/update GitHub release with gh after packaging
   --remote <name>         git remote to push/release against (default: origin)
+  --smoke                 run scripts/verify.sh --smoke before packaging
+  --functional            run scripts/run-e2e.sh before packaging
+  --manual-auto           run manual acceptance auto mode before packaging
+  --security              run scripts/security-audit.sh before packaging
+  --full-qa               run smoke + functional + manual acceptance + security audit before packaging
+  --web-timeout <sec>     web e2e timeout for --functional (default: 900)
   --allow-dirty           skip clean-worktree guard
   --no-verify             skip shellcheck + verify fast
   --no-sync-refs          do not replace current-release doc refs
@@ -36,6 +47,7 @@ Options:
 Examples:
   scripts/release.sh --version v1.1.23
   scripts/release.sh --version v1.1.23 --publish --github-release --remote awassee
+  scripts/release.sh --version v1.1.23 --full-qa --publish --github-release --remote awassee
 USAGE
 }
 
@@ -78,6 +90,34 @@ while [[ $# -gt 0 ]]; do
       REMOTE="$2"
       shift 2
       ;;
+    --smoke)
+      RUN_SMOKE=true
+      shift
+      ;;
+    --functional)
+      RUN_FUNCTIONAL=true
+      shift
+      ;;
+    --manual-auto)
+      RUN_MANUAL=true
+      shift
+      ;;
+    --security)
+      RUN_SECURITY=true
+      shift
+      ;;
+    --full-qa)
+      RUN_SMOKE=true
+      RUN_FUNCTIONAL=true
+      RUN_MANUAL=true
+      RUN_SECURITY=true
+      shift
+      ;;
+    --web-timeout)
+      require_value "$1" "${2:-}"
+      WEB_TIMEOUT_SECONDS="$2"
+      shift 2
+      ;;
     --allow-dirty)
       ALLOW_DIRTY=true
       shift
@@ -110,6 +150,11 @@ fi
 
 if [[ -z "$NOTES_FILE" ]]; then
   NOTES_FILE="docs/releases/${VERSION}.md"
+fi
+
+if ! [[ "$WEB_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || [[ "$WEB_TIMEOUT_SECONDS" -le 0 ]]; then
+  echo "--web-timeout must be a positive integer" >&2
+  exit 2
 fi
 
 current_release_tag() {
@@ -190,8 +235,23 @@ run_verify() {
   if [[ "$NO_VERIFY" == "true" ]]; then
     return
   fi
-  shellcheck install.sh bootstrap.sh scripts/verify.sh scripts/test-installer-regressions.sh scripts/release.sh
+  shellcheck install.sh bootstrap.sh scripts/verify.sh scripts/test-installer-regressions.sh scripts/release.sh scripts/security-audit.sh
   scripts/verify.sh --fast
+}
+
+run_extended_validation() {
+  if [[ "$RUN_SMOKE" == "true" ]]; then
+    scripts/verify.sh --smoke
+  fi
+  if [[ "$RUN_FUNCTIONAL" == "true" ]]; then
+    scripts/run-e2e.sh --web-functional-only --web-timeout "$WEB_TIMEOUT_SECONDS"
+  fi
+  if [[ "$RUN_MANUAL" == "true" ]]; then
+    scripts/manual-acceptance.sh --auto --no-smoke --report docs/manual-acceptance-latest.md
+  fi
+  if [[ "$RUN_SECURITY" == "true" ]]; then
+    scripts/security-audit.sh
+  fi
 }
 
 package_release() {
@@ -262,6 +322,7 @@ ensure_clean_worktree
 sync_current_release_refs "$previous_tag"
 ensure_notes_file
 run_verify
+run_extended_validation
 package_release
 
 if [[ "$PUBLISH" == "true" ]]; then

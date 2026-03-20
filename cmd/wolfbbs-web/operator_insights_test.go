@@ -47,16 +47,66 @@ func TestAdminCredentialReceiptQueuePopsOnce(t *testing.T) {
 func TestOperatorInsightsPersistAndCountIntoAnalytics(t *testing.T) {
 	userRepo := repository.NewInMemoryUserRepository()
 	adminRepo := repository.NewInMemoryAdminRepository()
+	boardRepo := repository.NewInMemoryBoardRepository()
+	msgRepo := repository.NewInMemoryMessageRepository()
 	authSvc := auth.NewService(userRepo)
 	if _, err := authSvc.Register("sysop", "password123"); err != nil {
 		t.Fatalf("register sysop: %v", err)
 	}
-	if _, err := authSvc.Register("caller", "password123"); err != nil {
+	caller, err := authSvc.Register("caller", "password123")
+	if err != nil {
 		t.Fatalf("register caller: %v", err)
+	}
+	board := &domain.Board{Name: "General", CreatedBy: caller.ID}
+	if err := boardRepo.Create(board); err != nil {
+		t.Fatalf("create board: %v", err)
+	}
+	if err := msgRepo.CreateMessage(&domain.Message{
+		BoardID:   board.ID,
+		AuthorID:  caller.ID,
+		Subject:   "hello",
+		Body:      "world",
+		CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("create message: %v", err)
+	}
+	chatSvc := chat.NewServiceForTest()
+	if _, err := chatSvc.Post(caller.Handle, "#lobby", "hello lobby"); err != nil {
+		t.Fatalf("chat post: %v", err)
+	}
+	if err := adminRepo.AddAudit(&domain.AdminAudit{
+		Actor:     "sysop",
+		Target:    "setup",
+		Action:    "seed_default_boards",
+		Details:   "failed: duplicate data source",
+		CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("seed audit failure: %v", err)
+	}
+	if err := adminRepo.AddAudit(&domain.AdminAudit{
+		Actor:     "sysop",
+		Target:    "app_upgrade",
+		Action:    "app_upgrade_failed",
+		Details:   "upgrade command failed",
+		CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("seed upgrade failure: %v", err)
+	}
+	if err := adminRepo.AddAudit(&domain.AdminAudit{
+		Actor:     "sysop",
+		Target:    "caller",
+		Action:    "create_user",
+		Details:   "role=user",
+		CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("seed create user audit: %v", err)
 	}
 	app := &webApp{
 		authSvc:   authSvc,
 		adminRepo: adminRepo,
+		boardRepo: boardRepo,
+		msgRepo:   msgRepo,
+		chatSvc:   chatSvc,
 		sessions:  map[string]sessionState{},
 	}
 	app.recordOperatorInsight("feedback.sent", "caller", "/feedback")
@@ -68,6 +118,13 @@ func TestOperatorInsightsPersistAndCountIntoAnalytics(t *testing.T) {
 	}
 	if weekly.FirstCallCompletions != 1 {
 		t.Fatalf("expected 1 first-call completion, got %d", weekly.FirstCallCompletions)
+	}
+	signals := app.collectOperatorSignals(7)
+	if signals.ActiveBoards != 1 || signals.ActiveChannels != 1 {
+		t.Fatalf("unexpected board/channel activity snapshot: %+v", signals)
+	}
+	if signals.SetupFailures != 1 || signals.UpgradeFailures != 1 || signals.UserCreates != 1 {
+		t.Fatalf("unexpected operator signal counts: %+v", signals)
 	}
 
 	sessionID, ok := app.createSession("sysop")
@@ -81,9 +138,41 @@ func TestOperatorInsightsPersistAndCountIntoAnalytics(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("analytics status = %d body=%s", rr.Code, rr.Body.String())
 	}
-	for _, needle := range []string{"weekly first-call completes", "weekly feedback items", "First-call completes", "Feedback items"} {
+	for _, needle := range []string{"weekly first-call completes", "weekly feedback items", "First-call completes", "Feedback items", "active boards (7d)", "setup failures (7d)", "upgrade failures (7d)"} {
 		if !strings.Contains(rr.Body.String(), needle) {
 			t.Fatalf("analytics page missing %q: %s", needle, rr.Body.String())
+		}
+	}
+}
+
+func TestRenderSysopFirstRunBlockShowsOperatorSignals(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
+	authSvc := auth.NewService(userRepo)
+	sysop, err := authSvc.Register("sysop", "password123")
+	if err != nil {
+		t.Fatalf("register sysop: %v", err)
+	}
+	app := &webApp{
+		authSvc:   authSvc,
+		adminRepo: adminRepo,
+		sessions:  map[string]sessionState{},
+	}
+	app.recordOperatorInsight("first_call.complete", "caller", "/first-call")
+	if err := adminRepo.AddAudit(&domain.AdminAudit{
+		Actor:     "sysop",
+		Target:    "app_upgrade",
+		Action:    "app_upgrade_failed",
+		Details:   "boom",
+		CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("seed audit: %v", err)
+	}
+
+	body := app.renderSysopFirstRunBlock(sysop)
+	for _, needle := range []string{"First 15 Minutes As Sysop", "7-Day Operator Signals", "setup failures", "upgrade failures"} {
+		if !strings.Contains(body, needle) {
+			t.Fatalf("first-run block missing %q: %s", needle, body)
 		}
 	}
 }

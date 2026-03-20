@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Operator docs
+    url: https://github.com/Awassee/wolfbbs/blob/main/docs/START_HERE.md
+    about: Start here for install, launch, and operations guidance before opening an issue.
+  - name: Troubleshooting guide
+    url: https://github.com/Awassee/wolfbbs/blob/main/docs/TROUBLESHOOTING.md
+    about: Gather status, doctor, and debug-bundle output first for install/runtime issues.

@@ -72,44 +72,59 @@ test("extended caller surfaces and exports stay healthy", async ({ page }) => {
   await gotoHealthy(page, "/today", /Today Brief/i);
   const prefControls = page.locator(".wolfbbs-pref-controls");
   await expect(prefControls).toBeVisible();
+  const openControlMenu = async (label) => {
+    const menu = prefControls.locator(".wolfbbs-pref-menu").filter({ has: page.locator("summary", { hasText: label }) }).first();
+    await expect(menu).toBeVisible();
+    await menu.locator("summary").click();
+    await expect(menu).toHaveAttribute("open", "");
+    return menu;
+  };
   const body = page.locator("body");
-  const layoutButton = prefControls.getByRole("button", { name: /Layout:/i });
+  const viewMenu = await openControlMenu("View");
+  const layoutButton = viewMenu.getByRole("button", { name: /Layout:/i });
   const layoutBefore = await body.getAttribute("data-layout-mode");
   await layoutButton.click();
   const layoutAfter = await body.getAttribute("data-layout-mode");
   expect(layoutAfter).not.toBe(layoutBefore);
-  await expect(prefControls.getByRole("button", { name: /Accent:/i })).toBeVisible();
-  await expect(prefControls.getByRole("button", { name: /Motion:/i })).toBeVisible();
-  await expect(prefControls.getByRole("button", { name: /Profile:/i })).toBeVisible();
+  await expect(viewMenu.getByRole("button", { name: /Accent:/i })).toBeVisible();
+  await expect(viewMenu.getByRole("button", { name: /Motion:/i })).toBeVisible();
+  await expect(viewMenu.getByRole("button", { name: /Profile:/i })).toBeVisible();
   await expect(prefControls.getByRole("button", { name: /Back:/i })).toBeVisible();
-  const shortcutsButton = prefControls.getByRole("button", { name: "Shortcuts" });
+  const compactControls = viewMenu.getByRole("button", { name: /Controls:/i });
+  await compactControls.click();
+  await expect(page.locator("body")).toHaveClass(/wolfbbs-controls-compact/);
+  await compactControls.click();
+  await expect(page.locator("#wolfbbsNotesButton")).toBeHidden();
+  await expect(page.locator("#wolfbbsUXDiagButton")).toBeHidden();
+  await expect(page.locator("#wolfbbsFeedbackButton")).toBeHidden();
+  await expect(page.locator("#wolfbbsBugButton")).toBeHidden();
+  const helpMenu = await openControlMenu("Help");
+  const shortcutsButton = helpMenu.getByRole("button", { name: "Shortcuts" });
   await expect(shortcutsButton).toBeVisible();
   await shortcutsButton.click();
   await expect(page.locator("#wolfbbsShortcutOverlay")).toHaveClass(/active/);
   await page.keyboard.press("Escape");
   await expect(page.locator("#wolfbbsShortcutOverlay")).not.toHaveClass(/active/);
-  const compactControls = prefControls.getByRole("button", { name: /Controls:/i });
-  await compactControls.click();
-  await expect(page.locator("body")).toHaveClass(/wolfbbs-controls-compact/);
-  await compactControls.click();
 
-  const pinRouteButton = prefControls.getByRole("button", { name: /Pin route|Unpin route/i });
+  const routeMenu = await openControlMenu("Route");
+  const pinRouteButton = routeMenu.getByRole("button", { name: /Pin route|Unpin route/i });
   await pinRouteButton.click();
   const actionDock = page.locator("#wolfbbsActionDock");
   await expect(actionDock).toBeVisible();
+  await expect(actionDock.getByRole("button", { name: "Open" })).toBeVisible();
+  await expect(actionDock.getByRole("button", { name: /Dock left|Dock right/i })).toBeHidden();
+  await actionDock.getByRole("button", { name: "Open" }).click();
   await expect(actionDock).toContainText(/Pinned routes/i);
   await expect(actionDock.getByRole("button", { name: /Dock left|Dock right/i })).toBeVisible();
   const dockSearch = actionDock.locator('.wolfbbs-action-dock-search input[type="search"]');
-  if (!(await dockSearch.isVisible())) {
-    await actionDock.getByRole("button", { name: "Expand" }).click();
-    await expect(dockSearch).toBeVisible();
-  }
+  await expect(dockSearch).toBeVisible();
   await dockSearch.fill("pinned");
   await expect(actionDock).toContainText(/Pinned routes/i);
 
   await expect(page.locator(".wolfbbs-section-nav").first().getByRole("button", { name: "Copy all links" })).toBeVisible();
 
-  await prefControls.getByRole("button", { name: "Bug report" }).click();
+  const helpMenuAgain = await openControlMenu("Help");
+  await helpMenuAgain.getByRole("button", { name: "Bug report" }).click();
   await expect(page.locator("#wolfbbsBugOverlay")).toHaveClass(/active/);
   await expect(page.locator("#wolfbbsBugPayload")).toBeVisible();
   await page.locator("#wolfbbsBugClose").click();

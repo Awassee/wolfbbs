@@ -78,6 +78,25 @@ func TestSubscribeAndPresence(t *testing.T) {
 	}
 }
 
+func TestLeaveChannelFallsBackToRemainingMembership(t *testing.T) {
+	svc := NewServiceForTest()
+	svc.JoinChannel("alice", "#lobby")
+	svc.JoinChannel("alice", "#ansi")
+	svc.LeaveChannel("alice", "#ansi")
+
+	ansi := svc.OnlineInChannel("#ansi")
+	if len(ansi) != 0 {
+		t.Fatalf("presence in #ansi = %d, want 0", len(ansi))
+	}
+	lobby := svc.OnlineInChannel("#lobby")
+	if len(lobby) != 1 {
+		t.Fatalf("presence in #lobby = %d, want 1", len(lobby))
+	}
+	if lobby[0].Nick != "alice" {
+		t.Fatalf("presence nick = %q, want alice", lobby[0].Nick)
+	}
+}
+
 func TestModerationBlocksAndAllows(t *testing.T) {
 	svc := NewServiceForTest()
 	svc.Ban("#lobby", "bob", "mod", "spam", "")

@@ -10,7 +10,7 @@ This directory is organized for three common audiences: operators, contributors,
 - [SHOWCASE.md](SHOWCASE.md): product tour for GitHub visitors and release notes
 - [ACCEPTANCE_SPEC.md](ACCEPTANCE_SPEC.md): acceptance contract and MUST checks
 - [manual-acceptance-latest.md](manual-acceptance-latest.md): latest acceptance run report
-- [releases/v1.1.27.md](releases/v1.1.27.md): current distro release notes
+- [releases/v2.0.0.md](releases/v2.0.0.md): current distro release notes
 
 ## Start Here
 
@@ -33,6 +33,8 @@ This directory is organized for three common audiences: operators, contributors,
 - [FIRST_30_MINUTES.md](FIRST_30_MINUTES.md): first operator half-hour checklist
 - [RUNNING_A_COMMUNITY.md](RUNNING_A_COMMUNITY.md): community cadence and retention playbook
 - [OPERATIONS.md](OPERATIONS.md): production maintenance and incident handling
+- [POST_RELEASE_TRIAGE.md](POST_RELEASE_TRIAGE.md): first-72-hours release response loop
+- [NEXT_FEATURE_WAVE.md](NEXT_FEATURE_WAVE.md): next major roadmap after hardening
 - [admin.md](admin.md): admin panels and workflows
 
 ## Feature Guides

@@ -64,6 +64,16 @@ exit 0
 EOF
   chmod +x "${bin_dir}/curl"
 
+  cat > "${bin_dir}/git" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "--version" ]]; then
+  echo "git: command not found" >&2
+fi
+exit 127
+EOF
+  chmod +x "${bin_dir}/git"
+
   cat > "${bin_dir}/nc" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -124,6 +134,14 @@ EOF
       "installer should preserve path casing in compose working directory"
   fi
 
+  local prefix_fresh="${TMP_WORK}/WolfBBSCase/FreshInstall"
+  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$out_file" \
+    --dry-run --yes --with-docker --repo Awassee/wolfbbs --prefix "$prefix_fresh"
+  assert_contains "$out_file" "DRY-RUN: would download repository archive to" \
+    "fresh install should support archive download path when git is unavailable"
+  assert_contains "$out_file" "${prefix_fresh}/app/docker-compose.yml" \
+    "fresh install dry-run should resolve managed checkout compose path"
+
   local prefix_rapid="${TMP_WORK}/WolfBBSCase/InstallB"
   mkdir -p "${prefix_rapid}/app"
   cat > "${prefix_rapid}/app/docker-compose.yml" <<'EOF'
@@ -152,6 +170,30 @@ EOF
   fi
 
   run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$out_file" \
+    --yes --upgrade --prefix "$prefix_rapid"
+  assert_contains "$out_file" "pull" \
+    "upgrade should pull published images before restart"
+  assert_contains "$out_file" "--env-file \"${prefix_rapid}/.env\" up -d --build --remove-orphans" \
+    "upgrade should rebuild/restart with env-file context"
+  assert_contains "$docker_log" "compose -f ${prefix_rapid}/app/docker-compose.yml --env-file ${prefix_rapid}/.env pull" \
+    "upgrade docker command should include pull"
+
+  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$out_file" \
+    --yes --start --prefix "$prefix_rapid"
+  assert_contains "$docker_log" "compose -f ${prefix_rapid}/app/docker-compose.yml --env-file ${prefix_rapid}/.env up -d" \
+    "start should bring services up with env-file context"
+
+  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$out_file" \
+    --yes --stop --prefix "$prefix_rapid"
+  assert_contains "$docker_log" "compose -f ${prefix_rapid}/app/docker-compose.yml --env-file ${prefix_rapid}/.env stop" \
+    "stop should stop compose services"
+
+  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$out_file" \
+    --yes --restart --prefix "$prefix_rapid"
+  assert_contains "$docker_log" "compose -f ${prefix_rapid}/app/docker-compose.yml --env-file ${prefix_rapid}/.env restart" \
+    "restart should restart compose services"
+
+  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$out_file" \
     --yes --uninstall --purge --prefix "$prefix_rapid"
   assert_contains "$out_file" "down -v --remove-orphans" \
     "uninstall --purge should include volume removal"
@@ -171,6 +213,28 @@ EOF
     "repair should report success"
   assert_contains "$docker_log" "compose -f ${prefix_rapid}/app/docker-compose.yml --env-file ${prefix_rapid}/.env up -d --build" \
     "repair should rebuild and start services with env-file"
+
+  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$out_file" \
+    --yes --doctor --prefix "$prefix_rapid"
+  assert_contains "$out_file" "WolfBBS doctor report" \
+    "doctor should render health diagnostics"
+  assert_contains "$out_file" "PASS doctor: docker daemon reachable" \
+    "doctor should probe docker daemon health"
+
+  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$out_file" \
+    --yes --port-audit --prefix "$prefix_rapid"
+  assert_contains "$out_file" "WolfBBS port audit" \
+    "port audit should render listener summary"
+  assert_contains "$out_file" "Port audit summary:" \
+    "port audit should include totals"
+
+  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$out_file" \
+    --yes --debug-bundle --prefix "$prefix_rapid"
+  assert_contains "$out_file" "Debug bundle written:" \
+    "debug bundle should emit output path"
+  if ! find "$prefix_rapid" -maxdepth 1 -type f -name 'WOLFBBS_DIAGNOSTICS_*.txt' | grep -q .; then
+    fail "debug bundle should create a diagnostics report"
+  fi
 
   local prefix_clean="${TMP_WORK}/WolfBBSCase/InstallC"
   mkdir -p "${prefix_clean}/app"

@@ -1,6 +1,6 @@
 # First 30 Minutes As Sysop
 
-Release baseline: `v1.1.27`.
+Release baseline: `v2.0.0`.
 
 This is the fastest operator runbook after a clean install.
 

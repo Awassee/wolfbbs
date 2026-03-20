@@ -1188,7 +1188,7 @@ const modernUIScriptTag = `
     if (document.getElementById("wolfbbsShortcutOverlay")) return;
     const overlay = document.createElement("div");
     overlay.id = "wolfbbsShortcutOverlay";
-    overlay.innerHTML = '<div id="wolfbbsShortcutPanel"><h3>Shortcut Legend</h3><ul><li><strong>Ctrl/Cmd+K</strong>: command palette</li><li><strong>?</strong>: palette quick open</li><li><strong>Alt+1..6</strong>: route jump macros</li><li><strong>Alt+0</strong>: macro help</li><li><strong>Alt+J / Alt+K</strong>: next/previous section</li><li><strong>Ctrl/Cmd+Shift+N</strong>: quick notes workspace</li><li><strong>Ctrl/Cmd+Shift+D</strong>: draft center</li><li><strong>Ctrl/Cmd+Shift+I</strong>: incident console</li><li><strong>Ctrl/Cmd+Shift+P</strong>: playbook runner</li><li><strong>Ctrl/Cmd+Shift+M</strong>: reminder scheduler</li><li><strong>Ctrl/Cmd+Shift+G</strong>: release gate</li><li><strong>Ctrl/Cmd+Shift+U</strong>: bug capture</li><li><strong>F1</strong>: macro help panel</li><li><strong>Ctrl/Cmd+Shift+/</strong>: this legend</li></ul><p class="wolfbbs-muted">Esc closes overlays.</p></div>';
+    overlay.innerHTML = '<div id="wolfbbsShortcutPanel"><h3>Shortcut Legend</h3><ul><li><strong>Ctrl/Cmd+K</strong>: command palette</li><li><strong>?</strong>: palette quick open</li><li><strong>Alt+1..6</strong>: route jump macros</li><li><strong>Alt+0</strong>: macro help</li><li><strong>Alt+J / Alt+K</strong>: next/previous section</li><li><strong>Ctrl/Cmd+Shift+N</strong>: quick notes workspace</li><li><strong>Ctrl/Cmd+Shift+D</strong>: draft center</li><li><strong>Ctrl/Cmd+Shift+I</strong>: incident console</li><li><strong>Ctrl/Cmd+Shift+P</strong>: playbook runner</li><li><strong>Ctrl/Cmd+Shift+M</strong>: reminder scheduler</li><li><strong>Ctrl/Cmd+Shift+G</strong>: release gate</li><li><strong>Ctrl/Cmd+Shift+U</strong>: bug capture</li><li><strong>F1</strong>: macro help panel</li><li><strong>Ctrl/Cmd+Shift+/</strong>: this legend</li></ul><p class="wolfbbs-help-copy">Esc closes overlays.</p></div>';
     document.body.appendChild(overlay);
     function open() {
       overlay.classList.add("active");
@@ -1231,10 +1231,46 @@ const modernUIScriptTag = `
     mountSessionTrailChip(heroMeta);
     const controls = document.createElement("div");
     controls.className = "wolfbbs-pref-controls";
-    function markSecondaryControl(button) {
-      if (button) button.setAttribute("data-control-priority", "secondary");
+    const menuDetails = [];
+    function closeMenus(except) {
+      menuDetails.forEach((menu) => {
+        if (menu !== except) menu.open = false;
+      });
+    }
+    function buildMenu(label, description) {
+      const details = document.createElement("details");
+      details.className = "wolfbbs-pref-menu";
+      const summary = document.createElement("summary");
+      summary.textContent = label;
+      summary.setAttribute("aria-label", label + " menu");
+      const panel = document.createElement("div");
+      panel.className = "wolfbbs-pref-menu-panel";
+      if (description) {
+        const note = document.createElement("p");
+        note.className = "wolfbbs-pref-menu-note wolfbbs-help-copy";
+        note.textContent = description;
+        panel.appendChild(note);
+      }
+      details.appendChild(summary);
+      details.appendChild(panel);
+      details.addEventListener("toggle", () => {
+        if (details.open) closeMenus(details);
+      });
+      controls.appendChild(details);
+      menuDetails.push(details);
+      return panel;
+    }
+    function mountMenuButton(panel, button) {
+      if (!panel || !button) return button;
+      button.setAttribute("data-control-priority", "secondary");
+      panel.appendChild(button);
       return button;
     }
+    const viewPanel = buildMenu("View", "Theme, layout, motion, and reading comfort.");
+    const routePanel = buildMenu("Route", "Save, pin, and share where you are.");
+    const deskPanel = buildMenu("Desk", "Notes, notifications, and saved work.");
+    const opsPanel = buildMenu("Ops", "Diagnostics, watchlists, and release helpers.");
+    const helpPanel = buildMenu("Help", "Guides, shortcuts, and bug capture.");
 
     const profileKey = "wolfbbs:ui:profile:v1";
     let profileMode = String(readJSON(profileKey, "balanced") || "balanced");
@@ -1259,7 +1295,7 @@ const modernUIScriptTag = `
       pushUndoAction({ type: "ui-theme", value: prev });
     });
     syncThemeLabel();
-    controls.appendChild(theme);
+    mountMenuButton(viewPanel, theme);
 
     const density = document.createElement("button");
     density.type = "button";
@@ -1276,7 +1312,7 @@ const modernUIScriptTag = `
       pushUndoAction({ type: "ui-density", value: prev });
     });
     syncDensityLabel();
-    controls.appendChild(density);
+    mountMenuButton(viewPanel, density);
 
     const layout = document.createElement("button");
     layout.type = "button";
@@ -1296,7 +1332,7 @@ const modernUIScriptTag = `
       pushUndoAction({ type: "ui-layout", value: prev });
     });
     syncLayoutLabel();
-    controls.appendChild(layout);
+    mountMenuButton(viewPanel, layout);
 
     const accent = document.createElement("button");
     accent.type = "button";
@@ -1316,7 +1352,7 @@ const modernUIScriptTag = `
       pushUndoAction({ type: "ui-accent", value: prev });
     });
     syncAccentLabel();
-    controls.appendChild(accent);
+    mountMenuButton(viewPanel, accent);
 
     const motion = document.createElement("button");
     motion.type = "button";
@@ -1333,7 +1369,7 @@ const modernUIScriptTag = `
       pushUndoAction({ type: "ui-motion", value: prev });
     });
     syncMotionLabel();
-    controls.appendChild(motion);
+    mountMenuButton(viewPanel, motion);
 
     const profile = document.createElement("button");
     profile.type = "button";
@@ -1396,7 +1432,7 @@ const modernUIScriptTag = `
     } else {
       syncProfileLabel();
     }
-    controls.appendChild(profile);
+    mountMenuButton(viewPanel, profile);
 
     const smaller = document.createElement("button");
     smaller.type = "button";
@@ -1410,7 +1446,7 @@ const modernUIScriptTag = `
       showToast("Text size " + Math.round(uiPrefs.fontScale * 100) + "%", "ok");
       pushUndoAction({ type: "ui-font-scale", value: prev });
     });
-    controls.appendChild(smaller);
+    mountMenuButton(viewPanel, smaller);
 
     const larger = document.createElement("button");
     larger.type = "button";
@@ -1424,7 +1460,7 @@ const modernUIScriptTag = `
       showToast("Text size " + Math.round(uiPrefs.fontScale * 100) + "%", "ok");
       pushUndoAction({ type: "ui-font-scale", value: prev });
     });
-    controls.appendChild(larger);
+    mountMenuButton(viewPanel, larger);
 
     const favorite = document.createElement("button");
     favorite.type = "button";
@@ -1439,7 +1475,7 @@ const modernUIScriptTag = `
       pushUndoAction({ type: "ui-favorite-current", value: prev });
     });
     syncFavoriteLabel();
-    controls.appendChild(favorite);
+    mountMenuButton(routePanel, favorite);
 
     const pinRoute = document.createElement("button");
     pinRoute.type = "button";
@@ -1458,19 +1494,16 @@ const modernUIScriptTag = `
       }
       saveRoutePins(pins);
       syncPinRouteLabel();
-      if (idx < 0 && typeof window.wolfbbsSetActionDockCollapsed === "function") {
-        window.wolfbbsSetActionDockCollapsed(false);
-      }
       if (typeof window.wolfbbsRenderActionDock === "function") window.wolfbbsRenderActionDock();
       showToast(idx >= 0 ? "Route unpinned" : "Route pinned", "ok");
       pushUndoAction({ type: "ui-pin-route", value: prev });
     });
     syncPinRouteLabel();
-    controls.appendChild(pinRoute);
+    mountMenuButton(routePanel, pinRoute);
 
     const copyRoute = document.createElement("button");
     copyRoute.type = "button";
-    copyRoute.textContent = "Copy route";
+    copyRoute.textContent = "Copy link";
     copyRoute.addEventListener("click", () => {
       const href = location.origin + location.pathname + location.search + location.hash;
       copyText(href).then(() => {
@@ -1498,7 +1531,7 @@ const modernUIScriptTag = `
     function syncTrailBackLabel() {
       const prevRoute = previousTrailRoute();
       if (!prevRoute) {
-        trailBack.textContent = "Back trail";
+        trailBack.textContent = "Back";
         trailBack.disabled = true;
         return;
       }
@@ -1511,7 +1544,7 @@ const modernUIScriptTag = `
       location.assign(prevRoute);
     });
     syncTrailBackLabel();
-    controls.appendChild(trailBack);
+    controls.insertBefore(trailBack, controls.firstChild);
 
     const shortcutsButton = document.createElement("button");
     shortcutsButton.type = "button";
@@ -1521,17 +1554,17 @@ const modernUIScriptTag = `
         window.wolfbbsOpenShortcutLegend();
       }
     });
-    controls.appendChild(shortcutsButton);
+    mountMenuButton(helpPanel, shortcutsButton);
 
     const contextHelp = document.createElement("button");
     contextHelp.type = "button";
-    contextHelp.textContent = "Context help";
+    contextHelp.textContent = "Page help";
     contextHelp.addEventListener("click", () => {
       if (typeof window.wolfbbsOpenContextHelp === "function") {
         window.wolfbbsOpenContextHelp();
       }
     });
-    controls.appendChild(contextHelp);
+    mountMenuButton(helpPanel, contextHelp);
 
     const reset = document.createElement("button");
     reset.type = "button";
@@ -1561,7 +1594,7 @@ const modernUIScriptTag = `
       showToast("UI preferences reset", "ok");
       pushUndoAction({ type: "ui-pref-reset", value: prev });
     });
-    controls.appendChild(reset);
+    mountMenuButton(viewPanel, reset);
 
     const focusUI = document.createElement("button");
     focusUI.type = "button";
@@ -1577,7 +1610,7 @@ const modernUIScriptTag = `
       pushUndoAction({ type: "ui-focus-mode", value: prev });
     });
     syncFocusUILabel();
-    controls.appendChild(focusUI);
+    mountMenuButton(viewPanel, focusUI);
 
     const compactControlsKey = "wolfbbs:ui:compact-controls:v1";
     const compactControls = document.createElement("button");
@@ -1598,7 +1631,7 @@ const modernUIScriptTag = `
     });
     applyCompactControls();
     syncCompactLabel();
-    controls.appendChild(compactControls);
+    mountMenuButton(viewPanel, compactControls);
 
     const autoRefreshKey = "wolfbbs:ui:auto-refresh:v1";
     const autoRefreshButton = document.createElement("button");
@@ -1625,7 +1658,7 @@ const modernUIScriptTag = `
     });
     syncAutoRefreshLabel();
     if (autoRefreshState.enabled) armAutoRefresh();
-    controls.appendChild(markSecondaryControl(autoRefreshButton));
+    mountMenuButton(opsPanel, autoRefreshButton);
 
     const exportTelemetry = document.createElement("button");
     exportTelemetry.type = "button";
@@ -1635,7 +1668,7 @@ const modernUIScriptTag = `
       showToast("UX telemetry exported", "ok");
       trackTelemetry("telemetry:export");
     });
-    controls.appendChild(markSecondaryControl(exportTelemetry));
+    mountMenuButton(opsPanel, exportTelemetry);
 
     const exportDiag = document.createElement("button");
     exportDiag.type = "button";
@@ -1654,7 +1687,7 @@ const modernUIScriptTag = `
       showToast("UI diagnostics exported", "ok");
       trackTelemetry("diagnostics:export");
     });
-    controls.appendChild(markSecondaryControl(exportDiag));
+    mountMenuButton(opsPanel, exportDiag);
 
     const toastCenter = document.createElement("button");
     toastCenter.type = "button";
@@ -1664,7 +1697,20 @@ const modernUIScriptTag = `
         window.wolfbbsOpenToastCenter();
       }
     });
-    controls.appendChild(markSecondaryControl(toastCenter));
+    mountMenuButton(deskPanel, toastCenter);
+
+    const quickNotes = document.createElement("button");
+    quickNotes.type = "button";
+    quickNotes.textContent = "Quick notes";
+    quickNotes.addEventListener("click", () => {
+      const trigger = document.getElementById("wolfbbsNotesButton");
+      if (trigger) {
+        trigger.click();
+        return;
+      }
+      showToast("Quick notes unavailable", "error");
+    });
+    mountMenuButton(deskPanel, quickNotes);
 
     const workspace = document.createElement("button");
     workspace.type = "button";
@@ -1674,7 +1720,7 @@ const modernUIScriptTag = `
         window.wolfbbsOpenWorkspaceHub();
       }
     });
-    controls.appendChild(markSecondaryControl(workspace));
+    mountMenuButton(deskPanel, workspace);
 
     const checkpoints = document.createElement("button");
     checkpoints.type = "button";
@@ -1684,7 +1730,7 @@ const modernUIScriptTag = `
         window.wolfbbsOpenCheckpointHub();
       }
     });
-    controls.appendChild(markSecondaryControl(checkpoints));
+    mountMenuButton(deskPanel, checkpoints);
 
     const spotlight = document.createElement("button");
     spotlight.type = "button";
@@ -1694,7 +1740,7 @@ const modernUIScriptTag = `
         window.wolfbbsOpenSpotlight();
       }
     });
-    controls.appendChild(markSecondaryControl(spotlight));
+    mountMenuButton(deskPanel, spotlight);
 
     const drafts = document.createElement("button");
     drafts.type = "button";
@@ -1704,7 +1750,7 @@ const modernUIScriptTag = `
         window.wolfbbsOpenDraftCenter();
       }
     });
-    controls.appendChild(markSecondaryControl(drafts));
+    mountMenuButton(deskPanel, drafts);
 
     const kpiWatch = document.createElement("button");
     kpiWatch.type = "button";
@@ -1714,7 +1760,7 @@ const modernUIScriptTag = `
         window.wolfbbsOpenKPIWatchCenter();
       }
     });
-    controls.appendChild(markSecondaryControl(kpiWatch));
+    mountMenuButton(opsPanel, kpiWatch);
 
     const incidents = document.createElement("button");
     incidents.type = "button";
@@ -1724,7 +1770,7 @@ const modernUIScriptTag = `
         window.wolfbbsOpenIncidentConsole();
       }
     });
-    controls.appendChild(markSecondaryControl(incidents));
+    mountMenuButton(opsPanel, incidents);
 
     const playbook = document.createElement("button");
     playbook.type = "button";
@@ -1734,7 +1780,7 @@ const modernUIScriptTag = `
         window.wolfbbsOpenPlaybookRunner();
       }
     });
-    controls.appendChild(markSecondaryControl(playbook));
+    mountMenuButton(opsPanel, playbook);
 
     const reminders = document.createElement("button");
     reminders.type = "button";
@@ -1744,7 +1790,7 @@ const modernUIScriptTag = `
         window.wolfbbsOpenReminderScheduler();
       }
     });
-    controls.appendChild(markSecondaryControl(reminders));
+    mountMenuButton(opsPanel, reminders);
 
     const releaseGate = document.createElement("button");
     releaseGate.type = "button";
@@ -1754,7 +1800,7 @@ const modernUIScriptTag = `
         window.wolfbbsOpenReleaseGate();
       }
     });
-    controls.appendChild(markSecondaryControl(releaseGate));
+    mountMenuButton(opsPanel, releaseGate);
 
     const feedback = document.createElement("button");
     feedback.type = "button";
@@ -1764,7 +1810,7 @@ const modernUIScriptTag = `
         window.wolfbbsOpenFeedbackPulse();
       }
     });
-    controls.appendChild(markSecondaryControl(feedback));
+    mountMenuButton(helpPanel, feedback);
 
     const bugReport = document.createElement("button");
     bugReport.type = "button";
@@ -1774,7 +1820,7 @@ const modernUIScriptTag = `
         window.wolfbbsOpenBugCapture();
       }
     });
-    controls.appendChild(bugReport);
+    mountMenuButton(helpPanel, bugReport);
 
     const undoButton = document.createElement("button");
     undoButton.type = "button";
@@ -1892,7 +1938,14 @@ const modernUIScriptTag = `
       showToast("UI action undone", "ok");
       trackTelemetry("ui:undo");
     });
-    controls.appendChild(undoButton);
+    mountMenuButton(viewPanel, undoButton);
+
+    document.addEventListener("click", (event) => {
+      if (!controls.contains(event.target)) closeMenus(null);
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") closeMenus(null);
+    });
 
     heroMeta.appendChild(controls);
     attachFocusTimerUI(heroMeta, controls);
@@ -2125,8 +2178,11 @@ const modernUIScriptTag = `
       body.appendChild(renderGroup("Recent route hops", recent, queryText));
       dock.setAttribute("data-collapsed", state.collapsed ? "true" : "false");
       dock.setAttribute("data-side", state.side);
+      titleNode.textContent = state.collapsed ? "Quick Launch" : "Quick Launch Dock";
+      refreshButton.hidden = state.collapsed;
+      sideButton.hidden = state.collapsed;
       sideButton.textContent = state.side === "left" ? "Dock right" : "Dock left";
-      collapseButton.textContent = state.collapsed ? "Expand" : "Collapse";
+      collapseButton.textContent = state.collapsed ? "Open" : "Close";
       window.requestAnimationFrame(maybeAutoAdjustDock);
     }
 
@@ -2226,6 +2282,7 @@ const modernUIScriptTag = `
       const item = document.createElement("li");
       const box = document.createElement("input");
       box.type = "checkbox";
+      box.setAttribute("aria-label", goal.label);
       box.checked = Boolean(state[goal.id]);
       box.addEventListener("change", () => {
         state[goal.id] = box.checked;
@@ -3244,6 +3301,7 @@ const modernUIScriptTag = `
         actions.className = "wolfbbs-inline-actions";
         const box = document.createElement("input");
         box.type = "checkbox";
+        box.setAttribute("aria-label", step);
         box.checked = Boolean(state["step_" + idx]);
         box.addEventListener("change", () => {
           state["step_" + idx] = box.checked;
@@ -3447,6 +3505,7 @@ const modernUIScriptTag = `
         actions.className = "wolfbbs-inline-actions";
         const box = document.createElement("input");
         box.type = "checkbox";
+        box.setAttribute("aria-label", row.label);
         box.checked = Boolean(state[row.id]);
         box.addEventListener("change", () => {
           state[row.id] = box.checked;
@@ -3564,7 +3623,7 @@ const modernUIScriptTag = `
     if (document.getElementById("wolfbbsMacroHelpOverlay")) return;
     const overlay = document.createElement("div");
     overlay.id = "wolfbbsMacroHelpOverlay";
-    overlay.innerHTML = '<div id="wolfbbsMacroHelpPanel"><h3>Keyboard Macros</h3><ul><li><strong>Ctrl/Cmd+K</strong> open command palette</li><li><strong>?</strong> open command palette</li><li><strong>Alt+1..6</strong> quick route jump</li><li><strong>Alt+J / Alt+K</strong> section navigation</li><li><strong>Ctrl/Cmd+Shift+N</strong> quick notes</li><li><strong>Ctrl/Cmd+Shift+D / I / P / M / G</strong> drafts, incidents, playbooks, reminders, release gate</li><li><strong>Ctrl/Cmd+Shift+U</strong> bug capture</li><li><strong>F1</strong> keyboard help</li></ul><p class="wolfbbs-muted">Esc closes overlays.</p></div>';
+    overlay.innerHTML = '<div id="wolfbbsMacroHelpPanel"><h3>Keyboard Macros</h3><ul><li><strong>Ctrl/Cmd+K</strong> open command palette</li><li><strong>?</strong> open command palette</li><li><strong>Alt+1..6</strong> quick route jump</li><li><strong>Alt+J / Alt+K</strong> section navigation</li><li><strong>Ctrl/Cmd+Shift+N</strong> quick notes</li><li><strong>Ctrl/Cmd+Shift+D / I / P / M / G</strong> drafts, incidents, playbooks, reminders, release gate</li><li><strong>Ctrl/Cmd+Shift+U</strong> bug capture</li><li><strong>F1</strong> keyboard help</li></ul><p class="wolfbbs-help-copy">Esc closes overlays.</p></div>';
     document.body.appendChild(overlay);
     function openHelp() {
       overlay.classList.add("active");
@@ -3681,7 +3740,7 @@ const modernUIScriptTag = `
     if (document.getElementById("wolfbbsContextHelpOverlay")) return;
     const overlay = document.createElement("div");
     overlay.id = "wolfbbsContextHelpOverlay";
-    overlay.innerHTML = '<div id="wolfbbsContextHelpPanel"><h3>Context Help</h3><p class="wolfbbs-muted" id="wolfbbsContextHelpBody"></p><div id="wolfbbsContextHelpActions" class="wolfbbs-action-dock-links"></div><div class="wolfbbs-inline-actions"><button type="button" id="wolfbbsContextHelpClose">Close</button></div></div>';
+    overlay.innerHTML = '<div id="wolfbbsContextHelpPanel"><h3>Context Help</h3><p class="wolfbbs-help-copy" id="wolfbbsContextHelpBody"></p><div id="wolfbbsContextHelpActions" class="wolfbbs-action-dock-links"></div><div class="wolfbbs-inline-actions"><button type="button" id="wolfbbsContextHelpClose">Close</button></div></div>';
     document.body.appendChild(overlay);
     const bodyNode = overlay.querySelector("#wolfbbsContextHelpBody");
     const actionsNode = overlay.querySelector("#wolfbbsContextHelpActions");
@@ -3728,7 +3787,7 @@ const modernUIScriptTag = `
 
     const overlay = document.createElement("div");
     overlay.id = "wolfbbsMobileToolsOverlay";
-    overlay.innerHTML = '<div id="wolfbbsMobileToolsPanel"><div class="wolfbbs-inline-actions"><strong>Quick Tools</strong><button type="button" id="wolfbbsMobileToolsClose">Close</button></div><p class="wolfbbs-muted">Fast actions tuned for dense pages and narrow viewports.</p><div id="wolfbbsMobileToolsList"></div></div>';
+    overlay.innerHTML = '<div id="wolfbbsMobileToolsPanel"><div class="wolfbbs-inline-actions"><strong>Quick Tools</strong><button type="button" id="wolfbbsMobileToolsClose">Close</button></div><p class="wolfbbs-help-copy">Fast actions tuned for dense pages and narrow viewports.</p><div id="wolfbbsMobileToolsList"></div></div>';
     document.body.appendChild(overlay);
 
     const list = overlay.querySelector("#wolfbbsMobileToolsList");
@@ -6188,6 +6247,7 @@ const modernUIScriptTag = `
         const toggleRow = document.createElement("label");
         const cb = document.createElement("input");
         cb.type = "checkbox";
+        cb.setAttribute("aria-label", "Toggle column " + text);
         cb.checked = true;
         cb.addEventListener("change", () => {
           const visible = cb.checked;

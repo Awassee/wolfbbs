@@ -6,6 +6,7 @@ cd "$ROOT_DIR"
 
 RUN_WEB_E2E=false
 RUN_MANUAL=false
+RUN_TERMINAL_E2E=true
 WEB_TIMEOUT_SECONDS="${WOLFBBS_WEB_E2E_TIMEOUT_SECONDS:-900}"
 
 usage() {
@@ -16,6 +17,7 @@ Usage:
   scripts/qa-functional.sh [options]
 
 Options:
+  --no-terminal-e2e      skip deep terminal pexpect checks
   --with-web-e2e         run Playwright functional web checks
   --with-manual-auto     run manual-acceptance auto mapping after functional checks
   --web-timeout <sec>    timeout for web e2e run (default: 900)
@@ -25,6 +27,9 @@ USAGE
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --no-terminal-e2e)
+      RUN_TERMINAL_E2E=false
+      ;;
     --with-web-e2e)
       RUN_WEB_E2E=true
       ;;
@@ -60,17 +65,24 @@ fi
 echo "[qa 1/4] admin + settings functional tests"
 go test ./cmd/wolfbbs-web -count=1 -run '^(TestAdminSetupConfigAndErrorScreens|TestAdminUsersCreateValidationAndDuplicateErrors|TestAdminUsersLifecycleActionsAndAuthEffects|TestAdminConfigSaveRuntimeServicesAndReload|TestAdminBoardsModerationActions|TestAdminMailDisableOutboundBlocksExternalSend|TestGatewayFilebaseQueueAndTicket|TestChatChannelLockEnforcedForNonModerators|TestSettingsRequiresCSRFAndUpdatesPreferences|TestStatusAndConfigCenters)$'
 
-echo "[qa 2/4] terminal functional tests"
+echo "[qa 2/5] terminal functional tests"
 go test ./internal/sshserver -count=1 -run '^(TestSSHLoginFlow|TestSSHBoardPostFlow|TestSSHMailReplyDeleteFlow|TestSSHNewscanDigestShowsRecentTraffic|TestPagerWriteShowsMorePrompt)$'
 
-echo "[qa 3/4] irc functional tests"
+if [[ "$RUN_TERMINAL_E2E" == "true" ]]; then
+  echo "[qa 3/5] terminal e2e (pexpect)"
+  python3 scripts/test_tui_pexpect.py
+else
+  echo "[qa 3/5] terminal e2e skipped (use default behavior or remove --no-terminal-e2e)"
+fi
+
+echo "[qa 4/5] irc functional tests"
 go test ./cmd/wolfbbs-irc -count=1 -run '^(TestIRCGatewayFlow|TestIRCGatewayModerationEnforced)$'
 
 if [[ "$RUN_WEB_E2E" == "true" ]]; then
-  echo "[qa 4/4] web e2e functional checks"
-  scripts/run-e2e.sh --no-go --no-tui --web-timeout "$WEB_TIMEOUT_SECONDS"
+  echo "[qa 5/5] web e2e functional checks"
+  scripts/run-e2e.sh --no-go --no-tui --web-functional-only --web-timeout "$WEB_TIMEOUT_SECONDS"
 else
-  echo "[qa 4/4] web e2e skipped (use --with-web-e2e)"
+  echo "[qa 5/5] web e2e skipped (use --with-web-e2e)"
 fi
 
 if [[ "$RUN_MANUAL" == "true" ]]; then

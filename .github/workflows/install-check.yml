@@ -8,17 +8,35 @@ on:
   workflow_dispatch:
 
 jobs:
+  portable-dry-run:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Validate installer dry-run flow
+        run: bash install.sh --dry-run --yes --with-docker --repo Awassee/wolfbbs --prefix "${RUNNER_TEMP}/wolfbbs-ci"
+
   shellcheck:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.1'
       - name: Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck ripgrep
       - name: Validate installer syntax
-        run: bash -n install.sh && bash -n bootstrap.sh && bash -n scripts/verify.sh && bash -n scripts/test-installer-regressions.sh && bash -n scripts/release.sh
+        run: bash -n install.sh && bash -n bootstrap.sh && bash -n scripts/verify.sh && bash -n scripts/test-installer-regressions.sh && bash -n scripts/release.sh && bash -n scripts/security-audit.sh
       - name: Run shellcheck
-        run: shellcheck install.sh bootstrap.sh scripts/verify.sh scripts/test-installer-regressions.sh scripts/release.sh
+        run: shellcheck install.sh bootstrap.sh scripts/verify.sh scripts/test-installer-regressions.sh scripts/release.sh scripts/security-audit.sh
       - name: Validate dry-run
         run: bash install.sh --dry-run --yes --with-docker
       - name: Run installer regression harness

@@ -1,0 +1,26 @@
+name: Classic BBS feature request
+description: Request a classic BBS behavior or nostalgia feature worth reintroducing in a modern way.
+title: "[Classic]: "
+labels:
+  - feature
+  - nostalgia
+body:
+  - type: input
+    id: feature
+    attributes:
+      label: Requested feature
+      placeholder: better newscan, message twit filter, ANSI theme packs
+    validations:
+      required: true
+  - type: textarea
+    id: value
+    attributes:
+      label: Why it matters
+      description: Explain the user value, not just the nostalgia value.
+    validations:
+      required: true
+  - type: textarea
+    id: modern
+    attributes:
+      label: Modern adaptation
+      description: If this should work differently than a legacy BBS, say how.

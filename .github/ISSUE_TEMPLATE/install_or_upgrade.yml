@@ -1,0 +1,51 @@
+name: Install or upgrade problem
+description: Report a clean install, upgrade, repair, or uninstall failure.
+title: "[Install]: "
+labels:
+  - installer
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: v1.1.27
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: macOS arm64, Ubuntu 24.04 amd64, etc.
+    validations:
+      required: true
+  - type: dropdown
+    id: flow
+    attributes:
+      label: Flow
+      options:
+        - Fresh install
+        - Upgrade
+        - Rapid upgrade
+        - Repair
+        - Uninstall / reinstall
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command used
+      placeholder: bash install.sh --yes
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Relevant output
+      description: Paste the important lines from the failing run.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Include `bash install.sh --status`, `bash install.sh --doctor`, and `bash install.sh --debug-bundle` if possible.

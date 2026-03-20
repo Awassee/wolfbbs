@@ -5380,21 +5380,46 @@ func shouldInjectModernUI(contentType string, body []byte) bool {
 }
 
 func injectModernUI(page string) string {
-	if strings.Contains(page, `id="wolfbbs-modern-ui"`) {
+	lower := strings.ToLower(page)
+	if htmlIdx := strings.Index(lower, "<html"); htmlIdx >= 0 && !strings.Contains(lower, "<html lang=") {
+		rest := page[htmlIdx:]
+		if end := strings.Index(rest, ">"); end >= 0 {
+			insertAt := htmlIdx + end
+			page = page[:insertAt] + ` lang="en"` + page[insertAt:]
+			lower = strings.ToLower(page)
+		}
+	}
+	headInject := ""
+	if !strings.Contains(lower, "<title") {
+		headInject += `<title>WolfBBS</title>`
+	}
+	if !strings.Contains(lower, `name="viewport"`) {
+		headInject += `<meta name="viewport" content="width=device-width, initial-scale=1">`
+	}
+	if !strings.Contains(page, `id="wolfbbs-modern-ui"`) {
+		headInject += modernUIBootstrap
+	}
+	if headInject == "" {
 		return page
 	}
-	lower := strings.ToLower(page)
 	if idx := strings.Index(lower, "</head>"); idx >= 0 {
-		return page[:idx] + modernUIBootstrap + page[idx:]
+		return page[:idx] + headInject + page[idx:]
+	}
+	if htmlIdx := strings.Index(lower, "<html"); htmlIdx >= 0 {
+		rest := lower[htmlIdx:]
+		if end := strings.Index(rest, ">"); end >= 0 {
+			insertAt := htmlIdx + end + 1
+			return page[:insertAt] + `<head>` + headInject + `</head>` + page[insertAt:]
+		}
 	}
 	if bodyIdx := strings.Index(lower, "<body"); bodyIdx >= 0 {
 		rest := lower[bodyIdx:]
 		if end := strings.Index(rest, ">"); end >= 0 {
 			insertAt := bodyIdx + end + 1
-			return page[:insertAt] + modernUIBootstrap + page[insertAt:]
+			return page[:insertAt] + headInject + page[insertAt:]
 		}
 	}
-	return modernUIBootstrap + page
+	return `<!doctype html><html lang="en"><head>` + headInject + `</head><body>` + page + `</body></html>`
 }
 
 func (a *webApp) activityPubBase(r *http.Request) string {
@@ -10383,11 +10408,13 @@ func (a *webApp) handleAdminLaunch(w http.ResponseWriter, r *http.Request) {
 		checkpointRows.WriteString(`<tr><td><strong>` + htmlEscape(row.Title) + `</strong><br><span class="wolfbbs-muted">` + htmlEscape(row.Detail) + `</span></td><td>` + boolToText(row.Done) + `</td><td><form method="POST" action="/admin/launch" class="wolfbbs-inline-actions"><input type="hidden" name="action" value="toggle_checkpoint"><input type="hidden" name="checkpoint" value="` + htmlEscape(row.Key) + `"><input type="hidden" name="done" value="` + nextDone + `">` + csrf + `<button type="submit">` + buttonLabel + `</button></form></td></tr>`)
 	}
 	launchHelperBlock := `<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Use Launch Center as home base</strong><p>This page is the operator control room when the board is almost ready but not obviously done.</p></article><article class="wolfbbs-helper-card"><strong>Walk real caller paths</strong><p>Do not treat green config alone as done; validate boards, chat, doors, and mail like a normal user would.</p></article><article class="wolfbbs-helper-card"><strong>Keep commands close</strong><p>The operator commands below are copyable so recovery and upgrades do not require hunting through docs.</p></article></section>`
+	firstRunBlock := a.renderSysopFirstRunBlock(user)
 	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Launch Center</title></head><body><h1>Launch Center</h1>` +
 		`<p><a href="/admin">back</a> | <a href="/admin/ops">ops</a> | <a href="/admin/setup">setup</a> | <a href="/admin/challenges">challenges</a> | <a href="/admin/upgrade-safety">upgrade safety</a> | <a href="/admin/backups">backups</a> | <a href="/admin/release">release</a> | <a href="/admin/config">config</a> | <a href="/admin/system">system</a> | <a href="/status">status</a> | <a href="/help">help</a></p>` +
 		pageMessageBlock(r) +
 		`<p>Use this page as the sysop home base for first-run, pre-launch review, and support triage.</p>` +
 		launchHelperBlock +
+		firstRunBlock +
 		`<h2>Launch Summary</h2>` +
 		`<p><strong>Verdict:</strong> ` + htmlEscape(launchVerdictText(readiness)) + ` | ` + strconv.Itoa(readiness.Summary.Pass) + `/` + strconv.Itoa(readiness.Summary.Total) + ` launch checks PASS | runtime ` + strconv.Itoa(runtime.Summary.Warn) + ` WARN</p>` +
 		`<p><a href="/admin/setup">Setup Wizard</a> | <a href="/admin/users">Create Caller</a> | <a href="/admin/challenges">Challenges</a> | <a href="/boards">Walk Boards</a> | <a href="/chat">Walk Chat</a> | <a href="/doors">Walk Doors</a></p>` +
@@ -10603,6 +10630,7 @@ func (a *webApp) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
 		`<li><strong>Guest tour</strong>, discover, and quick jump are experience choices, not hard requirements.</li>` +
 		`</ul>`
 	setupHelperBlock := `<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Work top to bottom</strong><p>Identity and safety first, then experience flags, then bootstrap actions, then real-user validation.</p></article><article class="wolfbbs-helper-card"><strong>Create one real caller</strong><p>Do not stop at sysop-only setup. Use /admin/users to create a non-sysop account and test the normal path.</p></article><article class="wolfbbs-helper-card"><strong>Bootstrap is not launch</strong><p>Seeding boards and mailbot is necessary, but the board is only ready after the real surfaces behave correctly.</p></article></section>`
+	firstRunBlock := a.renderSysopFirstRunBlock(user)
 	page := `<html><body><h1>Setup & Install</h1><p><a href="/admin">back</a> | <a href="/admin/launch">launch</a> | <a href="/admin/system">system</a> | <a href="/help">help</a></p>` +
 		`<p>Use this screen to verify base services and bootstrap sysop dependencies after install/upgrade.</p>` +
 		`<p>UI-first setup: keep installer flags minimal; set board identity and runtime policy here.</p>` +
@@ -10610,6 +10638,7 @@ func (a *webApp) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
 		`<p>` + htmlEscape(wizardHint) + `</p>` +
 		progress +
 		setupHelperBlock +
+		firstRunBlock +
 		`<p><strong>Tip:</strong> use the step links above, then save once after each section change.</p>` +
 		readinessBlock +
 		launchChecklist +

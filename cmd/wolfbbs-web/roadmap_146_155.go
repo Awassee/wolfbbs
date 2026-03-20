@@ -1452,7 +1452,9 @@ func (a *webApp) handleAdminAnalytics(w http.ResponseWriter, r *http.Request) {
 	daily := a.collectWindowActivity(1)
 	weekly := a.collectWindowActivity(7)
 	monthly := a.collectWindowActivity(30)
+	signals := a.collectOperatorSignals(7)
 	recommendations := buildAnalyticsRecommendations(daily, weekly, monthly)
+	recommendations = append(recommendations, buildOperatorSignalRecommendations(signals)...)
 	recoRows := strings.Builder{}
 	for _, row := range recommendations {
 		recoRows.WriteString(`<li>` + htmlEscape(row) + `</li>`)
@@ -1466,7 +1468,9 @@ func (a *webApp) handleAdminAnalytics(w http.ResponseWriter, r *http.Request) {
 <h1>Embedded Product Analytics</h1>
 <p>Roadmap 149: bounded daily/weekly/monthly KPI summaries for boards/chat/doors/events plus onboarding and feedback loops, with no new PII exposure.</p>
 <section class="wolfbbs-kpi-grid"><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(monthly.ActiveCallers) + `</strong><span>monthly active callers</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(weekly.ReturningCallers) + `</strong><span>weekly returners</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(weekly.BoardPosts+weekly.ChatMessages+weekly.DoorRuns) + `</strong><span>weekly core actions</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(weekly.EventCheckins) + `</strong><span>weekly event check-ins</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(weekly.FirstCallCompletions) + `</strong><span>weekly first-call completes</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(weekly.FeedbackItems) + `</strong><span>weekly feedback items</span></article></section>
+<section class="wolfbbs-kpi-grid"><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(signals.ActiveBoards) + `</strong><span>active boards (7d)</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(signals.ActiveChannels) + `</strong><span>active chat channels (7d)</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(signals.SetupFailures) + `</strong><span>setup failures (7d)</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(signals.UpgradeFailures) + `</strong><span>upgrade failures (7d)</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(signals.UpgradeSuccesses) + `</strong><span>upgrade successes (7d)</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(signals.UserCreates) + `</strong><span>caller accounts created (7d)</span></article></section>
 <table border="1"><tr><th>Window</th><th>Active callers</th><th>Returning callers</th><th>Board posts</th><th>Chat messages</th><th>Door runs</th><th>Event check-ins</th><th>First-call completes</th><th>Feedback items</th></tr>` + windowRows(daily) + windowRows(weekly) + windowRows(monthly) + `</table>
+<h2>Operator Signals</h2><table border="1"><tr><th>Window</th><th>First-call completes</th><th>Active boards</th><th>Active channels</th><th>Setup actions</th><th>Setup failures</th><th>Caller accounts created</th><th>Upgrade successes</th><th>Upgrade failures</th></tr><tr><td>7-day</td><td>` + strconv.Itoa(signals.FirstCallCompletes) + `</td><td>` + strconv.Itoa(signals.ActiveBoards) + `</td><td>` + strconv.Itoa(signals.ActiveChannels) + `</td><td>` + strconv.Itoa(signals.SetupActions) + `</td><td>` + strconv.Itoa(signals.SetupFailures) + `</td><td>` + strconv.Itoa(signals.UserCreates) + `</td><td>` + strconv.Itoa(signals.UpgradeSuccesses) + `</td><td>` + strconv.Itoa(signals.UpgradeFailures) + `</td></tr></table>
 <h2>Recommendations</h2><ul>` + recoRows.String() + `</ul>
 </body></html>`
 	w.WriteHeader(http.StatusOK)

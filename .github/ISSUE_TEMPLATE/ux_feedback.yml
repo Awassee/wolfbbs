@@ -1,0 +1,34 @@
+name: UX feedback
+description: Report confusion, friction, or rough edges in flow, copy, layout, or interaction.
+title: "[UX]: "
+labels:
+  - ux
+body:
+  - type: dropdown
+    id: audience
+    attributes:
+      label: Audience
+      options:
+        - New caller
+        - Returning caller
+        - Sysop / operator
+        - Moderator
+    validations:
+      required: true
+  - type: input
+    id: route
+    attributes:
+      label: Route or screen
+      placeholder: /admin/setup, SSH main menu, /chat, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: friction
+    attributes:
+      label: What felt confusing or awkward?
+    validations:
+      required: true
+  - type: textarea
+    id: better
+    attributes:
+      label: What would have made it clearer?

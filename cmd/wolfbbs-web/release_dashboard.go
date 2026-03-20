@@ -194,8 +194,10 @@ func (a *webApp) handleAdminReleaseDashboard(w http.ResponseWriter, r *http.Requ
 <pre>go test ./...
 scripts/verify.sh --fast
 scripts/verify.sh --smoke
+scripts/security-audit.sh
 scripts/manual-acceptance.sh --auto --no-smoke --report docs/manual-acceptance-latest.md
-scripts/package-dist.sh</pre>
+scripts/package-dist.sh
+scripts/release.sh --version vX.Y.Z --full-qa</pre>
 <h2>Reference Artifacts</h2>
 <ul><li><code>docs/function-registry.json</code></li><li><code>docs/UI_COVERAGE_MATRIX.md</code></li><li><code>docs/ACCEPTANCE_SPEC.md</code></li><li><code>docs/releases/</code></li><li><code>dist/releases/</code></li></ul>
 </body></html>`

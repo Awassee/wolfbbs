@@ -2023,11 +2023,13 @@ func (s *Server) runAppUpgrade(sess gssh.Session, reader *bufio.Reader, handle s
 		io.WriteString(sess, "\r\n")
 	}
 	if runErr != nil {
+		s.recordAdminAudit(handle, "app_upgrade", "app_upgrade_failed", limitCommandOutput(runErr.Error()+" | "+output, 240))
 		io.WriteString(sess, "\r\nUpgrade failed: "+runErr.Error()+"\r\nPress any key.")
 		_, _ = readKey(reader)
 		touch()
 		return
 	}
+	s.recordAdminAudit(handle, "app_upgrade", "app_upgrade_success", limitCommandOutput(output, 240))
 	io.WriteString(sess, "\r\nUpgrade command completed. Press any key.")
 	_, _ = readKey(reader)
 	touch()

@@ -13,7 +13,7 @@ WolfBBS gives you classic BBS texture with a modern operator control plane and t
 
 Quick links:
 - [Install now](#quick-install-linux)
-- [Release v1.1.27 notes](docs/releases/v1.1.27.md)
+- [Release v2.0.0 notes](docs/releases/v2.0.0.md)
 - [Screenshot showcase](docs/SHOWCASE.md)
 - [Feature datasheet](docs/DATASHEET.md)
 - [First 30 minutes as sysop](docs/FIRST_30_MINUTES.md)
@@ -25,10 +25,10 @@ Quick links:
 
 ## Current Release Status
 
-WolfBBS is currently shipped as `v1.1.27` with:
+WolfBBS is currently shipped as `v2.0.0` with:
 
-- clean package generation via `scripts/package-dist.sh --clean --version v1.1.27`
-- checksum + manifest output per bundle under `dist/v1.1.27/`
+- clean package generation via `scripts/package-dist.sh --clean --version v2.0.0`
+- checksum + manifest output per bundle under `dist/v2.0.0/`
 - full acceptance validation (`go test`, verifier fast/smoke, automated manual acceptance)
 - updated GitHub-facing product pages (`README`, `docs/SHOWCASE.md`, `docs/DATASHEET.md`, `docs/PRODUCT_GUIDE.md`)
 
@@ -184,10 +184,10 @@ cd wolfbbs_<version>_<os>_<arch>
 bash install.sh --yes
 ```
 
-Build clean `v1.1.27` distro bundles locally:
+Build clean `v2.0.0` distro bundles locally:
 
 ```bash
-scripts/package-dist.sh --clean --version v1.1.27 \
+scripts/package-dist.sh --clean --version v2.0.0 \
   --platform linux/amd64 --platform linux/arm64 \
   --platform darwin/amd64 --platform darwin/arm64
 ```
@@ -266,6 +266,8 @@ Full doc hub: [docs/README.md](docs/README.md)
 - [Datasheet](docs/DATASHEET.md): concise feature and deployment profile
 - [Showcase](docs/SHOWCASE.md): GitHub-facing feature highlights and screenshot tour
 - [Operator Playbook](docs/OPERATOR_PLAYBOOK.md): which operator surface to use, and when
+- [Post-Release Triage](docs/POST_RELEASE_TRIAGE.md): first-72-hours release loop and hotfix rules
+- [Next Feature Wave](docs/NEXT_FEATURE_WAVE.md): what to build after the hardening/trust tranche
 - [Troubleshooting](docs/TROUBLESHOOTING.md): symptom-driven fixes and recovery path
 - [Feature Reference](docs/feature-reference.md): route, binary, and surface inventory
 - [Acceptance Contract](docs/ACCEPTANCE_SPEC.md): MUST/SHOULD acceptance criteria
@@ -301,6 +303,7 @@ You should be able to say yes to all of these:
 go test ./...
 go build ./...
 scripts/verify.sh --fast
+scripts/security-audit.sh
 scripts/qa-functional.sh
 scripts/run-e2e.sh
 scripts/package-dist.sh

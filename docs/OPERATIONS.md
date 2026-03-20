@@ -1,10 +1,10 @@
 # Operations Guide
 
-This is the day-two guide for running WolfBBS after it is installed.
+This is the day-two operator runbook for WolfBBS after install and first launch.
 
 ## Daily checks
 
-Use these commands first:
+Run these first:
 
 ```bash
 bash install.sh --status
@@ -15,6 +15,7 @@ Review these pages:
 
 - `/admin/system`
 - `/admin/audit`
+- `/admin/ops`
 - `/status`
 
 Generated references:
@@ -26,13 +27,13 @@ Generated references:
 
 ### Update the board safely
 
-Shipped update:
+Published update:
 
 ```bash
 bash install.sh --upgrade
 ```
 
-Local code rebuild:
+Local rebuild from the current checkout:
 
 ```bash
 bash install.sh --rapid-upgrade
@@ -57,24 +58,24 @@ bash install.sh --restart
 
 ## First things to check when users report problems
 
-### “I cannot log in”
+### "I cannot log in"
 
 - check `/admin/system`
 - check `/admin/errors`
 - run `bash install.sh --doctor`
 
-### “The web app feels broken”
+### "The web app feels broken"
 
 - check `/healthz`
 - check `/readyz`
 - check `bash install.sh --logs`
 
-### “SSH works but the browser does not”
+### "SSH works but the browser does not"
 
 - verify the configured web port in `bash install.sh --status`
 - verify reverse proxy or hostname settings in `/admin/config`
 
-### “Chat is weird”
+### "Chat is weird"
 
 - test `/chat`
 - if IRC is enabled, verify the IRC bridge separately
@@ -88,26 +89,23 @@ bash install.sh --restart
 - verify doors and scores still feel alive
 - run upgrade or rapid-upgrade when needed
 
+## Release discipline
+
+Before packaging a release, prefer the one-command QA path:
+
+```bash
+scripts/release.sh --version vX.Y.Z --full-qa
+```
+
+That path now runs smoke verification, browser and terminal functional checks, manual acceptance auto mode, and the security audit before packaging.
+
+After a public release, switch to the triage loop in [POST_RELEASE_TRIAGE.md](POST_RELEASE_TRIAGE.md) before starting the next feature tranche.
+
 ## Useful references
 
 - [Start Here](START_HERE.md)
 - [Install Guide](INSTALL.md)
 - [Product Guide](PRODUCT_GUIDE.md)
 - [Feature Reference](feature-reference.md)
-# WolfBBS Operations Guide
-
-## Fast Recovery Order
-
-When an operator says "the install works but I do not trust it," use this order:
-
-```bash
-bash install.sh --status
-bash install.sh --doctor
-bash install.sh --repair
-bash install.sh --logs
-```
-
-Generated references:
-
-- `<prefix>/FIRST_STEPS.txt`
-- `<prefix>/SERVICE_STATUS.txt`
+- [Post-Release Triage](POST_RELEASE_TRIAGE.md)
+- [Next Feature Wave](NEXT_FEATURE_WAVE.md)

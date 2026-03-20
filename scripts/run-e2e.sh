@@ -7,6 +7,7 @@ cd "$ROOT_DIR"
 run_go_tests=true
 run_tui=true
 run_web=true
+web_functional_only=false
 web_timeout_seconds="${WOLFBBS_WEB_E2E_TIMEOUT_SECONDS:-900}"
 allow_unsupported_node="${WOLFBBS_ALLOW_UNSUPPORTED_NODE:-false}"
 skip_browser_install="${WOLFBBS_SKIP_BROWSER_INSTALL:-false}"
@@ -174,6 +175,15 @@ run_npm() {
 
 run_npm_skip_browser_download() {
   PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 run_npm "$@"
+}
+
+prune_web_e2e_artifacts() {
+  local dir=""
+  for dir in "$web_e2e_dir/test-results" "$web_e2e_dir/playwright-report"; do
+    if [[ -d "$dir" ]]; then
+      find "$dir" -mindepth 1 -delete
+    fi
+  done
 }
 
 file_hash() {
@@ -433,6 +443,8 @@ Environment overrides:
                  Repo root used by Playwright webServer command when tests run from a mirrored path
   WOLFBBS_E2E_USE_EXISTING_WEB
                  Set to true to reuse an already-running web service instead of booting the current tree
+  --web-functional-only
+                 Run only functional browser specs (excludes docs/visual/a11y suites)
   -h, --help     Show help
 USAGE
 }
@@ -447,6 +459,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-web)
       run_web=false
+      ;;
+    --web-functional-only)
+      web_functional_only=true
       ;;
     --web-timeout)
       if [[ $# -lt 2 ]]; then
@@ -556,7 +571,12 @@ if [[ "$run_web" == "true" ]]; then
       exit 1
     fi
   fi
-  if ! run_with_timeout "$web_timeout_seconds" run_npm test; then
+  web_test_args=(test)
+  if [[ "$web_functional_only" == "true" ]]; then
+    web_test_args+=(-- tests/user_admin.spec.js tests/extended_surface.spec.js)
+  fi
+  prune_web_e2e_artifacts
+  if ! run_with_timeout "$web_timeout_seconds" run_npm "${web_test_args[@]}"; then
     echo "web e2e test run failed or timed out" >&2
     exit 1
   fi

@@ -534,17 +534,33 @@ func (s *Service) LeaveChannel(nick, channel string) {
 	if members, ok := s.channels[channel]; ok {
 		delete(members, nick)
 	}
+	nextArea := s.firstChannelForNickLocked(nick)
 	if p, ok := s.presence[nick]; ok && p.Area == channel {
-		p.Area = ""
+		p.Area = nextArea
+		p.Online = nextArea != ""
+		p.LastSeen = time.Now()
 	}
 	if s.db != nil {
-		_, _ = s.db.Exec(`UPDATE chat_presence SET online = FALSE, area = '' WHERE nick = $1`, nick)
+		if nextArea == "" {
+			_, _ = s.db.Exec(`UPDATE chat_presence SET online = FALSE, area = '' WHERE nick = $1 AND area = $2`, nick, channel)
+		} else {
+			_, _ = s.db.Exec(`UPDATE chat_presence SET online = TRUE, area = $1, last_seen = NOW() WHERE nick = $2 AND area = $3`, nextArea, nick, channel)
+		}
 	}
 	s.mu.Unlock()
 	s.publish("chat.leave", map[string]string{
 		"nick":    nick,
 		"channel": channel,
 	})
+}
+
+func (s *Service) firstChannelForNickLocked(nick string) string {
+	for channel, members := range s.channels {
+		if members[nick] {
+			return channel
+		}
+	}
+	return ""
 }
 
 func (s *Service) IsInChannel(nick, channel string) bool {

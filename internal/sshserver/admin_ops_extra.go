@@ -813,6 +813,8 @@ func (s *Server) runAdminReleaseTooling(sess gssh.Session, reader *bufio.Reader,
 			"",
 		}
 		lines = append(lines, s.launchReadinessLines()...)
+		lines = append(lines, "", "Operator signals:")
+		lines = append(lines, s.adminSignalLines(7)...)
 		lines = append(lines, "", "Manual acceptance:")
 		lines = append(lines, manualAcceptanceSummaryLines(3)...)
 		lines = append(lines, "", "Release notes:")
