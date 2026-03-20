@@ -408,7 +408,7 @@ func RenderMailOverview(width int, inboxRows []string, outboxRows []string) stri
 	lines := []string{
 		sectionLabel("Mail Command Bar"),
 	}
-	lines = append(lines, commandStripLines(width, []string{"[C] Compose", "[R] Read", "Re[P]ly", "[D] Delete", "[H] Handles", "[Q] Quit", "[?] Help"})...)
+	lines = append(lines, commandStripLines(width, []string{"[C] Compose", "[T] Reply kits", "[R] Read", "Re[P]ly", "[D] Delete", "[H] Handles", "[Q] Quit", "[?] Help"})...)
 	lines = append(lines, "", sectionLabel("Inbox:"))
 	if len(inboxRows) == 0 {
 		lines = append(lines, "  (empty)")
@@ -422,7 +422,7 @@ func RenderMailOverview(width int, inboxRows []string, outboxRows []string) stri
 	} else {
 		lines = append(lines, outboxRows...)
 	}
-	lines = append(lines, "", "Commands: (C)ompose, (R)ead, Re(P)ly, (D)elete, (H)andles, (Q)uit, (?)help", "Selection:")
+	lines = append(lines, "", "Commands: (C)ompose, (T)emplates, (R)ead, Re(P)ly, (D)elete, (H)andles, (Q)uit, (?)help", "Selection:")
 	return renderPanel(width, "Private Mail", lines, FgCyan) + "\r\n"
 }
 
@@ -598,6 +598,7 @@ func RenderMailHelp(width int) string {
 		"Private Mail Commands",
 		"",
 		"C  Compose message",
+		"T  Saved reply kits",
 		"R  Read message by ID",
 		"P  Reply to message by ID",
 		"D  Delete message by ID",
@@ -606,6 +607,7 @@ func RenderMailHelp(width int) string {
 		"",
 		"Compose details:",
 		"- Recipient can be local handle or external email",
+		"- Reply kits preload reusable subject/body patterns",
 		"- Type ?prefix in recipient prompt to search handles",
 		"- Body entry ends with single period on its own line",
 		"",

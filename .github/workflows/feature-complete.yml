@@ -1,0 +1,48 @@
+name: feature-complete
+
+on:
+  workflow_dispatch:
+    inputs:
+      web-timeout-seconds:
+        description: Web e2e timeout in seconds
+        required: false
+        default: '900'
+
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.1'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: e2e/web/package-lock.json
+
+      - name: Install functional test prerequisites
+        run: sudo apt-get update && sudo apt-get install -y ripgrep python3-pexpect
+
+      - name: Run feature-complete gate
+        env:
+          WOLFBBS_FEATURE_COMPLETE_WEB_TIMEOUT_SECONDS: ${{ inputs.web-timeout-seconds }}
+        run: bash scripts/feature-complete.sh
+
+      - name: Upload acceptance and Playwright artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: feature-complete-artifacts
+          path: |
+            docs/manual-acceptance-latest.md
+            e2e/web/test-results
+            e2e/web/playwright-report
+          if-no-files-found: ignore

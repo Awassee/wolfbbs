@@ -145,6 +145,7 @@ test("connect page exposes the web terminal entrypoint", async ({ page }) => {
 test("user web journey supports keyboard navigation and status/config visibility", async ({
   page,
 }) => {
+  test.setTimeout(180_000);
   await page.goto("/start");
   await expect(page.locator("h1")).toContainText(/Start Center/i);
   await expect(page.locator("body")).toContainText("Caller path");

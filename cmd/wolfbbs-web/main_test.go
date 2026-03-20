@@ -3176,6 +3176,110 @@ func TestMailValidationShowsFriendlyError(t *testing.T) {
 	}
 }
 
+func TestMailSavedReplyKitsPersistPrefillAndDelete(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	mailRepo := repository.NewInMemoryPrivateMailRepository()
+	adminRepo := repository.NewInMemoryAdminRepository()
+	authSvc := auth.NewService(userRepo)
+	caller, err := authSvc.Register("caller", "password123")
+	if err != nil {
+		t.Fatalf("register caller: %v", err)
+	}
+	friend, err := authSvc.Register("friend", "password123")
+	if err != nil {
+		t.Fatalf("register friend: %v", err)
+	}
+	app := &webApp{
+		authSvc:   authSvc,
+		mailRepo:  mailRepo,
+		adminRepo: adminRepo,
+		sessions:  map[string]sessionState{},
+	}
+	sid, ok := app.createSession("caller")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+	csrf := app.sessions[sid].csrf
+
+	form := url.Values{}
+	form.Set("action", "save_template")
+	form.Set("template_name", "Door Invite")
+	form.Set("template_subject", "Meet me in the Door Hub")
+	form.Set("template_body", "Meet me in /doors after tonight's scan.")
+	form.Set("template_urgency", "fyi")
+	form.Set("csrf_token", csrf)
+	req := httptest.NewRequest(http.MethodPost, "/mail", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.handleMail(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("save template status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	templates := app.loadMailTemplates("caller")
+	if len(templates) != 1 || templates[0].Name != "Door Invite" {
+		t.Fatalf("unexpected templates after save: %+v", templates)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/mail?saved_template="+templates[0].ID+"&to=friend", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleMail(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("mail with saved template status = %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"Saved Reply Kits", `value="friend"`, "Meet me in the Door Hub", "Meet me in /doors after tonight's scan."} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("mail with saved template missing %q: %s", want, body)
+		}
+	}
+
+	send := url.Values{}
+	send.Set("action", "send")
+	send.Set("template_id", templates[0].ID)
+	send.Set("to", "friend")
+	send.Set("urgency", "fyi")
+	send.Set("subject", "Meet me in the Door Hub")
+	send.Set("body", "Meet me in /doors after tonight's scan.")
+	send.Set("csrf_token", csrf)
+	req = httptest.NewRequest(http.MethodPost, "/mail", strings.NewReader(send.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleMail(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("send from template status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	inbox, err := mailRepo.ListInbox(friend.ID, 5)
+	if err != nil || len(inbox) != 1 {
+		t.Fatalf("expected one inbox item, got err=%v inbox=%+v", err, inbox)
+	}
+	if !strings.Contains(inbox[0].Subject, "[FYI]") {
+		t.Fatalf("expected urgency-tagged subject, got %+v", inbox[0])
+	}
+	templates = app.loadMailTemplates("caller")
+	if templates[0].UseCount != 1 {
+		t.Fatalf("expected template use count 1, got %+v", templates[0])
+	}
+
+	form = url.Values{}
+	form.Set("action", "delete_template")
+	form.Set("template_id", templates[0].ID)
+	form.Set("csrf_token", csrf)
+	req = httptest.NewRequest(http.MethodPost, "/mail", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr = httptest.NewRecorder()
+	app.handleMail(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("delete template status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if got := app.loadMailTemplates(caller.Handle); len(got) != 0 {
+		t.Fatalf("expected templates deleted, got %+v", got)
+	}
+}
+
 func TestGatewayRequiresCSRFForPost(t *testing.T) {
 	userRepo := repository.NewInMemoryUserRepository()
 	authSvc := auth.NewService(userRepo)
@@ -4214,7 +4318,7 @@ func TestStartAttentionOpsAndRichComposeSurfaces(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("ops status = %d", rr.Code)
 	}
-	for _, needle := range []string{"Ops Center", "Current Operator Focus", "Recent Runtime Errors", "Recent Audit Trail", "seed_default_boards", "Live Sessions", "Clear Runtime Errors", "Prune Sessions", "Purge Expired Web Sessions", "Clear Rate Limits", "qa runtime issue"} {
+	for _, needle := range []string{"Ops Center", "Operator Confidence", "Proof Pack", "Artifact Health", "Current Operator Focus", "Recent Runtime Errors", "Recent Audit Trail", "seed_default_boards", "Live Sessions", "Clear Runtime Errors", "Prune Sessions", "Purge Expired Web Sessions", "Clear Rate Limits", "qa runtime issue"} {
 		if !strings.Contains(rr.Body.String(), needle) {
 			t.Fatalf("ops page missing %q: %s", needle, rr.Body.String())
 		}
@@ -5682,7 +5786,7 @@ func TestLegacyModernClassicRoutes(t *testing.T) {
 		t.Fatalf("mail status = %d", rr.Code)
 	}
 	body = rr.Body.String()
-	for _, want := range []string{"Recent Correspondents", "Address Book", `value="friend"`, "Meet me in the Door Hub", "all mail", "Active Mail Filters", `data-draft-key="mail-compose"`} {
+	for _, want := range []string{"Recent Correspondents", "Address Book", "Saved Reply Kits", `value="friend"`, "Meet me in the Door Hub", "all mail", "Active Mail Filters", `data-draft-key="mail-compose"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("mail missing %q: %s", want, body)
 		}
@@ -6754,7 +6858,7 @@ func TestAdminFilesWorkflowSectionsAndRepairTools(t *testing.T) {
 		t.Fatalf("admin files status = %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, needle := range []string{"File Request Queue", "Upload Drafts", "Featured Collections", "Recovery Assistant", "Upload docs", "door-docs.zip", "Docs Bundle"} {
+	for _, needle := range []string{"Curator Lane", "Next Curator Actions", "File Request Queue", "Upload Drafts", "Featured Collections", "Recovery Assistant", "Upload docs", "door-docs.zip", "Docs Bundle"} {
 		if !strings.Contains(body, needle) {
 			t.Fatalf("expected %q on admin files page: %s", needle, body)
 		}
@@ -8413,6 +8517,69 @@ func TestProfileExportIncludesPrivacyAliasesAndCircles(t *testing.T) {
 	circles := payload["caller_circles"].([]interface{})
 	if len(circles) != 1 {
 		t.Fatalf("expected one circle export, got %+v", circles)
+	}
+}
+
+func TestAdminEventsShowsCampaignHealth(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	adminRepo := repository.NewInMemoryAdminRepository()
+	if _, err := authSvc.Register("sysop", "password123"); err != nil {
+		t.Fatalf("register sysop: %v", err)
+	}
+	if err := authSvc.SetRole("sysop", roleAdmin); err != nil {
+		t.Fatalf("set role: %v", err)
+	}
+	now := time.Now().UTC()
+	app := &webApp{
+		authSvc:   authSvc,
+		adminRepo: adminRepo,
+		sessions:  map[string]sessionState{},
+	}
+	app.persistCommunityEvents([]communityEvent{
+		{
+			ID:          "evt-series-1",
+			SeriesID:    "evt-series",
+			Title:       "Tournament Night",
+			Category:    "tournament",
+			StartsAt:    now.Add(2 * time.Hour),
+			Recurrence:  "weekly",
+			Location:    "Door Cockpit",
+			Host:        "sysop",
+			Audience:    "all callers",
+			Description: "Bracket ladder night",
+			CreatedAt:   now.Add(-time.Hour),
+		},
+		{
+			ID:          "evt-missed-recap",
+			SeriesID:    "evt-missed-recap",
+			Title:       "Retro Net",
+			Category:    "social",
+			StartsAt:    now.Add(-3 * time.Hour),
+			EndsAt:      now.Add(-2 * time.Hour),
+			Location:    "#lobby",
+			Host:        "sysop",
+			Audience:    "all callers",
+			Description: "Missed recap test",
+			CreatedAt:   now.Add(-6 * time.Hour),
+		},
+	})
+	sid, ok := app.createSession("sysop")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+	req := httptest.NewRequest(http.MethodGet, "/admin/events", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.mustBeRole(roleAdmin, http.HandlerFunc(app.handleAdminEvents)).ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("admin events status = %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, needle := range []string{"Campaign Health", "Campaign Recommendations", "missing join paths", "missing recaps"} {
+		if !strings.Contains(body, needle) {
+			t.Fatalf("admin events missing %q: %s", needle, body)
+		}
 	}
 }
 

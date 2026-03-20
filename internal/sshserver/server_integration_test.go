@@ -365,6 +365,8 @@ func TestSSHMailReplyDeleteFlow(t *testing.T) {
 	_, _ = stdin.Write([]byte("bob\n"))
 	waitFor("Subject:")
 	_, _ = stdin.Write([]byte("hello bob\n"))
+	waitFor("Urgency [normal]:")
+	_, _ = stdin.Write([]byte("\n"))
 	_, _ = stdin.Write([]byte("local mail from alice\n.\n"))
 	waitFor("Commands: (C)ompose")
 

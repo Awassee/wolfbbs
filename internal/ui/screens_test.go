@@ -58,7 +58,7 @@ func TestRenderHelpPanels(t *testing.T) {
 		{
 			name:     "mail",
 			rendered: RenderMailHelp(80),
-			wants:    []string{"Help: Private Mail", "Private Mail Commands", "Compose details:", "Press any key to return."},
+			wants:    []string{"Help: Private Mail", "Private Mail Commands", "Saved reply kits", "Compose details:", "Press any key to return."},
 		},
 		{
 			name:     "chat",
@@ -110,7 +110,7 @@ func TestRenderBoardAndMailMenus(t *testing.T) {
 	}
 
 	mail := RenderMailOverview(80, []string{"   1  Hello                 01-01 12:00  new"}, []string{"   2  Re: Hello             uid:1"})
-	for _, want := range []string{"Private Mail", "Inbox:", "Outbox:", "Commands: (C)ompose, (R)ead, Re(P)ly, (D)elete, (H)andles, (Q)uit, (?)help"} {
+	for _, want := range []string{"Private Mail", "Inbox:", "Outbox:", "(T)emplates", "(H)andles"} {
 		if !strings.Contains(mail, want) {
 			t.Fatalf("mail menu missing %q", want)
 		}

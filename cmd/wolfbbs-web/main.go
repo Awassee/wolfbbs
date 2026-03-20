@@ -1651,8 +1651,10 @@ func (a *webApp) persistWeeklyDigestSentAt(handle string, at time.Time) {
 
 func normalizeMailUrgency(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "low", "urgent":
+	case "fyi", "urgent", "asap", "normal":
 		return strings.ToLower(strings.TrimSpace(value))
+	case "low":
+		return "fyi"
 	default:
 		return "normal"
 	}
@@ -1665,8 +1667,9 @@ func mailUrgencyOptionRows(current string) string {
 		Label string
 	}{
 		{Value: "normal", Label: "normal"},
+		{Value: "fyi", Label: "FYI"},
 		{Value: "urgent", Label: "urgent"},
-		{Value: "low", Label: "low"},
+		{Value: "asap", Label: "ASAP"},
 	}
 	var out strings.Builder
 	for _, option := range options {
@@ -1680,10 +1683,12 @@ func applyMailUrgency(subject, urgency string) string {
 	urgency = normalizeMailUrgency(urgency)
 	_, base := splitMailUrgency(subject)
 	switch urgency {
+	case "fyi":
+		return "[FYI] " + base
 	case "urgent":
 		return "[URGENT] " + base
-	case "low":
-		return "[LOW] " + base
+	case "asap":
+		return "[ASAP] " + base
 	default:
 		return base
 	}
@@ -1693,10 +1698,14 @@ func splitMailUrgency(subject string) (string, string) {
 	subject = strings.TrimSpace(subject)
 	upper := strings.ToUpper(subject)
 	switch {
+	case strings.HasPrefix(upper, "[FYI] "):
+		return "fyi", strings.TrimSpace(subject[len("[FYI] "):])
 	case strings.HasPrefix(upper, "[URGENT] "):
 		return "urgent", strings.TrimSpace(subject[len("[URGENT] "):])
+	case strings.HasPrefix(upper, "[ASAP] "):
+		return "asap", strings.TrimSpace(subject[len("[ASAP] "):])
 	case strings.HasPrefix(upper, "[LOW] "):
-		return "low", strings.TrimSpace(subject[len("[LOW] "):])
+		return "fyi", strings.TrimSpace(subject[len("[LOW] "):])
 	default:
 		return "normal", subject
 	}
@@ -1705,10 +1714,12 @@ func splitMailUrgency(subject string) (string, string) {
 func mailUrgencyBadgeHTML(subject string) string {
 	urgency, _ := splitMailUrgency(subject)
 	switch urgency {
+	case "fyi":
+		return `<span class="wolfbbs-status-pill">FYI</span> `
 	case "urgent":
 		return `<span class="wolfbbs-status-pill danger">urgent</span> `
-	case "low":
-		return `<span class="wolfbbs-status-pill">low</span> `
+	case "asap":
+		return `<span class="wolfbbs-status-pill danger">ASAP</span> `
 	default:
 		return ``
 	}
@@ -4079,6 +4090,7 @@ func (a *webApp) handleAdminOps(w http.ResponseWriter, r *http.Request) {
 <article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(unresolvedEscalations) + `</strong><span>staff escalations</span></article>
 </section>
 <section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Readiness before polish</strong><p>Use launch and status signals to decide whether you have a real blocker or just a minor cleanup item.</p></article><article class="wolfbbs-helper-card"><strong>Errors change the meaning of green</strong><p>If runtime errors are piling up, treat every passing screen as provisional until you understand the failures.</p></article><article class="wolfbbs-helper-card"><strong>Audit + sessions explain surprises</strong><p>When callers report something odd, the fastest answers usually come from the recent audit trail and who is online right now.</p></article></section>
+` + renderOperatorConfidenceBlock(a, user, readiness, runtime, errors) + `
 <section class="wolfbbs-grid">
 <article><h2>Current Operator Focus</h2><ul>` + nextActions.String() + `</ul><p><a href="/admin/launch">Launch Center</a> | <a href="/admin/setup">Setup Wizard</a> | <a href="/admin/upgrade-safety">Upgrade Safety</a> | <a href="/admin/backups">Backup Browser</a> | <a href="/admin/release">Release Dashboard</a> | <a href="/status">Caller Status</a></p></article>
 <article><h2>Operator Controls</h2><div class="wolfbbs-inline-actions"><form method="POST" action="/admin/ops"><input type="hidden" name="action" value="clear_errors">` + csrf + `<button type="submit">Clear Runtime Errors</button></form><form method="POST" action="/admin/ops" class="wolfbbs-inline-form"><input type="hidden" name="action" value="prune_idle_sessions">` + csrf + `<label>Prune idle sessions older than <input name="idle_minutes" value="30" inputmode="numeric"></label><button type="submit">Prune Sessions</button></form><form method="POST" action="/admin/ops"><input type="hidden" name="action" value="purge_web_sessions">` + csrf + `<button type="submit">Purge Expired Web Sessions</button></form><form method="POST" action="/admin/ops"><input type="hidden" name="action" value="clear_rate_limits">` + csrf + `<button type="submit">Clear Rate Limits</button></form></div><p><strong>Live counters:</strong> ` + strconv.Itoa(webSessionCount) + ` web sessions / ` + strconv.Itoa(rateLimitCount) + ` rate-limit buckets</p><h3>Operator Commands</h3><pre>bash install.sh --status
@@ -4905,6 +4917,7 @@ func (a *webApp) handleAdminEvents(w http.ResponseWriter, r *http.Request) {
 	recaps := a.loadEventRecaps()
 	attendanceSummary := a.attendanceCounts()
 	recentForRecap := a.recentCommunityEvents(10, time.Now().UTC())
+	campaignSummary := buildEventCampaignSummary(rows, recaps, attendanceSummary, time.Now().UTC())
 	recapRows := strings.Builder{}
 	for _, row := range recentForRecap {
 		recap := recaps[row.ID]
@@ -4921,6 +4934,7 @@ func (a *webApp) handleAdminEvents(w http.ResponseWriter, r *http.Request) {
 <h1>Events Admin</h1>
 <p>Schedule public reasons for callers to return: nets, tournaments, featured content drops, and operator-run sessions.</p>
 <section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Be concrete</strong><p>Give callers a specific time, place, and audience. Vague events do not drive return behavior.</p></article><article class="wolfbbs-helper-card"><strong>Use categories deliberately</strong><p>System, social, door, tournament, content, and ops let the calendar read like a real board schedule.</p></article><article class="wolfbbs-helper-card"><strong>Build series, not chores</strong><p>Recurring events turn the board into a habit. Weekly or weekday series are better than retyping the same entry every day.</p></article></section>
+` + renderEventCampaignHealth(campaignSummary) + `
 <section class="wolfbbs-grid"><article class="wolfbbs-card"><h2>Quick Templates</h2><div class="wolfbbs-action-grid"><a class="wolfbbs-action-card" href="/admin/events?template=tournament#event-editor"><strong>Tournament Night</strong><span>weekly bracket or score ladder</span></a><a class="wolfbbs-action-card" href="/admin/events?template=social#event-editor"><strong>Lobby Net</strong><span>weekday live social check-in</span></a><a class="wolfbbs-action-card" href="/admin/events?template=content#event-editor"><strong>Content Drop</strong><span>scheduled bulletin, file, or featured thread</span></a><a class="wolfbbs-action-card" href="/admin/events?template=ops#event-editor"><strong>Sysop Review</strong><span>operator-only runbook cadence</span></a></div><p class="wolfbbs-muted">Templates load concrete defaults so you start from a believable event instead of a blank form.</p></article><article class="wolfbbs-card"><h2>Tournament Playbook</h2><ul class="wolfbbs-list-clean"><li>Use category <strong>tournament</strong> for ladders, score nights, and door brackets.</li><li>Point the link at <code>/doors</code>, <code>/tournaments</code>, or a door runbook so callers can join without guessing.</li><li>Weekly recurrence is the default starting point for a sustainable tournament rhythm.</li><li>Mirror the event in <a href="/tournaments">Tournament Center</a> and <a href="/scores">Scores</a> so the competitive layer feels alive.</li></ul></article></section>
 <section class="wolfbbs-grid"><article class="wolfbbs-card" id="event-editor"><h2>` + formTitle + `</h2><form method="POST" action="/admin/events" data-draft-key="admin-event-editor"><input type="hidden" name="action" value="` + formAction + `"><input type="hidden" name="id" value="` + htmlEscape(formEvent.ID) + `">` + csrf + `<label>Title <input name="title" size="48" value="` + htmlEscape(formEvent.Title) + `" placeholder="Friday Tournament Night"></label><br><label>Category <select name="category">` + categoryRows.String() + `</select></label><br><label>Starts <input type="datetime-local" name="starts_at" value="` + htmlEscape(formatLocalDateTimeValue(formEvent.StartsAt)) + `"></label><br><label>Ends <input type="datetime-local" name="ends_at" value="` + htmlEscape(formatLocalDateTimeValue(formEvent.EndsAt)) + `"></label><br><label>Recurrence <select name="recurrence">` + recurrenceRows.String() + `</select></label><br><label>Repeat Until <input type="datetime-local" name="repeat_until" value="` + htmlEscape(formatLocalDateTimeValue(formEvent.RepeatUntil)) + `"></label><br><label>Location <input name="location" size="40" value="` + htmlEscape(formEvent.Location) + `" placeholder="#lobby, Door Cockpit, SSH"></label><br><label>Host <input name="host" size="40" value="` + htmlEscape(formEvent.Host) + `" placeholder="sysop"></label><br><label>Audience <input name="audience" size="40" value="` + htmlEscape(formEvent.Audience) + `" placeholder="all callers"></label><br><label>Link <input name="link" size="60" value="` + htmlEscape(formEvent.Link) + `" placeholder="/doors or https://..."></label><br><label>Description<br><textarea name="description" rows="6" cols="72" placeholder="What happens, why it matters, and how to join.">` + htmlEscape(formEvent.Description) + `</textarea></label><br><button type="submit">` + submitLabel + `</button></form>` + cancelLink + `</article><article class="wolfbbs-card"><h2>Calendar Preview</h2>` + previewCard + `<p><a href="/events">Open public calendar</a> | <a href="/today">Open today brief</a></p></article></section>
 <section><h2>Scheduled Events</h2><table border="1"><tr><th>Title</th><th>Category</th><th>When</th><th>Series</th><th>Location</th><th>Audience</th><th>Action</th></tr>` + eventRows.String() + `</table></section>
@@ -8010,14 +8024,42 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 		if !a.requireCSRF(w, r) {
 			return
 		}
+		action := strings.ToLower(strings.TrimSpace(r.FormValue("action")))
+		if action == "" {
+			action = "send"
+		}
 		if !a.canSendMail(user) {
 			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		switch action {
+		case "save_template":
+			if err := a.saveMailTemplate(
+				user.Handle,
+				r.FormValue("template_id"),
+				r.FormValue("template_name"),
+				r.FormValue("template_subject"),
+				r.FormValue("template_body"),
+				r.FormValue("template_urgency"),
+			); err != nil {
+				redirectWithError(w, r, "/mail", "Reply kit error: "+err.Error())
+				return
+			}
+			redirectWithNotice(w, r, "/mail", "Saved reply kit.")
+			return
+		case "delete_template":
+			if err := a.deleteMailTemplate(user.Handle, r.FormValue("template_id")); err != nil {
+				redirectWithError(w, r, "/mail", "Reply kit error: "+err.Error())
+				return
+			}
+			redirectWithNotice(w, r, "/mail", "Reply kit deleted.")
 			return
 		}
 		toRaw := strings.TrimSpace(r.FormValue("to"))
 		subject := strings.TrimSpace(r.FormValue("subject"))
 		body := strings.TrimSpace(r.FormValue("body"))
 		urgency := normalizeMailUrgency(r.FormValue("urgency"))
+		selectedTemplateID := strings.TrimSpace(r.FormValue("template_id"))
 		if toRaw == "" || subject == "" || body == "" {
 			redirectWithError(w, r, "/mail", "To, subject, and body are required.")
 			return
@@ -8070,6 +8112,9 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 				"to":   toRaw,
 			})
 		}
+		if selectedTemplateID != "" {
+			a.markMailTemplateUsed(user.Handle, selectedTemplateID)
+		}
 		redirectWithNotice(w, r, "/mail", "Mail sent to "+toRaw+".")
 		return
 	}
@@ -8080,6 +8125,8 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 	boxFilter := normalizeMailBox(r.URL.Query().Get("box"))
 	searchQuery := strings.TrimSpace(r.URL.Query().Get("q"))
 	templateName := normalizeMailTemplate(r.URL.Query().Get("template"))
+	selectedTemplateID := strings.TrimSpace(r.URL.Query().Get("saved_template"))
+	mailTemplates := a.loadMailTemplates(user.Handle)
 
 	if id := strings.TrimSpace(r.URL.Query().Get("id")); id != "" {
 		mailID, _ := strconv.ParseInt(id, 10, 64)
@@ -8112,10 +8159,27 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 			replySubject = "Re: " + replySubject
 		}
 		replyBody := quoteBody(item.Body)
+		if selectedTemplateID != "" {
+			if tpl, ok := a.mailTemplate(user.Handle, selectedTemplateID); ok {
+				replyUrgency = tpl.Urgency
+				if strings.TrimSpace(tpl.Subject) != "" {
+					replySubject = tpl.Subject
+				}
+				if strings.TrimSpace(tpl.Body) != "" {
+					replyBody = strings.TrimSpace(tpl.Body + "\n\n" + quoteBody(item.Body))
+				}
+			}
+		}
 		replyBlock := ``
 		if a.canSendMail(user) && replyTo != "" {
-			replyBlock = `<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Reply in context</strong><p>Quick Reply carries the quoted body forward so you can answer without losing the thread.</p></article><article class="wolfbbs-helper-card"><strong>Use mail for direct follow-up</strong><p>Keep public discussion on boards and use mail when the conversation should stay private.</p></article></section>` +
+			templatePicker := ``
+			if len(mailTemplates) > 0 {
+				templatePicker = `<form method="GET" action="/mail" class="wolfbbs-inline-form"><input type="hidden" name="id" value="` + strconv.FormatInt(item.ID, 10) + `"><label>Saved kit <select name="saved_template">` + renderMailSavedTemplateOptions(mailTemplates, selectedTemplateID) + `</select></label><button type="submit">Load kit</button></form>`
+			}
+			replyBlock = `<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Reply in context</strong><p>Quick Reply carries the quoted body forward so you can answer without losing the thread.</p></article><article class="wolfbbs-helper-card"><strong>Use mail for direct follow-up</strong><p>Keep public discussion on boards and use mail when the conversation should stay private.</p></article><article class="wolfbbs-helper-card"><strong>Saved kits stay reusable</strong><p>Load a saved reply kit when you want a consistent follow-up note without retyping it.</p></article></section>` +
+				templatePicker +
 				`<h2>Quick Reply</h2><form method="POST" action="/mail" data-draft-key="mail-reply-` + strconv.FormatInt(item.ID, 10) + `" data-rich-compose="mail-reply" data-compose-signature="` + htmlEscape(user.Handle) + `" data-compose-quote="` + htmlEscape(replyBody) + `">` + a.csrfHiddenInput(r) +
+				`<input type="hidden" name="template_id" value="` + htmlEscape(selectedTemplateID) + `">` +
 				`<label>To <input name="to" size="40" value="` + htmlEscape(replyTo) + `"></label><br>` +
 				`<label>Urgency <select name="urgency">` + mailUrgencyOptionRows(replyUrgency) + `</select></label><br>` +
 				`<label>Subject <input name="subject" size="60" value="` + htmlEscape(replySubject) + `"></label><br>` +
@@ -8152,12 +8216,26 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 	prefillTo := strings.TrimSpace(r.URL.Query().Get("to"))
 	prefillSubject := strings.TrimSpace(r.URL.Query().Get("subject"))
 	prefillBody := strings.TrimSpace(r.URL.Query().Get("body"))
+	prefillUrgency := normalizeMailUrgency(r.URL.Query().Get("urgency"))
 	if templateSubject, templateBody := mailTemplatePrefill(templateName); templateSubject != "" || templateBody != "" {
 		if prefillSubject == "" {
 			prefillSubject = templateSubject
 		}
 		if prefillBody == "" {
 			prefillBody = templateBody
+		}
+	}
+	if selectedTemplateID != "" {
+		if tpl, ok := a.mailTemplate(user.Handle, selectedTemplateID); ok {
+			if prefillSubject == "" {
+				prefillSubject = tpl.Subject
+			}
+			if prefillBody == "" {
+				prefillBody = tpl.Body
+			}
+			if prefillUrgency == "normal" && strings.TrimSpace(tpl.Urgency) != "" {
+				prefillUrgency = normalizeMailUrgency(tpl.Urgency)
+			}
 		}
 	}
 	unreadCount := 0
@@ -8271,17 +8349,21 @@ func (a *webApp) handleMail(w http.ResponseWriter, r *http.Request) {
 		filterItems = append(filterItems, "template "+templateName)
 	}
 	filterSummary := renderActiveFilterPanel("Active Mail Filters", "/mail", filterItems)
-	mailHelperBlock := `<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Triage inbox first</strong><p>Use unread to work through new mail before browsing your outbox history.</p></article><article class="wolfbbs-helper-card"><strong>Templates speed the first pass</strong><p>Use a template to load a starter subject/body, then edit it into a real message.</p></article><article class="wolfbbs-helper-card"><strong>Drafts are local</strong><p>Compose and reply boxes save locally in this browser while you type.</p></article></section>`
+	mailHelperBlock := `<section class="wolfbbs-helper-grid"><article class="wolfbbs-helper-card"><strong>Triage inbox first</strong><p>Use unread to work through new mail before browsing your outbox history.</p></article><article class="wolfbbs-helper-card"><strong>Templates speed the first pass</strong><p>Use a template or saved reply kit to load a starter subject/body, then edit it into a real message.</p></article><article class="wolfbbs-helper-card"><strong>Drafts are local</strong><p>Compose and reply boxes save locally in this browser while you type.</p></article></section>`
+	templateManagerBlock := renderMailTemplateManager(user.Handle, csrf, selectedTemplateID, mailTemplates)
 	page := `<html><body><h1>Private Mail</h1><p><a href="/start">start</a> | <a href="/attention">attention</a> | <a href="/bookmarks">bookmarks</a> | <a href="/boards">boards</a> | <a href="/bulletins">bulletins</a> | <a href="/directory">directory</a> | <a href="/finder">finder</a> | <a href="/feedback">feedback</a> | <a href="/chat">chat</a> | <a href="/status">status</a> | <a href="/config">config</a>` + discoverLink + ` | <a href="/help">help</a> | <a href="/logout">logout</a></p>` +
 		messageBlock +
-		`<section class="wolfbbs-kpi-grid"><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(inbox)) + `</strong><span>inbox</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(unreadCount) + `</strong><span>unread</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(outbox)) + `</strong><span>outbox</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(a.recentCorrespondents(user, inbox, outbox, 10))) + `</strong><span>recent correspondents</span></article></section>` +
+		`<section class="wolfbbs-kpi-grid"><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(inbox)) + `</strong><span>inbox</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(unreadCount) + `</strong><span>unread</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(outbox)) + `</strong><span>outbox</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(a.recentCorrespondents(user, inbox, outbox, 10))) + `</strong><span>recent correspondents</span></article><article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(len(mailTemplates)) + `</strong><span>saved reply kits</span></article></section>` +
 		mailHelperBlock + presenceHandoffBlock + filterSummary +
 		`<form method="GET" action="/mail" class="wolfbbs-inline-form" data-filter-form="mail" data-filter-reset="/mail"><label>Box <select name="box" data-filter-label="box">` + boxOptionRows.String() + `</select></label><label>Search <input name="q" value="` + htmlEscape(searchQuery) + `" placeholder="subject, body, handle" data-filter-label="search"></label><button type="submit">Filter</button></form>` +
 		`<form method="GET" action="/mail" class="wolfbbs-inline-form" data-filter-form="mail-template" data-filter-reset="/mail"><label>Template <select name="template" data-filter-label="template">` + templateOptionRows.String() + `</select></label><label>To <input name="to" value="` + htmlEscape(prefillTo) + `" placeholder="optional recipient" data-filter-label="to"></label><button type="submit">Load Template</button></form>` +
+		`<form method="GET" action="/mail" class="wolfbbs-inline-form"><label>Saved reply kit <select name="saved_template">` + renderMailSavedTemplateOptions(mailTemplates, selectedTemplateID) + `</select></label><label>To <input name="to" value="` + htmlEscape(prefillTo) + `" size="18" placeholder="optional recipient"></label><button type="submit">Load Kit</button></form>` +
 		`<p><strong>Tip:</strong> Use handle for local mail, email address for external relay (if enabled by policy).</p>` +
+		templateManagerBlock +
 		`<h2>Compose</h2><form method="POST" action="/mail" data-draft-key="mail-compose" data-rich-compose="mail-compose" data-compose-signature="` + htmlEscape(user.Handle) + `">` + csrf +
+		`<input type="hidden" name="action" value="send"><input type="hidden" name="template_id" value="` + htmlEscape(selectedTemplateID) + `">` +
 		`<label>To (handle or email): <input name="to" size="40" value="` + htmlEscape(prefillTo) + `"></label><br>` +
-		`<label>Urgency <select name="urgency">` + mailUrgencyOptionRows("normal") + `</select></label><br>` +
+		`<label>Urgency <select name="urgency">` + mailUrgencyOptionRows(prefillUrgency) + `</select></label><br>` +
 		`<label>Subject: <input name="subject" size="60" value="` + htmlEscape(prefillSubject) + `"></label><br>` +
 		`<label>Body:<br><textarea name="body" rows="10" cols="80">` + htmlEscape(prefillBody) + `</textarea></label><br><button type="submit">Send</button></form>` +
 		`<section class="wolfbbs-grid"><article><h2>Recent Correspondents</h2><ul>` + addressRows.String() + `</ul></article><article><h2>Address Book</h2><ul>` + localRows.String() + `</ul></article></section>` +

@@ -3073,64 +3073,19 @@ func (s *Server) runMail(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 				touch()
 				continue
 			}
-			writeClear(sess, ansiEnabled)
-			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName()+" Mail Compose", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
-			renderFrame(sess, termWidth, renderWidth, ui.RenderPostEditor(renderWidth, "")+"\r\n", ansiEnabled, encoding)
-			to, err := s.promptRecipient(sess, reader, termWidth, renderWidth, handle, th, ansiEnabled, encoding, time24h, nodeLabel, touch)
+			if err := s.composeMailFlow(sess, reader, termWidth, renderWidth, handle, currentUser, th, ansiEnabled, encoding, time24h, nodeLabel, touch, nil); err != nil {
+				return
+			}
+		case "T":
+			seed, err := s.runMailTemplateDesk(sess, reader, termWidth, renderWidth, handle, th, ansiEnabled, encoding, time24h, nodeLabel, touch)
 			if err != nil {
 				return
 			}
-			io.WriteString(sess, "Subject: ")
-			subject, err := readLine(reader, 120)
-			if err != nil {
-				return
-			}
-			touch()
-			body, err := readMessageBody(sess, reader, 80, 4096)
-			if err != nil {
-				return
-			}
-			touch()
-			to = strings.TrimSpace(to)
-			subject = strings.TrimSpace(subject)
-			body = strings.TrimSpace(body)
-			if to == "" || subject == "" || body == "" {
-				io.WriteString(sess, "\r\nTo/subject/body are required. Press any key.")
-				_, _ = readKey(reader)
-				touch()
-				continue
-			}
-			var msg domain.PrivateMail
-			msg.FromUserID = currentUser.ID
-			msg.Subject = subject
-			msg.Body = body
-			if strings.Contains(to, "@") {
-				msg.ExternalTo = &to
-			} else {
-				targetUser, err := s.auth.GetUser(to)
-				if err != nil || targetUser == nil {
-					suggestions := s.suggestHandles(to, handle, 5)
-					io.WriteString(sess, "\r\nUnknown recipient handle.")
-					if len(suggestions) > 0 {
-						io.WriteString(sess, "\r\nTry: "+strings.Join(suggestions, ", "))
-					}
-					io.WriteString(sess, "\r\nPress any key.")
-					_, _ = readKey(reader)
-					touch()
-					continue
+			if seed != nil {
+				if err := s.composeMailFlow(sess, reader, termWidth, renderWidth, handle, currentUser, th, ansiEnabled, encoding, time24h, nodeLabel, touch, seed); err != nil {
+					return
 				}
-				msg.ToUserID = targetUser.ID
 			}
-			if err := s.mail.CreateMail(&msg); err != nil {
-				io.WriteString(sess, "\r\nCould not send mail: "+err.Error()+"\r\nPress any key.")
-				_, _ = readKey(reader)
-				touch()
-				continue
-			}
-			s.publishEvent("mail.sent", map[string]string{
-				"user": handle,
-				"to":   to,
-			})
 		case "P":
 			io.WriteString(sess, "Reply to Mail ID: ")
 			rawID, err := readLine(reader, 16)

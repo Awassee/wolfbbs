@@ -99,6 +99,20 @@ scripts/release.sh --version vX.Y.Z --full-qa
 
 That path now runs smoke verification, browser and terminal functional checks, manual acceptance auto mode, and the security audit before packaging.
 
+When you want the same readiness bar without tagging a release, use:
+
+```bash
+scripts/feature-complete.sh
+```
+
+That wrapper runs the full feature-complete gate in one command:
+
+- `go test ./...`
+- `scripts/verify.sh --fast`
+- `scripts/qa-functional.sh --with-web-e2e --with-manual-auto`
+- `scripts/verify.sh --smoke`
+- `scripts/security-audit.sh`
+
 After a public release, switch to the triage loop in [POST_RELEASE_TRIAGE.md](POST_RELEASE_TRIAGE.md) before starting the next feature tranche.
 
 ## Useful references
