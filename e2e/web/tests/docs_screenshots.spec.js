@@ -25,6 +25,8 @@ async function capture(page, route, filename, headingPattern) {
     await expect(page.locator("body")).toBeVisible();
   }
   await page.waitForTimeout(300);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(100);
   await page.screenshot({
     path: path.join(SCREENSHOT_DIR, filename),
     fullPage: false,

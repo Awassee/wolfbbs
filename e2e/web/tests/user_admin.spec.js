@@ -139,6 +139,7 @@ test("connect page exposes the web terminal entrypoint", async ({ page }) => {
   await expect(page.locator("#xterm")).toBeVisible();
   await expect(page.locator("#termStatus")).toContainText(/connecting|connected|disconnected|socket error/i);
   await expect(page.locator("body")).toContainText("ws-login");
+  await expect.poll(async () => page.evaluate(() => Math.round(window.scrollY))).toBeLessThan(24);
 });
 
 test("user web journey supports keyboard navigation and status/config visibility", async ({
@@ -195,7 +196,12 @@ test("user web journey supports keyboard navigation and status/config visibility
 
   await page.goto("/boards");
   await expect(page.locator("h1")).toContainText("Message Boards");
-  await expect(page.locator("#wolfbbsCommandButton")).toContainText(/Jump \/ Search/i);
+  await expect(page.locator("#wolfbbsCommandButton")).toContainText(/Open Omnibar/i);
+  await page.locator("#wolfbbsCommandButton").click();
+  await expect(page.locator("#wolfbbsPaletteOverlay")).toHaveClass(/active/);
+  await expect(page.locator("#wolfbbsOmnibarLabel")).toContainText(/Omnibar/i);
+  await expect(page.locator("#wolfbbsPaletteList")).toContainText(/Boards|Status Center|Showcase/i);
+  await page.keyboard.press("Escape");
   await expect(page.locator("body")).toContainText("Caller Cockpit");
   const boardSubscriptionForms = page.locator('table form').filter({ has: page.locator('select[name="subscription_mode"]') });
   await boardSubscriptionForms.first().locator('select[name="subscription_mode"]').selectOption("watch");
@@ -340,6 +346,7 @@ test("user web journey supports keyboard navigation and status/config visibility
 
   await page.goto("/chat");
   await expect(page.locator("h1")).toContainText(/Chat/);
+  await expect.poll(async () => page.evaluate(() => Math.round(window.scrollY))).toBeLessThan(24);
   await page.fill("#message", "@sy");
   await expect(page.locator(".wolfbbs-handle-assist button").filter({ hasText: "@sysop" }).first()).toBeVisible();
   await page.locator(".wolfbbs-handle-assist button").filter({ hasText: "@sysop" }).first().click();

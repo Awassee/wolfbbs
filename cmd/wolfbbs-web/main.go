@@ -8790,10 +8790,922 @@ table.wolfbbs-ux20-freeze-col td:first-child{
     transform:translateY(0);
   }
 }
+:root{
+  --bg:#080a14;
+  --bg-alt:#111525;
+  --surface:rgba(12,16,27,.72);
+  --surface-2:rgba(18,24,38,.8);
+  --surface-3:rgba(28,36,56,.84);
+  --text:#f4f7ff;
+  --muted:#9aa8c9;
+  --line:rgba(150,172,235,.17);
+  --line-strong:rgba(173,222,255,.34);
+  --accent:#49b6ff;
+  --accent-strong:#8cdbff;
+  --accent-soft:rgba(73,182,255,.16);
+  --accent-2:#ff53d5;
+  --accent-3:#7cffd1;
+  --shadow-sm:0 18px 42px rgba(2,5,14,.24);
+  --shadow:0 28px 78px rgba(1,4,14,.34);
+  --shadow-lg:0 44px 120px rgba(0,0,0,.46);
+  --radius:2.5rem;
+  --radius-sm:1.4rem;
+}
+html{
+  scroll-behavior:smooth;
+}
+body{
+  width:min(1440px,calc(100% - 2.4rem));
+  padding:24px 0 96px;
+  color:var(--text);
+  font-family:"Manrope","IBM Plex Sans","Segoe UI","Helvetica Neue",sans-serif;
+  background:
+    radial-gradient(1200px 680px at 12% -4%, rgba(73,182,255,.18) 0%, transparent 54%),
+    radial-gradient(960px 560px at 88% 0%, rgba(255,83,213,.18) 0%, transparent 52%),
+    radial-gradient(860px 500px at 56% -18%, rgba(124,255,209,.14) 0%, transparent 56%),
+    linear-gradient(180deg,#05070d 0%,#090d16 22%,#0b1120 52%,#09111f 100%);
+}
+body::before{
+  opacity:.92;
+  background:
+    radial-gradient(circle at 14% 18%, rgba(73,182,255,.12), transparent 26%),
+    radial-gradient(circle at 84% 12%, rgba(255,83,213,.1), transparent 22%),
+    linear-gradient(rgba(255,255,255,.045), rgba(255,255,255,.015)),
+    repeating-linear-gradient(90deg, rgba(110,160,255,.045) 0px, rgba(110,160,255,.045) 1px, transparent 1px, transparent 28px),
+    repeating-linear-gradient(0deg, rgba(255,255,255,.02) 0px, rgba(255,255,255,.02) 1px, transparent 1px, transparent 28px);
+}
+body::after{
+  content:"";
+  position:fixed;
+  inset:auto 6% 8% auto;
+  width:min(42vw,520px);
+  aspect-ratio:1;
+  pointer-events:none;
+  z-index:-1;
+  opacity:.55;
+  filter:blur(42px);
+  background:
+    radial-gradient(circle at 34% 36%, rgba(73,182,255,.46) 0%, transparent 38%),
+    radial-gradient(circle at 72% 42%, rgba(255,83,213,.34) 0%, transparent 32%),
+    radial-gradient(circle at 48% 72%, rgba(124,255,209,.24) 0%, transparent 34%);
+}
+body[data-theme-mode="default"],
+body[data-theme-mode="night"]{
+  color:var(--text);
+}
+body[data-theme-mode="contrast"]{
+  --surface:rgba(5,7,13,.86);
+  --surface-2:rgba(12,16,24,.92);
+  --surface-3:rgba(20,24,37,.95);
+  --line:rgba(215,230,255,.3);
+  --line-strong:rgba(255,255,255,.5);
+  --text:#ffffff;
+  --muted:#c1d0ef;
+}
+body[data-accent-mode="teal"]{
+  --accent:#59e4c5;
+  --accent-strong:#b4fff1;
+  --accent-soft:rgba(89,228,197,.18);
+  --accent-2:#50ffe3;
+}
+body[data-accent-mode="amber"]{
+  --accent:#ffc66d;
+  --accent-strong:#ffe4a4;
+  --accent-soft:rgba(255,198,109,.16);
+  --accent-2:#ff8d57;
+}
+::selection{
+  background:rgba(73,182,255,.26);
+  color:#fff;
+}
+h1,h2,h3{
+  color:var(--text);
+  font-family:"Sora","Space Grotesk","Avenir Next","Segoe UI","Helvetica Neue",sans-serif;
+}
+body > h1,
+.wolfbbs-page-hero h1{
+  background:linear-gradient(135deg,#dff2ff 0%,#9bd8ff 34%,#7cffd1 62%,#ff8ce8 100%);
+  -webkit-background-clip:text;
+  background-clip:text;
+  -webkit-text-fill-color:transparent;
+  color:transparent;
+  text-shadow:none;
+}
+body p,
+body li,
+body td,
+body th,
+body label,
+body small{
+  color:rgba(233,240,255,.82);
+}
+a{
+  color:var(--accent-strong);
+}
+a:hover{
+  color:#ffffff;
+}
+button,
+input[type=text],
+input[type=password],
+input[type=email],
+input[type=number],
+input[type=url],
+input[type=search],
+select,
+textarea{
+  border-radius:1.2rem;
+  border:1px solid rgba(180,203,255,.18);
+  background:linear-gradient(180deg,rgba(18,24,38,.88),rgba(9,13,24,.82));
+  color:var(--text);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.08), 0 14px 34px rgba(0,0,0,.24);
+}
+button:hover,
+input[type=text]:hover,
+input[type=password]:hover,
+input[type=email]:hover,
+input[type=number]:hover,
+input[type=url]:hover,
+input[type=search]:hover,
+select:hover,
+textarea:hover{
+  border-color:rgba(188,224,255,.28);
+}
+button:focus,
+input[type=text]:focus,
+input[type=password]:focus,
+input[type=email]:focus,
+input[type=number]:focus,
+input[type=url]:focus,
+input[type=search]:focus,
+select:focus,
+textarea:focus{
+  outline:none;
+  border-color:rgba(120,211,255,.62);
+  box-shadow:0 0 0 1px rgba(120,211,255,.4), 0 18px 44px rgba(15,45,92,.34), inset 0 1px 0 rgba(255,255,255,.12);
+}
+.wolfbbs-page-hero,
+.wolfbbs-card,
+.wolfbbs-helper-card,
+.wolfbbs-kpi-card,
+.wolfbbs-action-card,
+.wolfbbs-banner,
+.wolfbbs-primer,
+.wolfbbs-breadcrumbs,
+.wolfbbs-revisit-banner,
+form,
+#wolfbbsPalette,
+.wolfbbs-spatial-card{
+  position:relative;
+  overflow:hidden;
+  border-radius:var(--radius);
+  border:1px solid rgba(185,210,255,.15);
+  background:
+    linear-gradient(180deg,rgba(27,35,54,.58),rgba(10,13,24,.88)),
+    linear-gradient(135deg,rgba(255,255,255,.05),rgba(255,255,255,0));
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.11),
+    inset 0 -18px 34px rgba(4,8,16,.24),
+    0 28px 78px rgba(1,4,14,.34);
+  backdrop-filter:blur(30px) saturate(160%);
+  -webkit-backdrop-filter:blur(30px) saturate(160%);
+}
+.wolfbbs-page-hero::before,
+.wolfbbs-card::before,
+.wolfbbs-helper-card::before,
+.wolfbbs-kpi-card::before,
+.wolfbbs-action-card::before,
+.wolfbbs-banner::before,
+.wolfbbs-primer::before,
+.wolfbbs-breadcrumbs::before,
+.wolfbbs-revisit-banner::before,
+form::before,
+#wolfbbsPalette::before,
+.wolfbbs-spatial-card::before{
+  content:"";
+  position:absolute;
+  inset:0;
+  padding:1px;
+  border-radius:inherit;
+  pointer-events:none;
+  background:linear-gradient(135deg,rgba(255,255,255,.36),rgba(73,182,255,.16) 36%,rgba(255,83,213,.22) 68%,rgba(255,255,255,.04));
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite:xor;
+  mask-composite:exclude;
+}
+table,
+.wolfbbs-table-wrap{
+  border-radius:calc(var(--radius) - .5rem);
+  border:1px solid rgba(185,210,255,.12);
+  background:linear-gradient(180deg,rgba(20,28,44,.72),rgba(9,13,23,.9));
+  box-shadow:0 20px 52px rgba(0,0,0,.26);
+}
+thead th{
+  background:rgba(255,255,255,.03);
+}
+tbody tr:nth-child(even){
+  background:rgba(255,255,255,.02);
+}
+tbody tr:hover{
+  background:rgba(73,182,255,.08);
+}
+p.wolfbbs-nav-row,
+body > p:has(> a){
+  border-radius:999px;
+  border:1px solid rgba(180,203,255,.16);
+  background:linear-gradient(180deg,rgba(17,23,38,.82),rgba(9,13,24,.84));
+  box-shadow:0 22px 54px rgba(0,0,0,.22);
+  backdrop-filter:blur(24px);
+}
+p.wolfbbs-nav-row a,
+body > p:has(> a) a{
+  color:rgba(239,245,255,.88);
+}
+.wolfbbs-page-hero{
+  grid-column:1 / -1;
+  display:grid;
+  grid-template-columns:minmax(0,1.6fr) minmax(260px,.95fr);
+  gap:1.35rem;
+  align-items:start;
+  padding:2rem;
+  min-height:220px;
+  background:
+    radial-gradient(circle at 12% 8%, rgba(73,182,255,.18) 0%, transparent 34%),
+    radial-gradient(circle at 86% 16%, rgba(255,83,213,.14) 0%, transparent 32%),
+    linear-gradient(180deg,rgba(28,36,56,.72),rgba(9,13,24,.9));
+}
+.wolfbbs-page-hero-main{
+  display:grid;
+  gap:.8rem;
+  min-width:0;
+}
+.wolfbbs-page-hero-main p{
+  max-width:62ch;
+  font-size:1rem;
+  color:rgba(228,236,255,.76);
+}
+.wolfbbs-page-hero-meta{
+  display:flex;
+  flex-wrap:wrap;
+  justify-content:flex-end;
+  align-content:start;
+  gap:.7rem;
+}
+.wolfbbs-hero-chip{
+  min-height:36px;
+  padding:.5rem .95rem;
+  border-radius:999px;
+  border:1px solid rgba(195,220,255,.17);
+  background:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,.02));
+  color:var(--text);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.1), 0 12px 28px rgba(0,0,0,.18);
+}
+.wolfbbs-hero-chip[data-kind="admin"]{
+  color:#ffd6f6;
+}
+.wolfbbs-hero-chip[data-kind="caller"]{
+  color:#cdeaff;
+}
+.wolfbbs-hero-chip[data-kind="guest"]{
+  color:#d0ffe8;
+}
+.wolfbbs-main{
+  display:grid;
+  grid-template-columns:repeat(12,minmax(0,1fr));
+  gap:1.25rem;
+  align-items:start;
+}
+.wolfbbs-main > *{
+  grid-column:1 / -1;
+  min-width:0;
+}
+.wolfbbs-grid,
+.wolfbbs-card-grid,
+.wolfbbs-kpi-grid,
+.wolfbbs-action-grid,
+.wolfbbs-helper-grid{
+  display:grid;
+  grid-template-columns:repeat(12,minmax(0,1fr));
+  grid-auto-flow:dense;
+  gap:1rem;
+  margin:0;
+  container-type:inline-size;
+}
+.wolfbbs-grid > *,
+.wolfbbs-card-grid > *,
+.wolfbbs-action-grid > *,
+.wolfbbs-helper-grid > *{
+  grid-column:span 4;
+  min-width:0;
+  container-type:inline-size;
+}
+.wolfbbs-kpi-grid > *{
+  grid-column:span 3;
+  min-width:0;
+  container-type:inline-size;
+}
+.wolfbbs-grid > [data-density="high"],
+.wolfbbs-card-grid > [data-density="high"],
+.wolfbbs-helper-grid > [data-density="high"]{
+  grid-column:span 8;
+}
+.wolfbbs-kpi-grid > [data-density="high"],
+.wolfbbs-action-grid > [data-density="high"]{
+  grid-column:span 6;
+}
+.wolfbbs-grid > [data-density="low"],
+.wolfbbs-card-grid > [data-density="low"],
+.wolfbbs-helper-grid > [data-density="low"]{
+  grid-column:span 3;
+}
+.wolfbbs-grid > .wolfbbs-primer,
+.wolfbbs-grid > .wolfbbs-spatial-card,
+.wolfbbs-main > .wolfbbs-spatial-card,
+.wolfbbs-main > .wolfbbs-chat-layout,
+.wolfbbs-main > .wolfbbs-dashboard,
+.wolfbbs-main > .wolfbbs-table-wrap,
+.wolfbbs-main > form{
+  grid-column:1 / -1;
+}
+.wolfbbs-card,
+.wolfbbs-helper-card,
+.wolfbbs-kpi-card,
+.wolfbbs-action-card,
+.wolfbbs-primer,
+.wolfbbs-banner{
+  padding:1.35rem 1.45rem;
+}
+.wolfbbs-kpi-card{
+  min-height:160px;
+  justify-content:flex-end;
+  background:
+    radial-gradient(circle at 112% -18%, rgba(73,182,255,.28) 0%, transparent 48%),
+    radial-gradient(circle at 0% 100%, rgba(255,83,213,.12) 0%, transparent 36%),
+    linear-gradient(180deg,rgba(24,32,49,.72),rgba(9,13,24,.92));
+}
+.wolfbbs-kpi-card strong{
+  font-size:clamp(2rem,5cqi,3rem);
+}
+.wolfbbs-kpi-card span{
+  color:rgba(227,234,255,.72);
+}
+.wolfbbs-card{
+  background:
+    radial-gradient(circle at 100% -10%, rgba(73,182,255,.18) 0%, transparent 42%),
+    linear-gradient(180deg,rgba(21,28,44,.74),rgba(10,14,24,.9));
+}
+.wolfbbs-helper-card{
+  background:
+    radial-gradient(circle at 92% 0%, rgba(124,255,209,.16) 0%, transparent 38%),
+    linear-gradient(180deg,rgba(20,28,43,.74),rgba(8,12,22,.9));
+}
+.wolfbbs-helper-card strong,
+.wolfbbs-action-card strong,
+.wolfbbs-card strong{
+  color:#f3f7ff;
+}
+.wolfbbs-action-card{
+  min-height:164px;
+  justify-content:space-between;
+  background:
+    radial-gradient(circle at 100% -6%, rgba(255,83,213,.16) 0%, transparent 36%),
+    radial-gradient(circle at 0% 100%, rgba(73,182,255,.14) 0%, transparent 36%),
+    linear-gradient(180deg,rgba(22,29,46,.76),rgba(8,12,22,.92));
+}
+.wolfbbs-action-card span,
+.wolfbbs-helper-card p,
+.wolfbbs-card p{
+  color:rgba(229,236,255,.72);
+}
+.wolfbbs-action-card:hover,
+.wolfbbs-card:hover,
+.wolfbbs-helper-card:hover,
+.wolfbbs-kpi-card:hover{
+  transform:translateY(-4px);
+  border-color:rgba(205,228,255,.24);
+  box-shadow:0 34px 92px rgba(0,0,0,.38);
+}
+.wolfbbs-chip,
+.wolfbbs-section-nav a,
+.wolfbbs-recent-rail a,
+.wolfbbs-primer-actions a{
+  border:1px solid rgba(192,216,255,.16);
+  background:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,.03));
+  color:rgba(241,246,255,.88);
+}
+.wolfbbs-banner[data-kind="notice"]{
+  border-color:rgba(124,255,209,.24);
+}
+.wolfbbs-banner[data-kind="error"]{
+  border-color:rgba(255,123,150,.28);
+}
+.wolfbbs-banner[data-kind="warn"]{
+  border-color:rgba(255,198,109,.32);
+}
+main.wolfbbs-main h2,
+main.wolfbbs-main h3{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:.45rem .55rem;
+}
+main.wolfbbs-main h2 > .wolfbbs-heading-link,
+main.wolfbbs-main h2 > .wolfbbs-section-pin-button,
+main.wolfbbs-main h2 > .wolfbbs-section-done-toggle,
+main.wolfbbs-main h3 > .wolfbbs-heading-link,
+main.wolfbbs-main h3 > .wolfbbs-section-pin-button,
+main.wolfbbs-main h3 > .wolfbbs-section-done-toggle{
+  margin-left:0;
+}
+.wolfbbs-section-toggle,
+.wolfbbs-heading-link,
+.wolfbbs-table-toolbar button,
+.wolfbbs-notes-actions button,
+.wolfbbs-template-strip button,
+.wolfbbs-section-progress,
+.wolfbbs-section-pin-button,
+.wolfbbs-section-done-toggle,
+.wolfbbs-goal-actions button,
+.wolfbbs-empty-actions a,
+.wolfbbs-action-dock-links a,
+.wolfbbs-palette-history button,
+#wolfbbsNotesButton,
+#wolfbbsUXDiagButton,
+#wolfbbsFeedbackButton,
+#wolfbbsBackToTop{
+  border:1px solid rgba(195,220,255,.16);
+  background:linear-gradient(180deg,rgba(255,255,255,.11),rgba(255,255,255,.03)) !important;
+  color:rgba(244,247,255,.9) !important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.09), 0 14px 26px rgba(0,0,0,.18);
+}
+.wolfbbs-table-toolbar,
+.wolfbbs-form-actions-sticky,
+.wolfbbs-goal-coach,
+.wolfbbs-scorecard,
+.wolfbbs-section-pin-rail,
+.wolfbbs-handoff-box,
+.wolfbbs-column-toggle-panel,
+#wolfbbsActionDock,
+#wolfbbsNotesPanel,
+#wolfbbsMacroHelpPanel,
+#wolfbbsShortcutPanel,
+#wolfbbsToastCenterPanel,
+#wolfbbsWorkspacePanel,
+#wolfbbsSpotlightPanel,
+#wolfbbsDraftPanel,
+#wolfbbsIncidentPanel,
+#wolfbbsPlaybookPanel,
+#wolfbbsReminderPanel,
+#wolfbbsReleaseGatePanel,
+#wolfbbsFeedbackPanel,
+#wolfbbsContextHelpPanel{
+  border:1px solid rgba(185,210,255,.14) !important;
+  background:
+    linear-gradient(180deg,rgba(24,31,48,.82),rgba(8,12,22,.92)) !important;
+  color:var(--text);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.09),
+    0 22px 54px rgba(0,0,0,.28) !important;
+  backdrop-filter:blur(24px);
+  -webkit-backdrop-filter:blur(24px);
+}
+#wolfbbsNotesArea,
+.wolfbbs-action-dock-search input[type=search],
+.wolfbbs-table-toolbar input[type=search]{
+  background:linear-gradient(180deg,rgba(17,23,37,.94),rgba(10,14,24,.88)) !important;
+  color:var(--text) !important;
+  border:1px solid rgba(180,203,255,.16) !important;
+}
+.wolfbbs-section-progress,
+.wolfbbs-table-count,
+.wolfbbs-kpi-delta,
+.wolfbbs-text-counter,
+.wolfbbs-workspace-row p,
+.wolfbbs-handoff-box p,
+.wolfbbs-toast,
+#wolfbbsToastCenterList li,
+#wolfbbsShortcutPanel li,
+#wolfbbsMacroHelpPanel li{
+  color:rgba(224,233,255,.7) !important;
+}
+.wolfbbs-section-pin-rail{
+  border-style:solid;
+}
+.wolfbbs-section-pin-rail .wolfbbs-muted{
+  color:rgba(224,233,255,.62) !important;
+}
+#wolfbbsActionDock{
+  bottom:92px;
+  border-radius:1.3rem;
+}
+.wolfbbs-action-dock-head,
+#wolfbbsNotesHeader{
+  border-bottom:1px solid rgba(185,210,255,.12) !important;
+}
+.wolfbbs-action-dock-head strong,
+.wolfbbs-action-dock-group-title,
+.wolfbbs-workspace-row strong{
+  color:rgba(245,248,255,.92) !important;
+}
+.wolfbbs-action-dock-group-title span{
+  color:rgba(224,233,255,.62) !important;
+}
+.wolfbbs-toast{
+  background:linear-gradient(180deg,rgba(17,24,38,.94),rgba(8,12,22,.94)) !important;
+}
+.wolfbbs-toast[data-kind="ok"]{
+  border-color:rgba(124,255,209,.22) !important;
+}
+.wolfbbs-toast[data-kind="error"]{
+  border-color:rgba(255,123,150,.24) !important;
+}
+.wolfbbs-form-actions-sticky{
+  bottom:18px;
+}
+#wolfbbsNotesButton,
+#wolfbbsUXDiagButton,
+#wolfbbsFeedbackButton{
+  bottom:20px;
+}
+#wolfbbsNotesButton{left:18px}
+#wolfbbsUXDiagButton{left:136px}
+#wolfbbsFeedbackButton{left:246px}
+#chat{
+  min-height:360px;
+  border:1px solid rgba(195,220,255,.16) !important;
+  background:
+    radial-gradient(circle at 20% 0%, rgba(73,182,255,.12), transparent 38%),
+    linear-gradient(180deg,rgba(12,17,29,.96),rgba(6,9,16,.98));
+}
+#chatStatus{
+  color:#d0e9ff !important;
+}
+#mod form{
+  background:linear-gradient(180deg,rgba(22,30,47,.78),rgba(8,12,22,.9));
+}
+#wolfbbsCommandButton{
+  left:auto;
+  right:24px;
+  bottom:20px;
+  z-index:55;
+  min-height:54px;
+  padding:.9rem 1.2rem;
+  gap:.55rem;
+  border-radius:999px;
+  border:1px solid rgba(195,220,255,.2);
+  background:
+    linear-gradient(135deg,rgba(73,182,255,.92),rgba(31,100,255,.84) 52%,rgba(255,83,213,.88));
+  color:#ffffff;
+  box-shadow:0 30px 72px rgba(7,18,40,.5), inset 0 1px 0 rgba(255,255,255,.24);
+  backdrop-filter:blur(18px);
+}
+#wolfbbsPaletteOverlay{
+  padding:30px 16px;
+  background:rgba(5,7,14,.62);
+  backdrop-filter:blur(24px);
+}
+#wolfbbsPalette{
+  max-width:1040px;
+  border-radius:2rem;
+}
+#wolfbbsPaletteHeader{
+  padding:1.2rem;
+  background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.03));
+  border-bottom:1px solid rgba(195,220,255,.12);
+}
+#wolfbbsPaletteHeader label{
+  display:block;
+  margin:0;
+}
+#wolfbbsPaletteHeader input{
+  margin-top:.7rem;
+}
+#wolfbbsPaletteList{
+  display:grid;
+  gap:.75rem;
+  max-height:min(54vh,540px);
+  padding:1rem 1rem 1.1rem;
+}
+.wolfbbs-palette-item{
+  align-items:center;
+  padding:1rem 1.05rem;
+  border-radius:1.3rem;
+  border:1px solid rgba(195,220,255,.12);
+  background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.025));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.08);
+}
+.wolfbbs-palette-item:hover{
+  background:linear-gradient(180deg,rgba(73,182,255,.18),rgba(255,83,213,.08));
+}
+.wolfbbs-palette-meta{
+  color:rgba(223,232,255,.62);
+}
+.wolfbbs-palette-history{
+  display:flex;
+  flex-wrap:wrap;
+  gap:.55rem;
+  margin-top:.9rem;
+}
+.wolfbbs-palette-history button{
+  padding:.5rem .8rem;
+}
+#wolfbbsOmnibarLabel{
+  display:inline-flex;
+  align-items:center;
+  gap:.5rem;
+  color:#d3e8ff;
+  font-size:.82rem;
+  font-weight:800;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+}
+#wolfbbsOmnibarLabel::before{
+  content:"";
+  width:10px;
+  height:10px;
+  border-radius:50%;
+  background:linear-gradient(135deg,var(--accent),var(--accent-2));
+  box-shadow:0 0 16px rgba(73,182,255,.5);
+}
+.wolfbbs-omnibar-hint{
+  display:block;
+  margin-top:.5rem;
+  color:rgba(227,234,255,.64);
+  font-size:.93rem;
+}
+.wolfbbs-omnibar-module-grid{
+  display:grid;
+  grid-template-columns:repeat(12,minmax(0,1fr));
+  gap:.75rem;
+  padding:1rem 1rem 0;
+}
+.wolfbbs-omnibar-module{
+  grid-column:span 4;
+  width:100%;
+  padding:1rem;
+  text-align:left;
+  border-radius:1.35rem;
+  border:1px solid rgba(195,220,255,.12);
+  background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.03));
+  color:var(--text);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.08), 0 16px 34px rgba(0,0,0,.18);
+}
+.wolfbbs-omnibar-module strong{
+  display:block;
+  margin-bottom:.35rem;
+}
+.wolfbbs-omnibar-module span{
+  display:block;
+  color:rgba(226,234,255,.64);
+}
+.wolfbbs-spatial-card{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(360px,1.15fr);
+  gap:1.25rem;
+  padding:1.4rem;
+}
+.wolfbbs-spatial-copy{
+  display:grid;
+  align-content:start;
+  gap:.95rem;
+}
+.wolfbbs-spatial-copy p{
+  color:rgba(228,236,255,.72);
+}
+.wolfbbs-spatial-copy ul{
+  margin:0;
+  padding-left:1.15rem;
+}
+.wolfbbs-spatial-shell{
+  position:relative;
+  min-height:360px;
+  border-radius:calc(var(--radius) - .4rem);
+  overflow:hidden;
+  border:1px solid rgba(195,220,255,.12);
+  background:linear-gradient(180deg,rgba(6,9,18,.8),rgba(10,13,24,.98));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.05);
+}
+.wolfbbs-webgl-canvas{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  display:block;
+}
+.wolfbbs-spatial-stage{
+  position:absolute;
+  inset:0;
+  display:grid;
+  place-items:center;
+  perspective:1600px;
+}
+.wolfbbs-spatial-terminal{
+  position:relative;
+  width:min(74%,420px);
+  aspect-ratio:1.26;
+  transform-style:preserve-3d;
+  transform:rotateX(calc(56deg + var(--wolfbbs-orbit-y,0deg))) rotateY(calc(-26deg + var(--wolfbbs-orbit-x,0deg))) translateZ(0);
+  animation:wolfbbsSpatialFloat 7s ease-in-out infinite;
+  will-change:transform;
+}
+.wolfbbs-spatial-terminal-face{
+  position:absolute;
+  inset:0;
+  border-radius:1.6rem;
+  border:1px solid rgba(190,215,255,.16);
+  background:linear-gradient(180deg,rgba(23,31,48,.92),rgba(9,12,22,.96));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.08);
+}
+.wolfbbs-spatial-terminal-face.screen{
+  padding:1rem;
+  transform:translateZ(58px);
+  background:
+    linear-gradient(180deg,rgba(19,27,43,.94),rgba(7,10,18,.98)),
+    radial-gradient(circle at 20% 0%, rgba(73,182,255,.12), transparent 30%);
+}
+.wolfbbs-spatial-terminal-face.back{
+  transform:translateZ(-58px) rotateY(180deg);
+}
+.wolfbbs-spatial-terminal-face.top{
+  inset:0 0 auto 0;
+  height:116px;
+  transform-origin:top;
+  transform:rotateX(-90deg) translateY(-58px);
+}
+.wolfbbs-spatial-terminal-face.bottom{
+  inset:auto 0 0 0;
+  height:116px;
+  transform-origin:bottom;
+  transform:rotateX(90deg) translateY(58px);
+}
+.wolfbbs-spatial-terminal-face.side-left{
+  inset:0 auto 0 0;
+  width:116px;
+  transform-origin:left;
+  transform:rotateY(-90deg) translateX(-58px);
+}
+.wolfbbs-spatial-terminal-face.side-right{
+  inset:0 0 0 auto;
+  width:116px;
+  transform-origin:right;
+  transform:rotateY(90deg) translateX(58px);
+}
+.wolfbbs-spatial-screen-ui{
+  display:grid;
+  gap:.75rem;
+  height:100%;
+}
+.wolfbbs-spatial-screen-bar{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:.75rem;
+  font-size:.8rem;
+  color:rgba(228,236,255,.72);
+}
+.wolfbbs-spatial-screen-row{
+  display:grid;
+  grid-template-columns:1.2fr .8fr;
+  gap:.75rem;
+  flex:1;
+}
+.wolfbbs-spatial-screen-stack{
+  display:grid;
+  gap:.75rem;
+}
+.wolfbbs-spatial-screen-panel{
+  padding:.85rem;
+  border-radius:1rem;
+  border:1px solid rgba(188,214,255,.12);
+  background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02));
+}
+.wolfbbs-spatial-screen-panel strong{
+  display:block;
+  margin-bottom:.35rem;
+}
+.wolfbbs-spatial-caption{
+  position:absolute;
+  left:1rem;
+  right:1rem;
+  bottom:1rem;
+  display:flex;
+  justify-content:space-between;
+  gap:1rem;
+  padding:.85rem 1rem;
+  border-radius:1rem;
+  border:1px solid rgba(188,214,255,.1);
+  background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.015));
+  color:rgba(228,236,255,.74);
+}
+.wolfbbs-spatial-caption strong{
+  color:#ffffff;
+}
+.wolfbbs-reveal{
+  opacity:0;
+  transform:translateY(18px) scale(.985);
+  transition:
+    opacity .55s ease,
+    transform .75s cubic-bezier(.2,.75,.2,1);
+  transition-delay:var(--wolfbbs-reveal-delay,0ms);
+}
+.wolfbbs-reveal.is-visible{
+  opacity:1;
+  transform:translateY(0) scale(1);
+}
+.wolfbbs-kinetic-title{
+  font-weight:var(--wolfbbs-hero-weight,780);
+  font-variation-settings:"wght" var(--wolfbbs-hero-weight,780);
+  letter-spacing:calc(.012em + var(--wolfbbs-hero-shift,0) * .006em);
+  transform:
+    translate3d(calc(var(--wolfbbs-hero-x,0) * 1px),calc(var(--wolfbbs-hero-y,0) * 1px),0)
+    scale(calc(1 + var(--wolfbbs-hero-scale,0)));
+  text-shadow:
+    0 0 calc(20px + (var(--wolfbbs-hero-glow,0) * 18px)) rgba(73,182,255,.18),
+    0 0 calc(36px + (var(--wolfbbs-hero-glow,0) * 14px)) rgba(255,83,213,.12);
+  will-change:transform;
+}
+button,
+.wolfbbs-action-card,
+.wolfbbs-palette-item,
+.wolfbbs-omnibar-module,
+.wolfbbs-hero-chip{
+  transition:
+    transform .22s ease,
+    box-shadow .22s ease,
+    border-color .22s ease,
+    background .22s ease;
+}
+.wolfbbs-morph-active{
+  transform:translateY(1px) scale(.97) !important;
+  box-shadow:inset 0 12px 28px rgba(255,255,255,.08), 0 12px 24px rgba(0,0,0,.18) !important;
+  border-color:rgba(255,255,255,.32) !important;
+}
+@keyframes wolfbbsSpatialFloat{
+  0%,100%{
+    transform:rotateX(calc(56deg + var(--wolfbbs-orbit-y,0deg))) rotateY(calc(-26deg + var(--wolfbbs-orbit-x,0deg))) translateY(0);
+  }
+  50%{
+    transform:rotateX(calc(54deg + var(--wolfbbs-orbit-y,0deg))) rotateY(calc(-22deg + var(--wolfbbs-orbit-x,0deg))) translateY(-10px);
+  }
+}
+@supports (grid-template-columns:subgrid){
+  .wolfbbs-grid > .wolfbbs-card,
+  .wolfbbs-grid > .wolfbbs-helper-card,
+  .wolfbbs-card-grid > .wolfbbs-card,
+  .wolfbbs-helper-grid > .wolfbbs-helper-card{
+    display:grid;
+    grid-template-columns:subgrid;
+  }
+  .wolfbbs-grid > .wolfbbs-card > *,
+  .wolfbbs-grid > .wolfbbs-helper-card > *,
+  .wolfbbs-card-grid > .wolfbbs-card > *,
+  .wolfbbs-helper-grid > .wolfbbs-helper-card > *{
+    grid-column:1 / -1;
+  }
+}
+@container (max-width: 56rem){
+  .wolfbbs-grid > *,
+  .wolfbbs-card-grid > *,
+  .wolfbbs-kpi-grid > *,
+  .wolfbbs-action-grid > *,
+  .wolfbbs-helper-grid > *,
+  .wolfbbs-omnibar-module{
+    grid-column:1 / -1;
+  }
+}
 @media (max-width: 820px){
   body{
     width:calc(100% - 1.2rem);
     padding:16px 0 84px;
+  }
+  .wolfbbs-page-hero,
+  .wolfbbs-spatial-card{
+    grid-template-columns:1fr;
+    padding:1.35rem;
+  }
+  .wolfbbs-page-hero-meta{
+    justify-content:flex-start;
+  }
+  .wolfbbs-main{
+    gap:1rem;
+  }
+  .wolfbbs-grid,
+  .wolfbbs-card-grid,
+  .wolfbbs-kpi-grid,
+  .wolfbbs-action-grid,
+  .wolfbbs-helper-grid,
+  .wolfbbs-omnibar-module-grid{
+    grid-template-columns:repeat(6,minmax(0,1fr));
+  }
+  .wolfbbs-grid > *,
+  .wolfbbs-card-grid > *,
+  .wolfbbs-kpi-grid > *,
+  .wolfbbs-action-grid > *,
+  .wolfbbs-helper-grid > *,
+  .wolfbbs-omnibar-module{
+    grid-column:span 3;
   }
   p.wolfbbs-nav-row,body > p:has(> a){padding:9px 10px}
   input[type=text],input[type=password],input[type=email],input[type=number],input[type=url],input[type=search],select,textarea{
@@ -8805,6 +9717,19 @@ table.wolfbbs-ux20-freeze-col td:first-child{
   .wolfbbs-chat-layout{
     grid-template-columns:1fr;
   }
+  .wolfbbs-spatial-terminal{
+    width:min(82%,360px);
+  }
+  .wolfbbs-spatial-screen-row{
+    grid-template-columns:1fr;
+  }
+  .wolfbbs-spatial-caption{
+    flex-direction:column;
+    align-items:flex-start;
+  }
+  #wolfbbsActionDock{
+    bottom:86px;
+  }
   #wolfbbsCommandButton{
     left:10px;
     right:10px;
@@ -8815,7 +9740,35 @@ table.wolfbbs-ux20-freeze-col td:first-child{
 @media (max-width: 560px){
   h1{font-size:1.56rem}
   h2{font-size:1.12rem}
-  .wolfbbs-card,.wolfbbs-kpi-card{padding:14px 14px}
+  .wolfbbs-card,.wolfbbs-kpi-card,.wolfbbs-helper-card,.wolfbbs-action-card,.wolfbbs-primer{padding:14px 14px}
+  .wolfbbs-grid,
+  .wolfbbs-card-grid,
+  .wolfbbs-kpi-grid,
+  .wolfbbs-action-grid,
+  .wolfbbs-helper-grid,
+  .wolfbbs-omnibar-module-grid{
+    grid-template-columns:1fr;
+  }
+  .wolfbbs-grid > *,
+  .wolfbbs-card-grid > *,
+  .wolfbbs-kpi-grid > *,
+  .wolfbbs-action-grid > *,
+  .wolfbbs-helper-grid > *,
+  .wolfbbs-omnibar-module{
+    grid-column:1 / -1;
+  }
+  #wolfbbsPaletteHeader{
+    padding:1rem;
+  }
+  #wolfbbsPaletteList{
+    padding:.75rem;
+  }
+  .wolfbbs-spatial-shell{
+    min-height:300px;
+  }
+  .wolfbbs-spatial-terminal{
+    width:min(88%,300px);
+  }
 }
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{
@@ -9015,7 +9968,7 @@ table.wolfbbs-ux20-freeze-col td:first-child{
   }
 
   const uiPrefs = Object.assign({
-    theme: "default",
+    theme: "night",
     density: "comfortable",
     fontScale: 1,
     layout: "standard",
@@ -9028,7 +9981,7 @@ table.wolfbbs-ux20-freeze-col td:first-child{
   }
 
   function applyUIPrefs() {
-    const theme = ["default", "contrast", "night"].includes(uiPrefs.theme) ? uiPrefs.theme : "default";
+    const theme = ["default", "contrast", "night"].includes(uiPrefs.theme) ? uiPrefs.theme : "night";
     const density = uiPrefs.density === "compact" ? "compact" : "comfortable";
     const fontScale = clamp(Number(uiPrefs.fontScale || 1), 0.9, 1.2);
     const layout = ["standard", "wide", "focus"].includes(uiPrefs.layout) ? uiPrefs.layout : "standard";
@@ -9106,6 +10059,13 @@ table.wolfbbs-ux20-freeze-col td:first-child{
     return "Caller Lane";
   }
 
+  function headingBaseLabel(heading) {
+    if (!heading) return "";
+    const clone = heading.cloneNode(true);
+    Array.from(clone.querySelectorAll("a,button")).forEach((node) => node.remove());
+    return (clone.textContent || "").replace(/\s+/g, " ").trim();
+  }
+
   function buildPageShell() {
     const h1 = document.querySelector("h1");
     if (!h1 || h1.closest(".wolfbbs-page-hero")) return;
@@ -9134,7 +10094,7 @@ table.wolfbbs-ux20-freeze-col td:first-child{
 
     const jumpChip = document.createElement("span");
     jumpChip.className = "wolfbbs-hero-chip";
-    jumpChip.textContent = "Ctrl+K jump";
+    jumpChip.textContent = "Ctrl+K omnibar";
     heroMeta.appendChild(jumpChip);
 
     h1.parentNode.insertBefore(hero, h1);
@@ -9169,6 +10129,268 @@ table.wolfbbs-ux20-freeze-col td:first-child{
   }
 
   buildPageShell();
+
+  function prefersReducedMotion() {
+    return uiPrefs.motion === "reduced" || (typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  }
+
+  function setUIPref(key, value, toastLabel) {
+    uiPrefs[key] = value;
+    persistUIPrefs();
+    applyUIPrefs();
+    if (toastLabel) {
+      showToast(toastLabel, "ok");
+    }
+  }
+
+  function classifyBentoDensity(node) {
+    if (!node) return "medium";
+    if (node.matches && node.matches(".wolfbbs-primer,.wolfbbs-spatial-card,.wolfbbs-chat-layout,.wolfbbs-dashboard")) return "high";
+    if (node.matches && node.matches(".wolfbbs-kpi-card")) return "low";
+    const tableRows = node.querySelectorAll("table tr").length;
+    const formFields = node.querySelectorAll("input,select,textarea,button").length;
+    const links = node.querySelectorAll("a").length;
+    const items = node.querySelectorAll("li,p,dt,dd").length;
+    const bodyText = (node.textContent || "").replace(/\s+/g, " ").trim();
+    const score = (tableRows * 5) + (formFields * 2) + links + Math.min(items, 12) + Math.min(Math.floor(bodyText.length / 180), 8);
+    if (score >= 18) return "high";
+    if (score <= 6) return "low";
+    return "medium";
+  }
+
+  function applyBentoDensity(root) {
+    const scope = root || document;
+    const selectors = [
+      ".wolfbbs-card",
+      ".wolfbbs-helper-card",
+      ".wolfbbs-kpi-card",
+      ".wolfbbs-action-card",
+      ".wolfbbs-primer",
+      ".wolfbbs-spatial-card",
+      "main.wolfbbs-main > section",
+      "main.wolfbbs-main > article",
+      "main.wolfbbs-main > form",
+      "main.wolfbbs-main > .wolfbbs-chat-layout",
+      "main.wolfbbs-main > .wolfbbs-table-wrap"
+    ];
+    Array.from(scope.querySelectorAll(selectors.join(","))).forEach((node) => {
+      if (node.dataset.wolfbbsDensityLocked === "1") return;
+      node.dataset.density = classifyBentoDensity(node);
+    });
+  }
+
+  function markRevealTargets(root) {
+    const scope = root || document;
+    const selectors = [
+      ".wolfbbs-page-hero",
+      "main.wolfbbs-main > *",
+      ".wolfbbs-card",
+      ".wolfbbs-helper-card",
+      ".wolfbbs-kpi-card",
+      ".wolfbbs-action-card",
+      ".wolfbbs-primer",
+      ".wolfbbs-spatial-card"
+    ];
+    return Array.from(scope.querySelectorAll(selectors.join(","))).filter((node) => {
+      if (node.dataset.wolfbbsReveal === "1") return false;
+      node.dataset.wolfbbsReveal = "1";
+      node.classList.add("wolfbbs-reveal");
+      return true;
+    });
+  }
+
+  function mountStructuralMotion() {
+    const targets = markRevealTargets(document);
+    if (!targets.length) return;
+    if (prefersReducedMotion() || typeof IntersectionObserver !== "function") {
+      targets.forEach((node) => node.classList.add("is-visible"));
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry, idx) => {
+        if (!entry.isIntersecting) return;
+        const node = entry.target;
+        node.style.setProperty("--wolfbbs-reveal-delay", String(Math.min(idx, 6) * 40) + "ms");
+        node.classList.add("is-visible");
+        observer.unobserve(node);
+      });
+    }, {
+      threshold: 0.12,
+      rootMargin: "0px 0px -8% 0px"
+    });
+    targets.forEach((node) => observer.observe(node));
+  }
+
+  function mountMorphingUI() {
+    if (document.body.dataset.wolfbbsMorphBound === "1") return;
+    document.body.dataset.wolfbbsMorphBound = "1";
+    document.addEventListener("pointerdown", (event) => {
+      const target = event.target && event.target.closest ? event.target.closest("button, .wolfbbs-action-card, .wolfbbs-palette-item, .wolfbbs-omnibar-module, .wolfbbs-hero-chip") : null;
+      if (!target) return;
+      target.classList.add("wolfbbs-morph-active");
+      window.setTimeout(() => target.classList.remove("wolfbbs-morph-active"), 220);
+    }, true);
+  }
+
+  function mountKineticHero() {
+    const hero = document.querySelector(".wolfbbs-page-hero");
+    const titleNode = hero && hero.querySelector("h1");
+    if (!hero || !titleNode || hero.dataset.wolfbbsKinetic === "1") return;
+    hero.dataset.wolfbbsKinetic = "1";
+    titleNode.classList.add("wolfbbs-kinetic-title");
+    function syncFromScroll() {
+      const limit = Math.max(220, hero.offsetHeight * 1.8);
+      const depth = clamp(window.scrollY / limit, 0, 1);
+      titleNode.style.setProperty("--wolfbbs-hero-weight", String(Math.round(810 - (depth * 170))));
+      titleNode.style.setProperty("--wolfbbs-hero-scale", String((0.028 - (depth * 0.02)).toFixed(3)));
+      titleNode.style.setProperty("--wolfbbs-hero-glow", String((1 - (depth * 0.65)).toFixed(3)));
+      titleNode.style.setProperty("--wolfbbs-hero-shift", String((1 - depth).toFixed(3)));
+    }
+    function syncFromPointer(event) {
+      const rect = hero.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      const x = ((event.clientX - rect.left) / rect.width) - 0.5;
+      const y = ((event.clientY - rect.top) / rect.height) - 0.5;
+      titleNode.style.setProperty("--wolfbbs-hero-x", String((x * 8).toFixed(2)));
+      titleNode.style.setProperty("--wolfbbs-hero-y", String((y * 6).toFixed(2)));
+    }
+    function resetPointer() {
+      titleNode.style.setProperty("--wolfbbs-hero-x", "0");
+      titleNode.style.setProperty("--wolfbbs-hero-y", "0");
+    }
+    hero.addEventListener("pointermove", syncFromPointer);
+    hero.addEventListener("pointerleave", resetPointer);
+    window.addEventListener("scroll", syncFromScroll, { passive: true });
+    syncFromScroll();
+    resetPointer();
+  }
+
+  function isSpatialPreviewRoute() {
+    return ["/start", "/showcase", "/connect", "/tour", "/help", "/admin/launch"].some((path) => currentRoute === path || currentRoute.indexOf(path + "/") === 0);
+  }
+
+  function syncSpatialCanvas(section) {
+    const shell = section && section.querySelector(".wolfbbs-spatial-shell");
+    const canvas = section && section.querySelector(".wolfbbs-webgl-canvas");
+    if (!shell || !canvas) return;
+    if (canvas.dataset.wolfbbsSpatial === "1") return;
+    canvas.dataset.wolfbbsSpatial = "1";
+    const gl = canvas.getContext("webgl", { alpha: true, antialias: true });
+    const ctx2d = gl ? null : canvas.getContext("2d");
+    const state = { x: 0, y: 0, active: false };
+    function resize() {
+      const rect = shell.getBoundingClientRect();
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      canvas.width = Math.max(1, Math.round(rect.width * dpr));
+      canvas.height = Math.max(1, Math.round(rect.height * dpr));
+      canvas.style.width = rect.width + "px";
+      canvas.style.height = rect.height + "px";
+      if (gl) {
+        gl.viewport(0, 0, canvas.width, canvas.height);
+      }
+    }
+    function paint(timeMs) {
+      const drift = (timeMs || 0) * 0.0012;
+      if (gl) {
+        const r = 0.03 + (Math.sin(drift) * 0.018) + 0.03;
+        const g = 0.05 + (Math.cos(drift * 0.7) * 0.014) + 0.03;
+        const b = 0.09 + (Math.sin(drift * 0.9) * 0.022) + 0.04;
+        gl.clearColor(r, g, b, 0.92);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+      } else if (ctx2d) {
+        const width = canvas.width;
+        const height = canvas.height;
+        const grad = ctx2d.createLinearGradient(0, 0, width, height);
+        grad.addColorStop(0, "rgba(31,93,226,0.88)");
+        grad.addColorStop(0.55, "rgba(17,29,58,0.95)");
+        grad.addColorStop(1, "rgba(255,83,213,0.82)");
+        ctx2d.clearRect(0, 0, width, height);
+        ctx2d.fillStyle = grad;
+        ctx2d.fillRect(0, 0, width, height);
+      }
+      if (!prefersReducedMotion()) {
+        window.requestAnimationFrame(paint);
+      }
+    }
+    function syncOrbit(clientX, clientY) {
+      const rect = shell.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      const x = clamp((((clientX - rect.left) / rect.width) - 0.5) * 18, -12, 12);
+      const y = clamp((((clientY - rect.top) / rect.height) - 0.5) * -14, -10, 10);
+      shell.style.setProperty("--wolfbbs-orbit-x", x.toFixed(2) + "deg");
+      shell.style.setProperty("--wolfbbs-orbit-y", y.toFixed(2) + "deg");
+    }
+    shell.addEventListener("pointermove", (event) => {
+      state.active = true;
+      syncOrbit(event.clientX, event.clientY);
+    });
+    shell.addEventListener("pointerleave", () => {
+      state.active = false;
+      shell.style.setProperty("--wolfbbs-orbit-x", "0deg");
+      shell.style.setProperty("--wolfbbs-orbit-y", "0deg");
+    });
+    window.addEventListener("resize", resize);
+    resize();
+    paint(0);
+  }
+
+  function mountSpatialPreview() {
+    if (!isSpatialPreviewRoute() || document.querySelector(".wolfbbs-spatial-card")) return;
+    const main = document.querySelector("main.wolfbbs-main");
+    const hero = document.querySelector(".wolfbbs-page-hero");
+    if (!main && !hero) return;
+    const section = document.createElement("section");
+    section.className = "wolfbbs-spatial-card";
+    section.dataset.density = "high";
+    section.innerHTML = '' +
+      '<div class="wolfbbs-spatial-copy">' +
+        '<span class="wolfbbs-hero-chip" data-kind="guest">Spatial Preview</span>' +
+        '<h2>Spin through the board before you commit to a workflow.</h2>' +
+        '<p>The shell adapts around what matters most, surfaces next-best actions, and keeps the retro terminal soul intact under a much more tactile interface.</p>' +
+        '<ul>' +
+          '<li>Bento cards stretch with data density instead of forcing every surface into the same box.</li>' +
+          '<li>Liquid Glass layers keep status, tools, and actions readable without feeling flat.</li>' +
+          '<li>The omnibar speaks the product language: routes, actions, focus modes, and operator tools.</li>' +
+        '</ul>' +
+      '</div>' +
+      '<div class="wolfbbs-spatial-shell">' +
+        '<canvas class="wolfbbs-webgl-canvas" aria-label="Interactive WolfBBS preview"></canvas>' +
+        '<div class="wolfbbs-spatial-stage">' +
+          '<div class="wolfbbs-spatial-terminal">' +
+            '<div class="wolfbbs-spatial-terminal-face screen">' +
+              '<div class="wolfbbs-spatial-screen-ui">' +
+                '<div class="wolfbbs-spatial-screen-bar"><span>WolfBBS 2026</span><span>Node-ready + live lanes</span></div>' +
+                '<div class="wolfbbs-spatial-screen-row">' +
+                  '<div class="wolfbbs-spatial-screen-stack">' +
+                    '<div class="wolfbbs-spatial-screen-panel"><strong>Today Brief</strong><span>Activity, alerts, and next best moves</span></div>' +
+                    '<div class="wolfbbs-spatial-screen-panel"><strong>Live Lobby</strong><span>Chat, moderation, and presence at a glance</span></div>' +
+                  '</div>' +
+                  '<div class="wolfbbs-spatial-screen-stack">' +
+                    '<div class="wolfbbs-spatial-screen-panel"><strong>Launch</strong><span>Release gate, smoke checks, and runtime status</span></div>' +
+                    '<div class="wolfbbs-spatial-screen-panel"><strong>Omnibar</strong><span>Ask for routes, actions, or focus modes</span></div>' +
+                  '</div>' +
+                '</div>' +
+              '</div>' +
+            '</div>' +
+            '<div class="wolfbbs-spatial-terminal-face back"></div>' +
+            '<div class="wolfbbs-spatial-terminal-face top"></div>' +
+            '<div class="wolfbbs-spatial-terminal-face bottom"></div>' +
+            '<div class="wolfbbs-spatial-terminal-face side-left"></div>' +
+            '<div class="wolfbbs-spatial-terminal-face side-right"></div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="wolfbbs-spatial-caption"><span>Interactive browser preview</span><strong>Drag to orbit. Ctrl+K opens the omnibar.</strong></div>' +
+      '</div>';
+    if (main && main.firstChild) {
+      main.insertBefore(section, main.firstChild);
+    } else if (main) {
+      main.appendChild(section);
+    } else if (hero && hero.parentNode) {
+      hero.parentNode.insertBefore(section, hero.nextSibling);
+    }
+    syncSpatialCanvas(section);
+  }
+
   const routeLabelOverrides = {
     "admin": "Admin",
     "setup": "Setup",
@@ -10407,7 +11629,7 @@ table.wolfbbs-ux20-freeze-col td:first-child{
       if (!heading) return;
       section.classList.add("wolfbbs-section-collapsible");
       if (!heading.dataset.navLabel) {
-        heading.dataset.navLabel = heading.textContent.trim();
+        heading.dataset.navLabel = headingBaseLabel(heading);
       }
       const body = document.createElement("div");
       body.className = "wolfbbs-section-body";
@@ -13679,7 +14901,7 @@ table.wolfbbs-ux20-freeze-col td:first-child{
   const sectionHeadings = headings
     .filter((heading) => heading.tagName === "H2")
     .filter((heading) => {
-      const text = heading.textContent.trim();
+      const text = headingBaseLabel(heading);
       if (!text || text.length < 3) return false;
       if (heading.closest("table")) return false;
       return true;
@@ -13700,6 +14922,7 @@ table.wolfbbs-ux20-freeze-col td:first-child{
   }
   sectionHeadings.forEach((heading, idx) => {
     if (!heading.id) heading.id = "wolfbbs-section-" + idx;
+    if (!heading.dataset.navLabel) heading.dataset.navLabel = headingBaseLabel(heading);
     if (heading.querySelector(".wolfbbs-heading-link")) return;
     const link = document.createElement("a");
     link.href = "#" + heading.id;
@@ -13726,7 +14949,7 @@ table.wolfbbs-ux20-freeze-col td:first-child{
       if (sectionPins[heading.id]) {
         delete sectionPins[heading.id];
       } else {
-        sectionPins[heading.id] = heading.dataset.navLabel || heading.textContent.trim();
+        sectionPins[heading.id] = heading.dataset.navLabel || headingBaseLabel(heading);
       }
       writeJSON(sectionPinsStorageKey, sectionPins);
       syncPinLabel();
@@ -13829,7 +15052,7 @@ table.wolfbbs-ux20-freeze-col td:first-child{
       if (!heading.id) heading.id = "wolfbbs-section-" + idx;
       const link = document.createElement("a");
       link.href = "#" + heading.id;
-      link.textContent = (heading.dataset.navLabel || heading.textContent.trim()) + " • " + readingMinutesForHeading(heading) + "m";
+      link.textContent = (heading.dataset.navLabel || headingBaseLabel(heading)) + " • " + readingMinutesForHeading(heading) + "m";
       nav.appendChild(link);
       linkMap.set(heading.id, link);
     });
@@ -14071,7 +15294,7 @@ table.wolfbbs-ux20-freeze-col td:first-child{
     if (!container) return "Table";
     const heading = container.querySelector("h2,h3");
     if (!heading) return "Table";
-    return heading.textContent.trim() || "Table";
+    return headingBaseLabel(heading) || "Table";
   }
 
   function extractSeriesFromTable(table) {
@@ -15073,55 +16296,225 @@ table.wolfbbs-ux20-freeze-col td:first-child{
   enhanceTextCounters();
   enhanceComposeTemplates();
   mountUXRound20Pass();
+  mountSpatialPreview();
+  applyBentoDensity();
+  mountStructuralMotion();
+  mountMorphingUI();
+  mountKineticHero();
 
   const overlay = document.createElement("div");
   overlay.id = "wolfbbsPaletteOverlay";
-  overlay.innerHTML = '<div id="wolfbbsPalette"><div id="wolfbbsPaletteHeader"><label style="display:block;margin:0"><span class="wolfbbs-muted">Command palette</span><input id="wolfbbsPaletteInput" type="search" placeholder="jump to boards, doors, status, admin..." style="width:100%;margin-top:8px"></label><div id="wolfbbsPaletteHistory" class="wolfbbs-palette-history"></div></div><div id="wolfbbsPaletteList"></div></div>';
+  overlay.innerHTML = '<div id="wolfbbsPalette"><div id="wolfbbsPaletteHeader"><label><span id="wolfbbsOmnibarLabel">Omnibar / Ask WolfBBS</span><span class="wolfbbs-omnibar-hint">Try natural prompts like "take me to boards", "open release gate", or "focus mode".</span><input id="wolfbbsPaletteInput" type="search" placeholder="Ask for routes, actions, settings, or sysop tools..." style="width:100%"></label><div id="wolfbbsPaletteHistory" class="wolfbbs-palette-history"></div></div><div id="wolfbbsOmnibarModules" class="wolfbbs-omnibar-module-grid"></div><div id="wolfbbsPaletteList"></div></div>';
   document.body.appendChild(overlay);
 
   const paletteButton = document.createElement("button");
   paletteButton.id = "wolfbbsCommandButton";
   paletteButton.type = "button";
-  paletteButton.textContent = "Jump / Search";
+  paletteButton.textContent = "Open Omnibar";
   document.body.appendChild(paletteButton);
 
   const paletteInput = overlay.querySelector("#wolfbbsPaletteInput");
   const paletteList = overlay.querySelector("#wolfbbsPaletteList");
   const paletteHistory = overlay.querySelector("#wolfbbsPaletteHistory");
+  const omnibarModules = overlay.querySelector("#wolfbbsOmnibarModules");
+
+  function openNamedSurface(name) {
+    if (typeof window[name] !== "function") return false;
+    window[name]();
+    return true;
+  }
+
+  function executeOmnibarItem(item) {
+    if (!item) return false;
+    if (item.href) {
+      location.href = item.href;
+      return true;
+    }
+    if (!item.action) return false;
+    if (item.action === "theme:night") {
+      setUIPref("theme", "night", "Theme set to Night");
+      return true;
+    }
+    if (item.action === "theme:contrast") {
+      setUIPref("theme", "contrast", "Theme set to Contrast");
+      return true;
+    }
+    if (item.action === "layout:focus") {
+      setUIPref("layout", "focus", "Layout set to Focus");
+      return true;
+    }
+    if (item.action === "layout:wide") {
+      setUIPref("layout", "wide", "Layout set to Wide");
+      return true;
+    }
+    if (item.action === "density:compact") {
+      setUIPref("density", "compact", "Density set to Compact");
+      return true;
+    }
+    if (item.action === "density:comfortable") {
+      setUIPref("density", "comfortable", "Density set to Comfortable");
+      return true;
+    }
+    if (item.action === "motion:reduced") {
+      setUIPref("motion", "reduced", "Motion set to Reduced");
+      return true;
+    }
+    if (item.action === "motion:full") {
+      setUIPref("motion", "full", "Motion set to Full");
+      return true;
+    }
+    if (item.action === "workspace") return openNamedSurface("wolfbbsOpenWorkspaceHub");
+    if (item.action === "spotlight") return openNamedSurface("wolfbbsOpenSpotlight");
+    if (item.action === "release") return openNamedSurface("wolfbbsOpenReleaseGate");
+    if (item.action === "bug") return openNamedSurface("wolfbbsOpenBugCapture");
+    if (item.action === "toast") return openNamedSurface("wolfbbsOpenToastCenter");
+    if (item.action === "checkpoint") return openNamedSurface("wolfbbsOpenCheckpointHub");
+    if (item.action === "drafts") return openNamedSurface("wolfbbsOpenDraftCenter");
+    if (item.action === "insights") return openNamedSurface("wolfbbsOpenKPIWatchCenter");
+    if (item.action === "incident") return openNamedSurface("wolfbbsOpenIncidentConsole");
+    if (item.action === "playbook") return openNamedSurface("wolfbbsOpenPlaybookRunner");
+    if (item.action === "reminders") return openNamedSurface("wolfbbsOpenReminderScheduler");
+    return false;
+  }
+
+  function routeModules() {
+    if (routeKind(currentRoute) === "admin") {
+      return [
+        { label: "Release Gate", description: "Launch checks, evidence, and ship status.", action: "release", meta: "operator" },
+        { label: "Ops Console", description: "Incidents, runtime drift, and next actions.", href: "/admin/ops", meta: "operator" },
+        { label: "Config Center", description: "Identity, runtime flags, and gateways.", href: "/admin/setup", meta: "operator" },
+        { label: "Bug Capture", description: "Log breakage without losing route context.", action: "bug", meta: "operator" },
+        { label: "Focus Layout", description: "Trim chrome for deep operator work.", action: "layout:focus", meta: "ui" },
+        { label: "Status Center", description: "Caller-facing health and uptime view.", href: "/status", meta: "operator" }
+      ];
+    }
+    if (routeKind(currentRoute) === "guest") {
+      return [
+        { label: "Start Center", description: "Orientation, quick paths, and the core story.", href: "/start", meta: "guest" },
+        { label: "Connect Guide", description: "SSH, web, IRC, and install paths.", href: "/connect", meta: "guest" },
+        { label: "Showcase", description: "Feature tour, lanes, and product proof.", href: "/showcase", meta: "guest" },
+        { label: "Spotlight", description: "Find routes and product surfaces fast.", action: "spotlight", meta: "guest" },
+        { label: "Night Theme", description: "Lean into the dark glass default.", action: "theme:night", meta: "ui" },
+        { label: "Wide Layout", description: "Stretch the shell for comparison work.", action: "layout:wide", meta: "ui" }
+      ];
+    }
+    return [
+      { label: "Today Brief", description: "Your live summary, momentum, and next moves.", href: "/today", meta: "caller" },
+      { label: "Boards", description: "Browse conversations, digests, and watch tiers.", href: "/boards", meta: "caller" },
+      { label: "Live Chat", description: "Jump into the lobby and current channels.", href: "/chat", meta: "caller" },
+      { label: "Mail", description: "Private messages, drafts, and reply flows.", href: "/mail", meta: "caller" },
+      { label: "Workspace Hub", description: "Sticky context, notes, and work surfaces.", action: "workspace", meta: "caller" },
+      { label: "Compact Density", description: "Fit more signal into each view.", action: "density:compact", meta: "ui" }
+    ];
+  }
+
+  function renderOmnibarModules(query) {
+    if (!omnibarModules) return;
+    const q = (query || "").trim().toLowerCase();
+    omnibarModules.innerHTML = "";
+    routeModules()
+      .filter((item) => !q || item.label.toLowerCase().includes(q) || item.description.toLowerCase().includes(q) || String(item.meta || "").toLowerCase().includes(q))
+      .slice(0, 6)
+      .forEach((item) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "wolfbbs-omnibar-module";
+        button.innerHTML = "<strong>" + item.label + "</strong><span>" + item.description + "</span>";
+        button.addEventListener("click", () => {
+          executeOmnibarItem(item);
+          closePalette();
+        });
+        omnibarModules.appendChild(button);
+      });
+  }
+
+  function resolveOmnibarIntent(rawQuery) {
+    const q = String(rawQuery || "").trim().toLowerCase();
+    if (!q) return null;
+    if ((q.includes("night") || q.includes("dark")) && q.includes("theme")) return { label: "Switch to Night theme", meta: "appearance", action: "theme:night" };
+    if (q.includes("contrast")) return { label: "Switch to Contrast theme", meta: "appearance", action: "theme:contrast" };
+    if (q.includes("focus")) return { label: "Enable Focus layout", meta: "appearance", action: "layout:focus" };
+    if (q.includes("wide")) return { label: "Enable Wide layout", meta: "appearance", action: "layout:wide" };
+    if (q.includes("compact") || q.includes("dense")) return { label: "Use Compact density", meta: "appearance", action: "density:compact" };
+    if (q.includes("comfortable")) return { label: "Use Comfortable density", meta: "appearance", action: "density:comfortable" };
+    if (q.includes("reduced motion")) return { label: "Reduce motion", meta: "appearance", action: "motion:reduced" };
+    if (q.includes("full motion")) return { label: "Restore full motion", meta: "appearance", action: "motion:full" };
+    if (q.includes("workspace")) return { label: "Open Workspace Hub", meta: "surface", action: "workspace" };
+    if (q.includes("spotlight") || q.includes("search everything")) return { label: "Open Spotlight", meta: "surface", action: "spotlight" };
+    if (q.includes("release") || q.includes("ship") || q.includes("launch")) return { label: "Open Release Gate", meta: "surface", action: "release" };
+    if (q.includes("bug") || q.includes("issue") || q.includes("report")) return { label: "Open Bug Capture", meta: "surface", action: "bug" };
+    if (q.includes("ops") || q.includes("incident")) return { label: "Open Ops Console", meta: "navigate", href: "/admin/ops" };
+    if (q.includes("status") || q.includes("health")) return { label: "Open Status Center", meta: "navigate", href: "/status" };
+    if (q.includes("connect")) return { label: "Open Connect Guide", meta: "navigate", href: "/connect" };
+    if (q.includes("showcase")) return { label: "Open Showcase", meta: "navigate", href: "/showcase" };
+    if (q.includes("today")) return { label: "Open Today Brief", meta: "navigate", href: "/today" };
+    if (q.includes("attention")) return { label: "Open Attention Center", meta: "navigate", href: "/attention" };
+    if (q.includes("board")) return { label: "Open Boards", meta: "navigate", href: "/boards" };
+    if (q.includes("chat") || q.includes("lobby")) return { label: "Open Live Chat", meta: "navigate", href: "/chat" };
+    if (q.includes("mail") || q.includes("compose")) return { label: "Open Mail", meta: "navigate", href: "/mail" };
+    if (q.includes("door")) return { label: "Open Doors", meta: "navigate", href: "/doors" };
+    if (q.includes("config") || q.includes("setup")) return { label: "Open Config Center", meta: "navigate", href: routeKind(currentRoute) === "admin" ? "/admin/setup" : "/config" };
+    if (q.includes("admin") || q.includes("sysop")) return { label: "Open Admin Deck", meta: "navigate", href: "/admin" };
+    if (q.includes("start") || q.includes("home") || q.includes("dashboard")) return { label: "Open Start Center", meta: "navigate", href: "/start" };
+    return null;
+  }
   const commands = [
     { href: "/start", label: "Start Center", meta: "core" },
     { href: "/today", label: "Today Brief", meta: "core" },
     { href: "/attention", label: "Attention Center", meta: "core" },
     { href: "/boards", label: "Boards", meta: "core" },
     { href: "/chat", label: "Live Chat", meta: "core" },
-    { href: "/mail", label: "Mail", meta: "core" }
+    { href: "/mail", label: "Mail", meta: "core" },
+    { href: "/status", label: "Status Center", meta: "core" },
+    { href: "/showcase", label: "Showcase", meta: "core" }
   ].concat(loadFavorites().map((item) => ({
     href: item.href,
     label: item.label,
     meta: "favorite"
   }))).concat(navLinks).concat(headings.map((heading) => ({
     href: "#" + heading.id,
-    label: heading.textContent.trim(),
+    label: heading.dataset.navLabel || headingBaseLabel(heading),
     meta: "section"
   })));
+
+  function appendPaletteItem(item) {
+    if (!item) return null;
+    const element = document.createElement(item.href ? "a" : "button");
+    element.className = "wolfbbs-palette-item";
+    if (item.href) {
+      element.href = item.href;
+    } else {
+      element.type = "button";
+    }
+    element.innerHTML = "<strong>" + item.label + "</strong><span class=\"wolfbbs-palette-meta\">" + item.meta + (item.href ? (" • " + item.href) : "") + "</span>";
+    if (!item.href) {
+      element.addEventListener("click", () => {
+        executeOmnibarItem(item);
+        closePalette();
+      });
+    }
+    paletteList.appendChild(element);
+    return element;
+  }
 
   function renderPalette(query) {
     const q = (query || "").trim().toLowerCase();
     paletteList.innerHTML = "";
+    renderOmnibarModules(query);
+    const intent = resolveOmnibarIntent(query);
+    if (intent) {
+      appendPaletteItem(intent);
+    }
     commands
       .filter((item) => !q || item.label.toLowerCase().includes(q) || item.href.toLowerCase().includes(q))
       .slice(0, 16)
       .forEach((item) => {
-        const link = document.createElement("a");
-        link.className = "wolfbbs-palette-item";
-        link.href = item.href;
-        link.innerHTML = "<strong>" + item.label + "</strong><span class=\"wolfbbs-palette-meta\">" + item.meta + " • " + item.href + "</span>";
-        paletteList.appendChild(link);
+        appendPaletteItem(item);
       });
     if (!paletteList.children.length) {
       const empty = document.createElement("div");
       empty.className = "wolfbbs-palette-item";
-      empty.innerHTML = "<strong>No matches</strong><span class=\"wolfbbs-palette-meta\">Try boards, doors, chat, admin, status.</span>";
+      empty.innerHTML = "<strong>No matches</strong><span class=\"wolfbbs-palette-meta\">Try boards, release gate, focus mode, workspace, or status.</span>";
       paletteList.appendChild(empty);
     }
   }
@@ -15172,6 +16565,23 @@ table.wolfbbs-ux20-freeze-col td:first-child{
 
   paletteButton.addEventListener("click", openPalette);
   paletteInput.addEventListener("input", () => renderPalette(paletteInput.value));
+  paletteInput.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    const intent = resolveOmnibarIntent(paletteInput.value);
+    if (intent) {
+      executeOmnibarItem(intent);
+      closePalette();
+      return;
+    }
+    const first = paletteList.querySelector(".wolfbbs-palette-item");
+    if (!first) return;
+    if (first.tagName && first.tagName.toLowerCase() === "a" && first.href) {
+      location.href = first.getAttribute("href");
+    } else {
+      first.click();
+    }
+  });
   overlay.addEventListener("click", (event) => {
     if (event.target === overlay) closePalette();
     if (event.target && event.target.closest(".wolfbbs-palette-item")) {
@@ -15510,6 +16920,8 @@ const host = document.getElementById('xterm');
 const status = document.getElementById('termStatus');
 const wsURL = ` + fmt.Sprintf("%q", wsURL) + `;
 const preset = ` + fmt.Sprintf("%q", preset) + `;
+const connectSearch = new URLSearchParams(location.search);
+let terminalPrimed = location.hash === '#xterm' || connectSearch.get('autofocus') === '1';
 const presetMap = {
   web: { fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace", fontSize: 14, background: "#0b0f14", foreground: "#b7f7c1", cursor: "#f4f4f4", selection: "#334455" },
   syncterm: { fontFamily: "'IBM Plex Mono', 'Cascadia Mono', 'Courier New', monospace", fontSize: 15, background: "#050709", foreground: "#ffd27a", cursor: "#fff2c4", selection: "#5a3f1d" },
@@ -15599,7 +17011,10 @@ if (window.Terminal) {
     fitAddon.fit();
   }
 }
-term.focus();
+function focusTerminal() {
+  if (!terminalPrimed) return;
+  term.focus();
+}
 let ws = null;
 let reconnectTimer = null;
 let reconnectMs = 1000;
@@ -15684,7 +17099,7 @@ function connect(){
     setOnlineState(true);
     term.writeln("[connected] " + wsURL);
     flushPendingFrames();
-    term.focus();
+    focusTerminal();
   };
   ws.onmessage = function(evt){ writeServer(evt.data); };
   ws.onclose = function(){ scheduleReconnect("socket closed"); };
@@ -15717,16 +17132,19 @@ term.onData(function(data){
   }
 });
 
-host.addEventListener('click', function(){ term.focus(); });
+host.addEventListener('click', function(){
+  terminalPrimed = true;
+  focusTerminal();
+});
 document.addEventListener('visibilitychange', function(){
   if (document.visibilityState === "visible") {
     if (!ws || ws.readyState !== WebSocket.OPEN) connect();
-    term.focus();
+    focusTerminal();
   }
 });
 window.addEventListener('focus', function(){
   if (!ws || ws.readyState !== WebSocket.OPEN) connect();
-  term.focus();
+  focusTerminal();
 });
 
 window.addEventListener('resize', function(){
@@ -15742,7 +17160,7 @@ setInterval(function(){
     sendFrame("ping", "");
   }
 }, 25000);
-setTimeout(function(){ term.focus(); }, 0);
+setTimeout(function(){ focusTerminal(); }, 0);
 })();
 </script>`
 
@@ -26723,6 +28141,7 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 				statusHoldUntil: 0,
 				statusHoldTimer: null,
 			};
+			let chatComposerPrimed = false;
 			function liveStatusText() {
 				const readOnly = streamState.locked.has(streamState.channel) && !canModerate;
 				if (readOnly) {
@@ -26909,7 +28328,7 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 					button.type = 'button';
 					button.textContent = name;
 					button.addEventListener('click', () => {
-						refreshChannel(name);
+						refreshChannel(name, {focusComposer: true});
 					});
 					wrap.appendChild(button);
 				});
@@ -27058,7 +28477,13 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 				};
 			}
 
-			async function refreshChannel(next) {
+			function focusChatComposer() {
+				if (!chatComposerPrimed) return;
+				document.getElementById('message').focus();
+			}
+
+			async function refreshChannel(next, opts) {
+				const options = opts || {};
 				const channel = normalizeChannelName(next);
 				if (!channel) return;
 				streamState.channel = channel;
@@ -27071,11 +28496,14 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 				updateComposerState();
 				const live = liveStatusText();
 				setStatus(live.msg, live.state);
-				document.getElementById('message').focus();
+				if (options.focusComposer) {
+					chatComposerPrimed = true;
+					focusChatComposer();
+				}
 			}
 
 			document.getElementById('channelSelect').addEventListener('change', async function(evt){
-				await refreshChannel(evt.target.value);
+				await refreshChannel(evt.target.value, {focusComposer: true});
 			});
 
 			document.getElementById('customChannelForm').addEventListener('submit', async function(evt){
@@ -27084,7 +28512,7 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 				const channel = normalizeChannelName(field.value);
 				if (!channel) return;
 				field.value = '';
-				await refreshChannel(channel);
+				await refreshChannel(channel, {focusComposer: true});
 			});
 
 			document.getElementById('sendForm').addEventListener('submit', async function(evt){
@@ -27103,9 +28531,17 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 					return;
 				}
 				document.getElementById('message').value = '';
+				chatComposerPrimed = true;
+				focusChatComposer();
 				setStatus('Sent to ' + streamState.channel, 'live');
 			});
 
+			document.getElementById('message').addEventListener('focus', function(){
+				chatComposerPrimed = true;
+			});
+			document.getElementById('message').addEventListener('pointerdown', function(){
+				chatComposerPrimed = true;
+			});
 			document.getElementById('message').addEventListener('keydown', function(evt){
 				if (evt.key === 'l' && evt.ctrlKey) {
 					evt.preventDefault();
@@ -27145,7 +28581,7 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 
 			document.getElementById('chatReconnect').addEventListener('click', async function(){
 				await loadChannels();
-				await refreshChannel(streamState.channel);
+				await refreshChannel(streamState.channel, {focusComposer: chatComposerPrimed});
 			});
 
 			window.addEventListener('load', async () => {
