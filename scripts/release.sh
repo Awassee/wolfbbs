@@ -24,7 +24,7 @@ Usage:
 Options:
   --version <tag>         release tag/version to ship (required)
   --notes <path>          release notes file (default: docs/releases/<version>.md)
-  --platform <os/arch>    package target; may be repeated
+  --platform <os/arch>    package target; may be repeated (default: public 4-platform matrix)
   --publish               commit synced docs/notes, create tag, and push branch + tag
   --github-release        create/update GitHub release with gh after packaging
   --remote <name>         git remote to push/release against (default: origin)
@@ -191,9 +191,18 @@ run_verify() {
 }
 
 package_release() {
+  local selected_platforms=("${PLATFORMS[@]-}")
+  if [[ ${#selected_platforms[@]} -eq 0 ]]; then
+    selected_platforms=(
+      "linux/amd64"
+      "linux/arm64"
+      "darwin/amd64"
+      "darwin/arm64"
+    )
+  fi
   local cmd=(scripts/package-dist.sh --clean --version "$VERSION")
   local platform=""
-  for platform in "${PLATFORMS[@]-}"; do
+  for platform in "${selected_platforms[@]-}"; do
     [[ -n "$platform" ]] || continue
     cmd+=(--platform "$platform")
   done
@@ -205,7 +214,7 @@ commit_if_needed() {
     return
   fi
   git add README.md docs/DATASHEET.md docs/FIRST_30_MINUTES.md docs/INSTALL.md docs/README.md docs/SHOWCASE.md docs/START_HERE.md docs/manual-acceptance-latest.md docs/releases/README.md scripts/release.sh "$NOTES_FILE"
-  git add -f "dist/${VERSION}"
+  git add -A -f dist
   if [[ -n "$(git diff --cached --name-only)" ]]; then
     git commit -m "Ship ${VERSION}"
   fi
