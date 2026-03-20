@@ -147,7 +147,8 @@ sync_current_release_refs() {
   done
   if [[ -f "docs/releases/README.md" ]]; then
     perl -0pi -e 's/^Current public release: `[^`]+`$/Current public release: `'"${VERSION}"'`/m' "docs/releases/README.md"
-    perl -0pi -e 's/^- \\[v[^\\]]+\\]\\(v[^)]+\\.md\\): current public distribution release\\.$/- ['"${VERSION}"'](v'"${VERSION#v}"'.md): current public distribution release./m' "docs/releases/README.md"
+    perl -0pi -e "s/^- \\[\\Q${previous_tag}\\E\\]\\(\\Q${previous_tag}\\E\\.md\\): current public distribution release\\.\$/- [${VERSION}](${VERSION}.md): current public distribution release./m" "docs/releases/README.md"
+    perl -0pi -e "if (!/\\Q- [${previous_tag}](${previous_tag}.md)\\E/m) { s/(Recent historical notes:\\n\\n)/\$1- [${previous_tag}](${previous_tag}.md)\\n/s }" "docs/releases/README.md"
   fi
 }
 
