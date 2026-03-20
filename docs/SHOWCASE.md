@@ -7,12 +7,12 @@ Launch links:
 - [Start Here](START_HERE.md)
 - [Feature Datasheet](DATASHEET.md)
 - [Documentation Hub](README.md)
-- [Release v2.0.1 notes](releases/v2.0.1.md)
+- [Release v2.0.2 notes](releases/v2.0.2.md)
 - [GitHub Releases](https://github.com/Awassee/wolfbbs/releases)
 
-## Release v2.0.1 Snapshot
+## Release v2.0.2 Snapshot
 
-This showcase tracks the `v2.0.1` distribution target: SSH-first caller flow, full admin parity, modern gateway surfaces, turnkey install/upgrade lifecycle, and the calmer 2.0 web shell with grouped controls and compacted nav rails ready for public GitHub delivery.
+This showcase tracks the `v2.0.2` distribution target: SSH-first caller flow, full admin parity, modern gateway surfaces, turnkey install/upgrade lifecycle, and the calmer 2.0 web shell with grouped controls and compacted nav rails ready for public GitHub delivery.
 
 ## Product Description
 
