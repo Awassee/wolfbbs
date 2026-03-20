@@ -9,7 +9,10 @@ on:
 
 jobs:
   playwright:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
+    timeout-minutes: 20
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -26,8 +29,17 @@ jobs:
       - name: Install Playwright dependencies
         run: |
           npm --prefix e2e/web ci
-          npx --prefix e2e/web playwright install --with-deps chromium
+          npx --prefix e2e/web playwright install chromium
       - name: Run accessibility and visual regression checks
         run: |
           cd e2e/web
           npx playwright test tests/a11y_mobile.spec.js tests/visual_regression.spec.js
+      - name: Upload Playwright failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-regression-playwright-artifacts
+          path: |
+            e2e/web/test-results
+            e2e/web/playwright-report
+          if-no-files-found: ignore
