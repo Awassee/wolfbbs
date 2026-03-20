@@ -616,13 +616,11 @@ test("admin journey enforces RBAC and exposes sysop pages", async ({ browser }) 
   await expect(moderationLog).toContainText(/No moderation events|mute/i);
 
   await adminPage.goto("/settings");
-  csrf = await csrfFrom(adminPage);
-  await postForm(adminPage, "/settings", { csrf_token: csrf, action: "enable_2fa" });
-  await adminPage.goto("/settings");
+  await adminPage.getByRole("button", { name: "Enable TOTP" }).click();
+  await expect(adminPage.locator("body")).toContainText("2FA enabled. Save your recovery codes.");
   await expect(adminPage.locator("body")).toContainText("2FA is enabled.");
-  csrf = await csrfFrom(adminPage);
-  await postForm(adminPage, "/settings", { csrf_token: csrf, action: "disable_2fa" });
-  await adminPage.goto("/settings");
+  await adminPage.getByRole("button", { name: "Disable TOTP" }).click();
+  await expect(adminPage.locator("body")).toContainText("2FA disabled.");
   await expect(adminPage.locator("body")).toContainText("2FA is currently disabled.");
 
   await adminPage.goto("/admin/config");

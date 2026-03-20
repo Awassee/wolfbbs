@@ -7090,6 +7090,74 @@ func TestSettingsApplyAttentionPreset(t *testing.T) {
 	}
 }
 
+func TestSettingsEnableDisableTOTP(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	adminRepo := repository.NewInMemoryAdminRepository()
+	if _, err := authSvc.Register("caller", "password123"); err != nil {
+		t.Fatalf("register caller: %v", err)
+	}
+	app := &webApp{
+		authSvc:   authSvc,
+		adminRepo: adminRepo,
+		sessions:  map[string]sessionState{},
+	}
+	sid, ok := app.createSession("caller")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+
+	post := func(action string) {
+		form := url.Values{
+			"csrf_token": {app.sessions[sid].csrf},
+			"action":     {action},
+		}
+		req := httptest.NewRequest(http.MethodPost, "/settings", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+		rr := httptest.NewRecorder()
+		app.handleSettings(rr, req)
+		if rr.Code != http.StatusFound {
+			t.Fatalf("%s status = %d body=%s", action, rr.Code, rr.Body.String())
+		}
+	}
+
+	post("enable_2fa")
+	user, err := authSvc.GetUser("caller")
+	if err != nil {
+		t.Fatalf("get user after enable: %v", err)
+	}
+	if strings.TrimSpace(user.TOTPSecret) == "" {
+		t.Fatal("expected TOTP secret to be persisted")
+	}
+	if len(user.RecoveryCodes) != 8 {
+		t.Fatalf("expected 8 recovery codes, got %d", len(user.RecoveryCodes))
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sid})
+	rr := httptest.NewRecorder()
+	app.handleSettings(rr, req)
+	body := rr.Body.String()
+	for _, needle := range []string{"2FA is enabled.", "Disable TOTP"} {
+		if !strings.Contains(body, needle) {
+			t.Fatalf("settings page missing %q after enable: %s", needle, body)
+		}
+	}
+
+	post("disable_2fa")
+	user, err = authSvc.GetUser("caller")
+	if err != nil {
+		t.Fatalf("get user after disable: %v", err)
+	}
+	if strings.TrimSpace(user.TOTPSecret) != "" {
+		t.Fatal("expected TOTP secret to be cleared")
+	}
+	if len(user.RecoveryCodes) != 0 {
+		t.Fatalf("expected recovery codes cleared, got %d", len(user.RecoveryCodes))
+	}
+}
+
 func TestAttentionExportReturnsCallerNotificationState(t *testing.T) {
 	userRepo := repository.NewInMemoryUserRepository()
 	authSvc := auth.NewService(userRepo)
