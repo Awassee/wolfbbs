@@ -54,6 +54,7 @@ This directory is organized for three common audiences: operators, contributors,
 - [manual-acceptance.md](manual-acceptance.md): manual acceptance workflow
 - [manual-acceptance-latest.md](manual-acceptance-latest.md): latest acceptance report
 - [UI_COVERAGE_MATRIX.md](UI_COVERAGE_MATRIX.md): route-level interface coverage
+- [END_USER_COVERAGE_AUDIT.md](END_USER_COVERAGE_AUDIT.md): caller-loop parity audit for web vs terminal
 - [OPERATIONS.md](OPERATIONS.md): includes the one-command `scripts/feature-complete.sh` readiness path
 
 ## Architecture And Planning

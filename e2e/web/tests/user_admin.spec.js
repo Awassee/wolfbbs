@@ -920,6 +920,93 @@ test("chat syncs between two web sessions in realtime", async ({ browser }) => {
   await bCtx.close();
 });
 
+test("chat sidebar supports multi-channel switching, drafts, and active channel discovery", async ({ browser }) => {
+  const aCtx = await browser.newContext();
+  const bCtx = await browser.newContext();
+  const aPage = await aCtx.newPage();
+  const bPage = await bCtx.newPage();
+
+  await login(aPage, ADMIN_HANDLE, ADMIN_PASSWORD);
+  await login(bPage, USER_HANDLE, USER_PASSWORD);
+
+  await aPage.goto("/chat");
+  await bPage.goto("/chat");
+  await expect(aPage.locator("body")).toContainText("Joined Channels");
+  await expect(aPage.locator("body")).toContainText("Active Channels");
+  await expect(aPage.locator("#chatRoomDesk")).toContainText("Topic");
+
+  const runID = Date.now().toString(36);
+  const alphaChannel = `#alpha-${runID.slice(-5)}`;
+  const betaChannel = `#beta-${runID.slice(-5)}`;
+  const gammaChannel = `#gamma-${runID.slice(-5)}`;
+
+  await aPage.fill("#customChannel", alphaChannel);
+  await aPage.getByRole("button", { name: "Open Channel" }).click();
+  await expect(aPage.locator("#chatCurrentChannel")).toContainText(alphaChannel);
+  await aPage.fill("#message", "alpha draft");
+  await expect(aPage.locator("#chatJoinedRooms")).toContainText(alphaChannel);
+
+  await aPage.fill("#customChannel", betaChannel);
+  await aPage.getByRole("button", { name: "Open Channel" }).click();
+  await expect(aPage.locator("#chatCurrentChannel")).toContainText(betaChannel);
+  await aPage.fill("#message", "beta draft");
+  await expect(aPage.locator("#chatJoinedRooms")).toContainText(betaChannel);
+
+  await aPage.locator("#chatJoinedRooms").getByRole("button", { name: alphaChannel }).click();
+  await expect(aPage.locator("#chatCurrentChannel")).toContainText(alphaChannel);
+  await expect(aPage.locator("#message")).toHaveValue("alpha draft");
+  await aPage.getByRole("button", { name: "Send" }).click();
+  await expect
+    .poll(async () => {
+      return aPage.locator("#chat").innerText();
+    })
+    .toContain("alpha draft");
+  await aPage.getByRole("button", { name: "Compact View" }).click();
+  await expect(aPage.locator(".wolfbbs-chat-shell")).toHaveClass(/compact/);
+  await aPage.reload();
+  await expect(aPage.locator(".wolfbbs-chat-shell")).toHaveClass(/compact/);
+  await expect(aPage.getByRole("button", { name: "Standard View" })).toBeVisible();
+
+  await bPage.fill("#customChannel", gammaChannel);
+  await bPage.getByRole("button", { name: "Open Channel" }).click();
+  await expect(bPage.locator("#chatCurrentChannel")).toContainText(gammaChannel);
+  await bPage.fill("#message", "gamma channel ping");
+  await bPage.getByRole("button", { name: "Send" }).click();
+
+  await expect
+    .poll(async () => {
+      return aPage.locator("#chatActiveRooms").innerText();
+    }, { timeout: 20000 })
+    .toContain(gammaChannel);
+  await expect(aPage.locator("#chatActiveRooms")).toContainText("gamma channel ping");
+
+  await aPage.locator("#chatActiveRooms").getByRole("button", { name: gammaChannel }).click();
+  await expect(aPage.locator("#chatCurrentChannel")).toContainText(gammaChannel);
+  await expect
+    .poll(async () => {
+      return aPage.locator("#chat").innerText();
+    })
+    .toContain("gamma channel ping");
+
+  await bPage.fill("#customChannel", alphaChannel);
+  await bPage.getByRole("button", { name: "Open Channel" }).click();
+  await expect(bPage.locator("#chatCurrentChannel")).toContainText(alphaChannel);
+  await bPage.fill("#message", "alpha follow-up ping");
+  await bPage.getByRole("button", { name: "Send" }).click();
+
+  await aPage.locator("#chatJoinedRooms").getByRole("button", { name: alphaChannel }).click();
+  await expect(aPage.locator("#chatCurrentChannel")).toContainText(alphaChannel);
+  await expect
+    .poll(async () => {
+      return aPage.locator("#chat").innerText();
+    })
+    .toContain("alpha follow-up ping");
+  await expect(aPage.locator("#chat")).toContainText("New since your last visit");
+
+  await aCtx.close();
+  await bCtx.close();
+});
+
 test("irc message is visible in web chat", async ({ browser }) => {
   const ircHost = process.env.WOLFBBS_E2E_IRC_HOST || "127.0.0.1";
   const ircPort = Number(process.env.WOLFBBS_E2E_IRC_PORT || "6667");

@@ -43,6 +43,23 @@ async function capture(page, route, filename, headingPattern) {
   });
 }
 
+async function openChannel(page, channel) {
+  await page.goto("/chat");
+  await expect(page.locator("h1")).toContainText(/Chat/i);
+  await page.fill("#customChannel", channel);
+  await page.click('#customChannelForm button[type="submit"]');
+  await expect(page.locator("#chatCurrentChannel")).toContainText(channel);
+}
+
+async function postChannelLine(page, channel, message) {
+  await openChannel(page, channel);
+  const composer = page.locator("#message");
+  await expect(composer).toBeEnabled();
+  await composer.fill(message);
+  await page.click("#sendButton");
+  await expect(page.locator("#chat")).toContainText(message);
+}
+
 test.describe("docs screenshot capture", () => {
   test.skip(!CAPTURE_ENABLED, "Set WOLFBBS_CAPTURE_SCREENSHOTS=1 to capture docs screenshots.");
 
@@ -60,10 +77,6 @@ test.describe("docs screenshot capture", () => {
     await login(page, USER_HANDLE, USER_PASSWORD);
     await expect(page).toHaveURL(/\/(boards|today|start)/);
     await capture(page, "/boards", "boards.png", /Message Boards/i);
-    await capture(page, "/chat", "chat.png", /Chat/i);
-    await capture(page, "/doors", "doors.png", /Door/i);
-    await capture(page, "/today", "today.png", /Today Brief/i);
-    await context.close();
 
     const adminContext = await browser.newContext({
       viewport: { width: 1600, height: 1000 },
@@ -72,6 +85,18 @@ test.describe("docs screenshot capture", () => {
     const adminPage = await adminContext.newPage();
     await login(adminPage, ADMIN_HANDLE, ADMIN_PASSWORD);
     await expect(adminPage).toHaveURL(/\/(boards|today|start)/);
+
+    await postChannelLine(page, "#ansi-lab", "ansi art tonight");
+    await postChannelLine(adminPage, "#trade-floor", "fsx upload open");
+    await page.goto("/chat?channel=%23ansi-lab");
+    await expect(page.locator("#chatJoinedRooms")).toContainText("#ansi-lab");
+    await expect(page.locator("#chatActiveRooms")).toContainText("#trade-floor");
+    await capture(page, "/chat?channel=%23ansi-lab", "chat.png", /Chat/i);
+
+    await capture(page, "/doors", "doors.png", /Door/i);
+    await capture(page, "/today", "today.png", /Today Brief/i);
+    await context.close();
+
     await capture(adminPage, "/admin/setup", "admin-setup.png", /Setup/i);
     await capture(adminPage, "/admin/config", "admin-config.png", /Config/i);
     await adminContext.close();

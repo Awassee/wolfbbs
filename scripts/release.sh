@@ -231,6 +231,17 @@ remote_repo_slug() {
   printf '%s\n' "$url"
 }
 
+release_target_ref() {
+  local branch="${WOLFBBS_RELEASE_TARGET_BRANCH:-}"
+  if [[ -z "$branch" ]]; then
+    branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+  fi
+  if [[ -z "$branch" ]]; then
+    branch="main"
+  fi
+  printf 'refs/heads/%s\n' "$branch"
+}
+
 run_verify() {
   if [[ "$NO_VERIFY" == "true" ]]; then
     return
@@ -287,13 +298,15 @@ commit_if_needed() {
 }
 
 publish_git() {
+  local target_ref=""
   if git rev-parse -q --verify "refs/tags/${VERSION}" >/dev/null 2>&1; then
     echo "Tag ${VERSION} already exists locally." >&2
     exit 1
   fi
   commit_if_needed
   git tag "$VERSION"
-  git -c http.version=HTTP/1.1 -c http.postBuffer=524288000 push "$REMOTE" HEAD
+  target_ref="$(release_target_ref)"
+  git -c http.version=HTTP/1.1 -c http.postBuffer=524288000 push "$REMOTE" "HEAD:${target_ref}"
   git -c http.version=HTTP/1.1 -c http.postBuffer=524288000 push "$REMOTE" "$VERSION"
 }
 

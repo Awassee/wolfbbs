@@ -397,7 +397,7 @@ func (s *Server) runCallerPulse(sess gssh.Session, reader *bufio.Reader, termWid
 
 	writeClear(sess, ansiEnabled)
 	renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "Caller Pulse", user.Handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
-	pagerWrite(sess, reader, strings.TrimSpace(report.String()))
+	pagerWriteSession(sess, reader, strings.TrimSpace(report.String()))
 	io.WriteString(sess, "\r\nCaller Pulse command [D=Digest prefs, Enter=Return]: ")
 	cmd, err := readLine(reader, 80)
 	if err != nil {

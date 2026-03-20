@@ -1,0 +1,19 @@
+name: license-audit
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install audit prerequisites
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - name: Run license audit
+        run: bash scripts/license-audit.sh

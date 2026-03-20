@@ -128,7 +128,7 @@ This path also works without a preinstalled `git` client.
     <td width="50%">
       <a href="docs/assets/screenshots/chat.png"><img src="docs/assets/screenshots/chat.png" alt="WolfBBS live chat"></a><br>
       <strong>Live Chat</strong><br>
-      <sub>Real-time room timeline shared with IRC bridge users.</sub>
+      <sub>Multi-channel chat with joined rooms, active-room discovery, drafts, and IRC bridge sync.</sub>
     </td>
     <td width="50%">
       <a href="docs/assets/screenshots/doors.png"><img src="docs/assets/screenshots/doors.png" alt="WolfBBS doors"></a><br>
@@ -293,7 +293,7 @@ scripts/capture-doc-screenshots.sh
 
 ## Core Product Areas
 
-- `Callers`: ANSI login, guest tour, boards, private mail, bulletins, who’s online, last callers, files, doors, chat
+- `Callers`: ANSI login, plain-language main menu, guest tour, boards, private mail, bulletins, who’s online, last callers, files, doors, multi-room chat
 - `Community`: IRC bridge, one-liners, clubhouse, seasonal challenges, directory, discovery queue, events calendar + recaps, today brief, scoreboards, file picks
 - `Operators`: admin setup wizard, config center, users, boards, files, doors, events/challenges, upgrade safety, backup browser, release dashboard, audit, health, diagnostics
 - `Distribution`: release bundles, bootstrap installer, upgrade flows, smoke verification, packaging checksums

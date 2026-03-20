@@ -28,3 +28,21 @@ func TestSessionProfileStatusLinesIncludeTerminalHints(t *testing.T) {
 		}
 	}
 }
+
+func TestPagerPageSizeForHeight(t *testing.T) {
+	cases := []struct {
+		height int
+		want   int
+	}{
+		{0, 16},
+		{10, 8},
+		{20, 12},
+		{28, 20},
+		{48, 28},
+	}
+	for _, tc := range cases {
+		if got := pagerPageSizeForHeight(tc.height); got != tc.want {
+			t.Fatalf("height %d: expected %d, got %d", tc.height, tc.want, got)
+		}
+	}
+}

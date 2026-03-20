@@ -21,7 +21,7 @@ Format:
 Behavior:
 - Always visible on interactive screens.
 - Uses high-contrast colors (`StatusBg + StatusFg` in UI theme).
-- `area` is last context (`Welcome`, `Login`, `Main Menu`, `Gateways`, etc.).
+- `area` is last context (`Welcome`, `Login`, `Main Menu`, `Internet Tools`, etc.).
 
 ### Box drawing and visual motifs
 Preferred palette: Unicode CP437-style line glyphs.
@@ -141,14 +141,67 @@ Password: __________________________
 
 ### Main menu
 ```text
-┌════════════════════ WolfBBS Main Menu ════════════┐
-│ [M]essage Boards   [P]rivate Mail   [F]iles      │
-│ [C]hat             [G]ateways       [D]oors      │
-│ [N]ewscan          [S]ettings       [A]dmin      │
-│ [L]ast Callers     [W]ho's Online   [Q]uit       │
-└───────────────────────────────────────────────────┘
+┌════════════════════════ WolfBBS Main Menu ═══════════════════════┐
+│ Pick the job you want to do. Help is always one key away.       │
+│                                                                  │
+│ == Start Here ==                                                 │
+│ [N] What's New  [M] Read Boards  [C] Chat Rooms  [P] Private Mail│
+│                                                                  │
+│ == Talk + Read ==                                                │
+│ Public messages, personal mail, live rooms, downloads, games,   │
+│ and internet tools.                                             │
+│ [M] Read Boards      [P] Private Mail    [C] Chat Rooms          │
+│ [F] Files & Downloads [D] Games & Doors [G] Internet Tools       │
+│                                                                  │
+│ == Track + Return ==                                             │
+│ Catch up, see people, save packets, and revisit highlights.      │
+│ [N] What's New       [R] My Activity     [L] Recent Callers      │
+│ [W] Who's Here Now   [O] Offline Packets [V] Showcase Tour       │
+│                                                                  │
+│ == Personal + System ==                                          │
+│ Adjust your experience, inspect board info, or sign off.         │
+│ [S] My Settings      [X] Board Info      [Y] System Status       │
+│ [/] Find a Feature   [A] Sysop Center    [Q] Sign Off            │
+│                                                                  │
+│ == Popular Places ==                                             │
+│ collections  bookmarks  circles  events  challenges  digest-prefs│
+└──────────────────────────────────────────────────────────────────┘
 
 Enter selection:
+```
+
+### Quick jump deck
+```text
+┌──────────────────────── Quick Jump Deck ────────────────────────┐
+│ Use Find a Feature when you know the job but not the menu key.  │
+│                                                                  │
+│ == Talk + Read ==                                                │
+│ boards/messages   read public message boards                     │
+│ mail/private      check private mail                             │
+│ chat/rooms        jump into live chat rooms                      │
+│ files/downloads   browse file areas and tickets                  │
+│ doors/games       play games and utilities                       │
+│ gateway/internet  web, email, feeds, JSON, AI                    │
+│                                                                  │
+│ == Follow-up + Utility ==                                        │
+│ collections       curated file bundles                           │
+│ offline/packets   save packets or import replies                 │
+│ bookmarks         personal quick links                           │
+│ circles           caller groups and tags                         │
+│ settings          theme, pager, clock, exports                   │
+│ showcase/tour     guided feature tour                            │
+│ statusz/config    board or runtime snapshots                     │
+│                                                                  │
+│ == Pulse + Community ==                                          │
+│ pulse/activity    streaks, missions, next actions                │
+│ events/recaps     scheduled community events                     │
+│ challenges        seasonal challenge board                       │
+│ spotlights        feature highlights                             │
+│ digest-prefs      weekly digest choices                          │
+│                                                                  │
+│ Prompt shown below: Feature or place                             │
+│ Press Enter on blank input to cancel.                            │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ### Message board list
@@ -190,22 +243,23 @@ Enter selection:
 └───────────────────────────────────────────────────────────┘
 ```
 
-### Gateway menu
+### Internet tools
 ```text
-┌──────────────────── Gateway Menu ────────────────────┐
-│ [W]eb browser   - read URL in ANSI pager + save   │
-│ [E]mail gateway - send external mail through SMTP  │
-│ [F]eed reader   - compact RSS/Atom headlines       │
-│ [S]ummarizer    - article bullets + excerpt        │
-│ [J]SON explorer - pretty-print JSON payloads       │
-│ [A]I assistant  - prompt configured model          │
-│ [R]eturn [Q]uit [?]Help                            │
+┌──────────────────── Internet Tools ─────────────────────┐
+│ [W]eb browser   - read a web page and save it for later│
+│ [E]mail gateway - send outside email through SMTP      │
+│ [F]eed reader   - compact RSS/Atom headlines           │
+│ [S]ummarizer    - quick bullets from an article URL    │
+│ [J]SON explorer - readable JSON API responses          │
+│ [X] My activity - streaks, events, challenges          │
+│ [A]I assistant  - ask the configured AI helper         │
+│ [R]eturn [Q]uit [?]Help                                │
 └────────────────────────────────────────────────────┘
 ```
 
-### Doors / Door Hub
+### Games & Doors
 ```text
-┌──────────────────────────── Door Hub ───────────────────────────┐
+┌────────────────────────── Games & Doors ────────────────────────┐
 │ [R]eturn [Q]uit [!]Favorite Toggle [?]Help [T]Trophies          │
 │ Favorites: SPACE-TRADER-WARS, PIT-ARENA                         │
 │ Recent: DRAGON-TAVERN-LEGENDS, FISHING-DERBY                    │
@@ -240,20 +294,72 @@ Enter selection:
 
 ### Context Help (new `?` panels)
 ```text
-┌────────────────── Help: Main Menu ──────────────────┐
-│ Main Menu Key Guide                                 │
-│                                                      │
-│ M Message Boards     P Private Mail                 │
-│ F Files              C Chat                         │
-│ G Gateways           D Doors                        │
-│ N Newscan Digest     S Settings                     │
-│ A Sysop/Admin                                       │
-│ L Last Callers       W Who's Online                 │
-│ Q Quit               Esc Back                       │
-│ ? Show this panel                                    │
-│                                                      │
-│ Press any key to return.                             │
-└──────────────────────────────────────────────────────┘
+┌──────────────────── Help: Main Menu ─────────────────────┐
+│ Main Menu Key Guide                                      │
+│                                                           │
+│ If you are new here:                                      │
+│ N Start with what's new since your last visit             │
+│ M Read boards        C Join chat rooms                    │
+│ P Check private mail Q Sign off when done                 │
+│                                                           │
+│ Talk + Read                                               │
+│ M Read Boards           P Private Mail                    │
+│ C Chat Rooms            F Files & Downloads               │
+│ D Games & Doors         G Internet Tools                  │
+│                                                           │
+│ Track + Return                                            │
+│ N What's New            R My Activity                     │
+│ L Recent Callers        W Who's Here Now                  │
+│ O Offline Packets       V Showcase Tour                   │
+│                                                           │
+│ Personal + System                                         │
+│ S My Settings           X Board Info                      │
+│ Y System Status         A Sysop/Admin                     │
+│ / Find a Feature prompt Q Quit to sign-off                │
+│                                                           │
+│ Press any key to return.                                  │
+└───────────────────────────────────────────────────────────┘
+```
+
+### Live chat desk
+```text
+┌───────────────────────── Live Chat ──────────────────────────────┐
+│ == Chat Command Bar ==                                           │
+│ [1-9] Switch room  [S] Send  [J] Join/open  [L] Leave current   │
+│ [O] Online roster  [R] Refresh  [?] Help  [Q] Return            │
+│                                                                   │
+│ Current room: #lobby   Open rooms: 2   Online here: 4   Mode: open│
+│ Room guide: Main lobby for general chat, greetings, and quick    │
+│ social check-ins.                                                │
+│                                                                   │
+│ == Open Rooms ==                                                  │
+│ 1) #lobby     current | 4 live     sysop: welcome back           │
+│ 2) #ansi      joined  | 2 live     caller: ansi art tonight      │
+│ 3) #trade     watch   | 18:42      hatch: fsx upload open        │
+│                                                                   │
+│ == Transcript ==                                                  │
+│ 18:41   sysop      welcome back to the lobby                     │
+│ 18:42   caller     swapping to #ansi for screenshots             │
+│                                                                   │
+│ Use J to open another room without losing the ones you joined.   │
+└───────────────────────────────────────────────────────────────────┘
+Selection:
+```
+
+### My Settings
+```text
+┌────────────────────────── My Settings ───────────────────────────┐
+│ WolfBBS personal settings                                        │
+│                                                                   │
+│ Color + ANSI            On                                         │
+│ Pause on long screens   On                                         │
+│ Theme list              Midnight ANSI                              │
+│ Clock style             24-hour                                    │
+│                                                                   │
+│ B Bookmarks   O Circles   X Profile export   E Attention export   │
+│ T Theme      A Color     P Pager            C Clock               │
+│ S Save My Settings      Q Return                                 │
+└───────────────────────────────────────────────────────────────────┘
 ```
 
 ### Guest Tour
@@ -298,8 +404,8 @@ Enter selection:
 - `Esc` / `Q` -> back/cancel
 - `Ctrl+C` -> abort flow
 - `?` -> help
-- `!` -> toggle Door favorite in Door Hub
-- `T` -> Door scores/trophies screen in Door Hub
+- `!` -> toggle a favorite in Games & Doors
+- `T` -> scores/trophies screen in Games & Doors
 - `SPACE` -> pager continue
 
 Notes:

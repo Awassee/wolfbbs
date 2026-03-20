@@ -635,7 +635,7 @@ func TestSSHGatewayModernDoorsFlow(t *testing.T) {
 
 	// Email gateway validation path.
 	_, _ = stdin.Write([]byte("G"))
-	waitFor("Gateway Menu")
+	waitFor("Internet Tools")
 	_, _ = stdin.Write([]byte("E"))
 	waitFor("To external email:")
 	_, _ = stdin.Write([]byte("\n"))
@@ -649,7 +649,7 @@ func TestSSHGatewayModernDoorsFlow(t *testing.T) {
 
 	// Text web browser validation path.
 	_, _ = stdin.Write([]byte("G"))
-	waitFor("Gateway Menu")
+	waitFor("Internet Tools")
 	_, _ = stdin.Write([]byte("W"))
 	waitFor("URL:")
 	_, _ = stdin.Write([]byte("ftp://example.org\n"))
@@ -659,7 +659,7 @@ func TestSSHGatewayModernDoorsFlow(t *testing.T) {
 
 	// Feed reader validation path.
 	_, _ = stdin.Write([]byte("G"))
-	waitFor("Gateway Menu")
+	waitFor("Internet Tools")
 	_, _ = stdin.Write([]byte("F"))
 	waitFor("Feed URL:")
 	_, _ = stdin.Write([]byte("\n"))
@@ -669,7 +669,7 @@ func TestSSHGatewayModernDoorsFlow(t *testing.T) {
 
 	// Summarizer validation path.
 	_, _ = stdin.Write([]byte("G"))
-	waitFor("Gateway Menu")
+	waitFor("Internet Tools")
 	_, _ = stdin.Write([]byte("S"))
 	waitFor("Article URL:")
 	_, _ = stdin.Write([]byte("\n"))
@@ -679,7 +679,7 @@ func TestSSHGatewayModernDoorsFlow(t *testing.T) {
 
 	// JSON explorer validation path.
 	_, _ = stdin.Write([]byte("G"))
-	waitFor("Gateway Menu")
+	waitFor("Internet Tools")
 	_, _ = stdin.Write([]byte("J"))
 	waitFor("JSON URL:")
 	_, _ = stdin.Write([]byte("\n"))
@@ -689,7 +689,7 @@ func TestSSHGatewayModernDoorsFlow(t *testing.T) {
 
 	// AI door default-not-configured path.
 	_, _ = stdin.Write([]byte("G"))
-	waitFor("Gateway Menu")
+	waitFor("Internet Tools")
 	_, _ = stdin.Write([]byte("A"))
 	waitFor("AI gateway is disabled. Configure /admin/gateways and set API key. Press any key.")
 	_, _ = stdin.Write([]byte("x"))

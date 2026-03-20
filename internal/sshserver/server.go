@@ -294,6 +294,14 @@ func (s *Server) handleSession(sess gssh.Session) {
 		s.nodes.Touch(sessionID)
 		persistNode(false)
 	}
+	refreshLayout := func() {
+		termWidth, renderWidth, termProfile = currentSessionLayout(sess)
+		if currentAccount == nil {
+			sessionANSI, sessionEncoding = resolveSessionOutput(termProfile, true)
+			return
+		}
+		sessionANSI, sessionEncoding = resolveSessionOutput(termProfile, currentAccount.ANSIEnabled)
+	}
 	runtimeCfg, cfgErr := config.CachedRuntime()
 	if cfgErr != nil {
 		s.logger.Warn("runtime config load failed; using env fallback", "error", cfgErr)
@@ -339,6 +347,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 	}
 
 	for {
+		refreshLayout()
 		switch state {
 		case stateWelcome:
 			setArea("Welcome")
@@ -618,17 +627,23 @@ func (s *Server) handleSession(sess gssh.Session) {
 				state = stateStatusCenter
 			case "system.quick_jump":
 				if !s.quickJumpEnabled() {
-					io.WriteString(sess, "\r\nQuick Jump is disabled by sysop. Press any key.")
+					io.WriteString(sess, "\r\nFind a Feature is disabled by sysop. Press any key.")
 					_, _ = readKey(reader)
 					touch()
 					break
 				}
-				io.WriteString(sess, "\r\nJump target (boards/mail/chat/gateway/doors/files/collections/offline/pulse/events/challenges/spotlights/digest/bookmarks/circles/showcase/settings/last/who/status/statusz/config/newscan/app-upgrade): ")
+				writeClear(sess, sessionANSI)
+				renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName()+" Find a Feature", currentUser, time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
+				renderFrame(sess, termWidth, renderWidth, ui.RenderQuickJumpGuide(renderWidth, evaluateAccess("role=sysop", currentAccount, currentUser, map[string]string{"area": "admin"}, acsStrict, s.logger)), sessionANSI, sessionEncoding)
+				io.WriteString(sess, "Feature or place: ")
 				targetRaw, readErr := readLine(reader, 32)
 				if readErr != nil {
 					return
 				}
 				touch()
+				if strings.TrimSpace(targetRaw) == "" {
+					break
+				}
 				jumpAction := quickJumpToAction(targetRaw)
 				if jumpAction == "" {
 					io.WriteString(sess, "\r\nUnknown jump target. Press any key.")
@@ -735,6 +750,16 @@ func (s *Server) handleSession(sess gssh.Session) {
 				}
 				setArea("Files")
 				s.runFiles(sess, reader, termWidth, renderWidth, currentUser, currentAccount, th, sessionANSI, sessionEncoding, sessionTime24h, nodeLabel, touch)
+				setArea("Main Menu")
+			case "files.offline":
+				if !evaluateAccess(strings.TrimSpace(os.Getenv("WOLFBBS_ACS_FILES_READ")), currentAccount, currentUser, map[string]string{"area": "files"}, acsStrict, s.logger) {
+					io.WriteString(sess, "\r\nAccess denied by ACS rule. Press any key.")
+					_, _ = readKey(reader)
+					touch()
+					break
+				}
+				setArea("Offline Center")
+				s.runOfflineCenter(sess, reader, termWidth, renderWidth, currentUser, currentAccount, th, sessionANSI, sessionEncoding, sessionTime24h, nodeLabel, touch)
 				setArea("Main Menu")
 			case "settings.open":
 				updated, err := s.runSettingsMCI(sess, reader, termWidth, renderWidth, currentUser, currentAccount, sessionANSI, sessionEncoding, sessionTime24h, nodeLabel, touch)
@@ -999,7 +1024,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 			setArea("Gateways")
 			touch()
 			writeClear(sess, sessionANSI)
-			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName()+" Gateway", currentUser, time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
+			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName()+" Internet Tools", currentUser, time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
 			renderFrame(sess, termWidth, renderWidth, ui.RenderGatewayMenu(renderWidth)+"\r\n", sessionANSI, sessionEncoding)
 			io.WriteString(sess, "Selection: ")
 			gw, err := readKey(reader)
@@ -1103,7 +1128,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 					if err != nil {
 						io.WriteString(sess, "\r\nGateway blocked: "+err.Error()+"\r\n")
 					} else {
-						pagerWrite(sess, reader, text)
+						pagerWriteSession(sess, reader, text)
 						io.WriteString(sess, "\r\nSave for offline reading? (Y/N): ")
 						answer, err := readKey(reader)
 						if err == nil && answer == "Y" {
@@ -1178,7 +1203,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 					}
 					out.WriteString("\n")
 				}
-				pagerWrite(sess, reader, strings.TrimSpace(out.String()))
+				pagerWriteSession(sess, reader, strings.TrimSpace(out.String()))
 				io.WriteString(sess, "\r\nPress any key.\r\n")
 				_, _ = readKey(reader)
 				touch()
@@ -1234,7 +1259,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 				if strings.TrimSpace(summary.Excerpt) != "" {
 					out.WriteString("\nExcerpt:\n" + strings.TrimSpace(summary.Excerpt) + "\n")
 				}
-				pagerWrite(sess, reader, strings.TrimSpace(out.String()))
+				pagerWriteSession(sess, reader, strings.TrimSpace(out.String()))
 				io.WriteString(sess, "\r\nPress any key.\r\n")
 				_, _ = readKey(reader)
 				touch()
@@ -1262,7 +1287,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 					state = stateMainMenu
 					continue
 				}
-				pagerWrite(sess, reader, pretty)
+				pagerWriteSession(sess, reader, pretty)
 				io.WriteString(sess, "\r\nPress any key.\r\n")
 				_, _ = readKey(reader)
 				touch()
@@ -1313,7 +1338,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 				out.WriteString("Model: " + aiCfg.Model + "\n")
 				out.WriteString(strings.Repeat("-", 60) + "\n")
 				out.WriteString(strings.TrimSpace(answer))
-				pagerWrite(sess, reader, strings.TrimSpace(out.String()))
+				pagerWriteSession(sess, reader, strings.TrimSpace(out.String()))
 				io.WriteString(sess, "\r\nPress any key.\r\n")
 				_, _ = readKey(reader)
 				touch()
@@ -1580,7 +1605,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 					}
 					writeClear(sess, sessionANSI)
 					renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "Status JSON", currentUser, time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
-					pagerWrite(sess, reader, string(body))
+					pagerWriteSession(sess, reader, string(body))
 				default:
 					state = stateMainMenu
 				}
@@ -1679,9 +1704,11 @@ func doorSpotlightLabel(items []ui.DoorMenuItem) string {
 	return label
 }
 
-func pagerWrite(out io.Writer, reader *bufio.Reader, text string) {
+func pagerWriteWithPageSize(out io.Writer, reader *bufio.Reader, text string, pageSize int) {
 	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
-	const pageSize = 16
+	if pageSize <= 0 {
+		pageSize = 16
+	}
 	for i := 0; i < len(lines); i += pageSize {
 		chunkEnd := i + pageSize
 		if chunkEnd > len(lines) {
@@ -1697,6 +1724,15 @@ func pagerWrite(out io.Writer, reader *bufio.Reader, text string) {
 			return
 		}
 	}
+}
+
+func pagerWrite(out io.Writer, reader *bufio.Reader, text string) {
+	pagerWriteWithPageSize(out, reader, text, 16)
+}
+
+func pagerWriteSession(sess gssh.Session, reader *bufio.Reader, text string) {
+	_, _, profile := currentSessionLayout(sess)
+	pagerWriteWithPageSize(sess, reader, text, pagerPageSizeForHeight(profile.Height))
 }
 
 func readLine(reader *bufio.Reader, max int) (string, error) {
@@ -1871,6 +1907,10 @@ func legacyHotkeyToAction(key string) string {
 		return "doors.open"
 	case "L":
 		return "system.last_callers"
+	case "O":
+		return "files.offline"
+	case "V":
+		return "system.showcase"
 	case "W":
 		return "system.who_online"
 	case "X":
@@ -1901,11 +1941,11 @@ func quickJumpToAction(raw string) string {
 		return "boards.open"
 	case "p", "pm", "mail", "private":
 		return "mail.open"
-	case "c", "chat":
+	case "c", "chat", "room", "rooms":
 		return "chat.open"
-	case "g", "gateway", "web":
+	case "g", "gateway", "gateways", "web", "internet", "tools":
 		return "gateway.open"
-	case "d", "door", "doors":
+	case "d", "door", "doors", "game", "games":
 		return "doors.open"
 	case "s", "settings", "prefs", "bookmarks", "bookmark", "saved", "circles", "circle", "profile-export", "profile", "attention-export", "attention-json":
 		return "settings.open"
@@ -1919,11 +1959,11 @@ func quickJumpToAction(raw string) string {
 		return "system.status_center"
 	case "a", "admin", "sysop":
 		return "admin.open"
-	case "f", "files", "filebase":
+	case "f", "files", "filebase", "downloads":
 		return "files.open"
 	case "collection", "collections":
 		return "files.collections"
-	case "offline", "packets":
+	case "offline", "packet", "packets":
 		return "files.offline"
 	case "showcase", "tour":
 		return "system.showcase"
@@ -2092,6 +2132,7 @@ func (s *Server) runShowcase(sess gssh.Session, reader *bufio.Reader, termWidth,
 	if touch == nil {
 		touch = func() {}
 	}
+	termWidth, renderWidth, _ = currentSessionLayout(sess)
 	writeClear(sess, ansiEnabled)
 	renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "Showcase", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
 	lines := []string{
@@ -2464,34 +2505,38 @@ func (s *Server) runChat(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 	}
 	channel := "#lobby"
 	s.chatSvc.JoinChannel(handle, channel)
-	defer s.chatSvc.LeaveChannel(handle, channel)
+	joinedBySession := map[string]bool{channel: true}
+	defer func() {
+		for joined := range joinedBySession {
+			s.chatSvc.LeaveChannel(handle, joined)
+		}
+	}()
 
 	for {
+		termWidth, renderWidth, _ = currentSessionLayout(sess)
 		touch()
-		history := s.chatSvc.History(channel, 12)
+		summaries := s.chatTTYSummaries(handle, channel)
+		slotRows, slotSummaries := chatTTYSlotRows(renderWidth, summaries, time24h)
+		history := s.chatSvc.History(channel, 10)
 		online := s.chatSvc.OnlineInChannel(channel)
 		locked := s.isChannelLockedSSH(channel)
-		lines := []string{
-			fmt.Sprintf("Channel: %s   Online: %d   Locked: %s", channel, len(online), boolText(locked)),
-			strings.Repeat("-", 62),
-		}
-		if len(history) == 0 {
-			lines = append(lines, "No messages yet.")
-		} else {
-			for _, msg := range history {
-				stamp := msg.CreatedAt.Local().Format("15:04")
-				if !time24h {
-					stamp = msg.CreatedAt.Local().Format("03:04PM")
-				}
-				lines = append(lines, fmt.Sprintf("%-7s %-12s %s", stamp, clampForTTY(msg.From, 12), clampForTTY(msg.Body, 44)))
+		joinedCount := 0
+		for _, row := range summaries {
+			if row.Joined {
+				joinedCount++
 			}
 		}
-		lines = append(lines, "")
-		lines = append(lines, "(S)end  (J)oin  (O)nline  (R)efresh  (?)Help  (Q)uit")
 
 		writeClear(sess, ansiEnabled)
 		renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName()+" Chat", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
-		renderFrame(sess, termWidth, renderWidth, ui.DrawBox(renderWidth, len(lines)+2, "Live Chat", lines, ui.CP437Box, ui.FgCyan, ui.BgBlack), ansiEnabled, encoding)
+		currentTopic := ttyChatTopic(channel, locked)
+		for _, row := range summaries {
+			if row.Name == channel && strings.TrimSpace(row.Topic) != "" {
+				currentTopic = row.Topic
+				break
+			}
+		}
+		renderFrame(sess, termWidth, renderWidth, ui.RenderChatDesk(renderWidth, channel, currentTopic, joinedCount, len(online), locked, slotRows, chatTTYTranscriptRows(renderWidth, history, time24h)), ansiEnabled, encoding)
 		io.WriteString(sess, "Selection: ")
 		key, err := readKey(reader)
 		if err != nil {
@@ -2503,6 +2548,16 @@ func (s *Server) runChat(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 			return
 		case "R", "ENTER":
 			continue
+		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+			slot := int(key[0] - '1')
+			if slot >= 0 && slot < len(slotSummaries) {
+				next := slotSummaries[slot].Name
+				if next != "" {
+					channel = next
+					s.chatSvc.JoinChannel(handle, channel)
+					joinedBySession[channel] = true
+				}
+			}
 		case "?":
 			showHelpPanel(sess, reader, termWidth, renderWidth, s.siteName()+" Help", handle, nodeLabel, th, time24h, ansiEnabled, encoding, ui.RenderChatHelp(renderWidth), touch)
 		case "O":
@@ -2517,7 +2572,7 @@ func (s *Server) runChat(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 			_, _ = readKey(reader)
 			touch()
 		case "J":
-			io.WriteString(sess, "\r\nJoin channel (#lobby): ")
+			io.WriteString(sess, "\r\nOpen or join room (#lobby for the main lobby): ")
 			raw, err := readLine(reader, 32)
 			if err != nil {
 				return
@@ -2527,9 +2582,22 @@ func (s *Server) runChat(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 			if next == "" {
 				next = "#lobby"
 			}
-			s.chatSvc.LeaveChannel(handle, channel)
 			channel = next
 			s.chatSvc.JoinChannel(handle, channel)
+			joinedBySession[channel] = true
+		case "L":
+			if channel == "#lobby" && len(joinedBySession) <= 1 {
+				io.WriteString(sess, "\r\nStay in #lobby or join another channel first. Press any key.")
+				_, _ = readKey(reader)
+				touch()
+				continue
+			}
+			s.chatSvc.LeaveChannel(handle, channel)
+			delete(joinedBySession, channel)
+			summaries = s.chatTTYSummaries(handle, channel)
+			channel = firstJoinedChatFallback(summaries, channel)
+			s.chatSvc.JoinChannel(handle, channel)
+			joinedBySession[channel] = true
 		case "S":
 			io.WriteString(sess, "\r\nMessage: ")
 			body, err := readLine(reader, 512)
@@ -2587,6 +2655,7 @@ func (s *Server) runBoards(sess gssh.Session, reader *bufio.Reader, termWidth, r
 	}
 	conferenceFilter := ""
 	for {
+		termWidth, renderWidth, _ = currentSessionLayout(sess)
 		boards, err := s.boards.List()
 		if err != nil {
 			io.WriteString(sess, "\r\nCould not load boards. Press any key.")
@@ -2889,6 +2958,7 @@ func (s *Server) runBoardReader(sess gssh.Session, reader *bufio.Reader, termWid
 	posted := false
 
 	for {
+		termWidth, renderWidth, _ = currentSessionLayout(sess)
 		if index < 0 {
 			index = 0
 		}
@@ -2913,7 +2983,7 @@ func (s *Server) runBoardReader(sess gssh.Session, reader *bufio.Reader, termWid
 			}
 			renderFrame(sess, termWidth, renderWidth, ui.DrawBox(renderWidth, len(summary)+2, "Message Reader", summary, ui.CP437Box, ui.FgCyan, ui.BgBlack), ansiEnabled, encoding)
 			io.WriteString(sess, "\r\n")
-			pagerWrite(sess, reader, strings.Join(lines, "\n"))
+			pagerWriteSession(sess, reader, strings.Join(lines, "\n"))
 			io.WriteString(sess, "\r\n")
 			io.WriteString(sess, ui.FooterPrompt(renderWidth, fmt.Sprintf("(R)eply (N)ext (P)rev (Q)uit (?)Help   Msg %d/%d", index+1, len(msgs)))+"\r\n")
 		} else {
@@ -3028,6 +3098,7 @@ func (s *Server) runMail(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 		return
 	}
 	for {
+		termWidth, renderWidth, _ = currentSessionLayout(sess)
 		inbox, _ := s.mail.ListInbox(currentUser.ID, 50)
 		outbox, _ := s.mail.ListOutbox(currentUser.ID, 50)
 
@@ -3387,6 +3458,7 @@ func (s *Server) runFiles(sess gssh.Session, reader *bufio.Reader, termWidth, re
 		}
 	}
 	for {
+		termWidth, renderWidth, _ = currentSessionLayout(sess)
 		areas, err := s.ensureFileAreasSeeded()
 		if err != nil {
 			io.WriteString(sess, "\r\nCould not load file areas. Press any key.")
@@ -3485,6 +3557,7 @@ func (s *Server) runFileArea(sess gssh.Session, reader *bufio.Reader, termWidth,
 	}
 	query := ""
 	for {
+		termWidth, renderWidth, _ = currentSessionLayout(sess)
 		rows, err := s.readAreaFiles(area, query, nil, 200)
 		lines := []string{
 			"Path: " + clampForTTY(filepath.Clean(area.Path), max(20, renderWidth-12)),
@@ -3653,6 +3726,7 @@ func (s *Server) runIndexedFiles(sess gssh.Session, reader *bufio.Reader, termWi
 	query := ""
 	tagsRaw := ""
 	for {
+		termWidth, renderWidth, _ = currentSessionLayout(sess)
 		tags := splitCSV(tagsRaw)
 		rows, err := s.admin.ListFileEntries(0, query, tags, 120)
 		areaNames := map[int64]string{}
@@ -3749,6 +3823,7 @@ func (s *Server) runDownloadQueue(sess gssh.Session, reader *bufio.Reader, termW
 		touch = func() {}
 	}
 	for {
+		termWidth, renderWidth, _ = currentSessionLayout(sess)
 		queue, err := s.admin.ListDownloadQueue(account.ID, 200)
 		lines := []string{
 			"Queue items are shared with web FileBase queue.",
@@ -4204,6 +4279,7 @@ func (s *Server) runSettingsMCI(sess gssh.Session, reader *bufio.Reader, termWid
 	selectedTheme := themeIndex(themes, user.Theme)
 
 	for {
+		termWidth, renderWidth, _ = currentSessionLayout(sess)
 		if selectedTheme < 0 || selectedTheme >= len(themes) {
 			selectedTheme = 0
 		}
@@ -4215,15 +4291,15 @@ func (s *Server) runSettingsMCI(sess gssh.Session, reader *bufio.Reader, termWid
 		lines := mci.RenderLines(view)
 		lines = append(lines, "")
 		lines = append(lines, "Selection:")
-		currentANSI := user.ANSIEnabled
-		currentEncoding := encoding
+		_, _, profile := currentSessionLayout(sess)
+		currentANSI, currentEncoding := resolveSessionOutput(profile, user.ANSIEnabled)
 		if !currentANSI {
 			currentEncoding = string(term.EncodingASCII)
 		}
 		previewTheme := ui.ThemeByName(user.Theme)
 		writeClear(sess, currentANSI)
 		renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName()+" Settings", user.Handle, time.Now(), nodeLabel, previewTheme, user.TimeFormat24h)+"\r\n", currentANSI, currentEncoding)
-		renderFrame(sess, termWidth, renderWidth, ui.DrawBox(renderWidth, len(lines)+2, "MCI Preferences", lines, ui.CP437Box, previewTheme.BodyFg, ui.BgBlack), currentANSI, currentEncoding)
+		renderFrame(sess, termWidth, renderWidth, ui.DrawBox(renderWidth, len(lines)+2, "My Settings", lines, ui.CP437Box, previewTheme.BodyFg, ui.BgBlack), currentANSI, currentEncoding)
 		io.WriteString(sess, "Selection: ")
 		key, err := readKey(reader)
 		if err != nil {
@@ -4274,16 +4350,16 @@ func (s *Server) runSettingsMCI(sess gssh.Session, reader *bufio.Reader, termWid
 func (s *Server) buildSettingsMCIView(user *domain.User, themes []string, selectedTheme int) mci.View {
 	base := mci.View{
 		ID:     "settings",
-		Title:  "Settings",
-		Footer: "T theme, A ansi, P paging, C clock, B bookmarks, O circles, X profile export, E attention export, S save, Q quit",
+		Title:  "My Settings",
+		Footer: "T theme, A color, P paging, C clock, B bookmarks, O circles, X profile export, E attention export, S save, Q back",
 		Controls: []mci.Control{
-			{Type: mci.ControlLabel, ID: "header", Label: s.siteName() + " user preferences"},
+			{Type: mci.ControlLabel, ID: "header", Label: s.siteName() + " personal settings"},
 			{Type: mci.ControlInput, ID: "theme", Label: "Theme", Value: user.Theme},
-			{Type: mci.ControlToggle, ID: "ansi", Label: "ANSI enabled", Value: boolText(user.ANSIEnabled)},
-			{Type: mci.ControlToggle, ID: "paging", Label: "Paging enabled", Value: boolText(user.PagingEnabled)},
+			{Type: mci.ControlToggle, ID: "ansi", Label: "Color + ANSI", Value: boolText(user.ANSIEnabled)},
+			{Type: mci.ControlToggle, ID: "paging", Label: "Pause on long screens", Value: boolText(user.PagingEnabled)},
 			{Type: mci.ControlToggle, ID: "clock", Label: "24-hour clock", Value: boolText(user.TimeFormat24h)},
-			{Type: mci.ControlLightbar, ID: "theme_list", Label: "Themes", Options: themes, Selected: selectedTheme},
-			{Type: mci.ControlButton, ID: "save", Label: "Save Preferences"},
+			{Type: mci.ControlLightbar, ID: "theme_list", Label: "Theme list", Options: themes, Selected: selectedTheme},
+			{Type: mci.ControlButton, ID: "save", Label: "Save My Settings"},
 		},
 	}
 	templatePath := strings.TrimSpace(os.Getenv("WOLFBBS_MCI_SETTINGS_FILE"))

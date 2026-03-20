@@ -2859,20 +2859,103 @@ func TestHandleChatPageSupportsLegacyAndCurrentMessageKeys(t *testing.T) {
 		t.Fatalf("expected body fallback logic in chat page script")
 	}
 	for _, needle := range []string{
+		"Joined Channels",
+		"Active Channels",
 		"Open Channel",
+		"Compact View",
+		"Leave Channel",
 		"Reconnect Stream",
+		"chatBootstrap",
+		"streamState.summaries",
 		"streamState.lastSeenId",
-		"const canModerate =",
-		"This room is locked for non-moderators.",
+		"can_moderate",
+		"This channel is locked for non-moderators.",
 		"normalizeIncomingMessage",
 		"presenceValue(row, 'nick', 'Nick'",
 		"chatStatePill",
 		"updateMessageCount()",
 		"currentHandle",
+		"New since your last visit",
+		"applyCompactMode()",
 	} {
 		if !strings.Contains(body, needle) {
 			t.Fatalf("expected chat page to include %q, got %q", needle, body)
 		}
+	}
+}
+
+func TestHandleChatChannelsIncludesRichChannelPayload(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	if _, err := authSvc.Register("caller", "password123"); err != nil {
+		t.Fatalf("register caller: %v", err)
+	}
+	app := &webApp{
+		authSvc:    authSvc,
+		chatSvc:    chat.NewServiceForTest(),
+		sessions:   map[string]sessionState{},
+		lockedChat: map[string]bool{},
+	}
+	sessionID, ok := app.createSession("caller")
+	if !ok {
+		t.Fatal("session creation failed")
+	}
+	app.chatSvc.JoinChannel("caller", "#ansi-lab")
+	app.chatSvc.JoinChannel("friend", "#retro")
+	if _, err := app.chatSvc.Post("caller", "#ansi-lab", "ansi forever"); err != nil {
+		t.Fatalf("post ansi-lab: %v", err)
+	}
+	if _, err := app.chatSvc.Post("friend", "#retro", "retro standby"); err != nil {
+		t.Fatalf("post retro: %v", err)
+	}
+	app.setChannelLock("#retro", true)
+
+	req := httptest.NewRequest(http.MethodGet, "/chat/channels?current=%23ansi-lab", nil)
+	req.AddCookie(&http.Cookie{Name: "wolfbbs_session", Value: sessionID})
+	rr := httptest.NewRecorder()
+	app.handleChatChannels(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("chat channels status = %d", rr.Code)
+	}
+	var payload struct {
+		Channels []string              `json:"channels"`
+		Locked   []string              `json:"locked"`
+		Joined   []string              `json:"joined"`
+		Details  []chatChannelSnapshot `json:"details"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if len(payload.Channels) == 0 || len(payload.Details) == 0 {
+		t.Fatalf("expected channels and details, got %+v", payload)
+	}
+	detailByName := map[string]chatChannelSnapshot{}
+	for _, row := range payload.Details {
+		detailByName[row.Name] = row
+	}
+	if _, ok := detailByName["#ansi-lab"]; !ok {
+		t.Fatalf("expected #ansi-lab detail, got %+v", payload.Details)
+	}
+	if !detailByName["#ansi-lab"].Joined {
+		t.Fatalf("expected current channel to be joined: %+v", detailByName["#ansi-lab"])
+	}
+	if detailByName["#ansi-lab"].LastMessagePreview != "ansi forever" {
+		t.Fatalf("expected last preview for #ansi-lab, got %+v", detailByName["#ansi-lab"])
+	}
+	if detailByName["#ansi-lab"].Topic == "" || !strings.Contains(strings.ToLower(detailByName["#ansi-lab"].Topic), "live room") {
+		t.Fatalf("expected #ansi-lab topic, got %+v", detailByName["#ansi-lab"])
+	}
+	if !detailByName["#retro"].Locked {
+		t.Fatalf("expected #retro to be locked: %+v", detailByName["#retro"])
+	}
+	if detailByName["#retro"].OnlineCount == 0 {
+		t.Fatalf("expected #retro online count, got %+v", detailByName["#retro"])
+	}
+	if !strings.Contains(strings.Join(payload.Joined, ","), "#ansi-lab") {
+		t.Fatalf("expected joined payload to contain current channel, got %+v", payload.Joined)
+	}
+	if !strings.Contains(strings.Join(payload.Locked, ","), "#retro") {
+		t.Fatalf("expected locked payload to contain #retro, got %+v", payload.Locked)
 	}
 }
 

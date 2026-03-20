@@ -583,7 +583,7 @@ func (s *Server) runProfileExportViewer(sess gssh.Session, reader *bufio.Reader,
 	}
 	writeClear(sess, ansiEnabled)
 	renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "Profile Export JSON", defaultIfBlank(user.Handle, "caller"), time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
-	pagerWrite(sess, reader, string(body))
+	pagerWriteSession(sess, reader, string(body))
 	path, saveErr := promptSaveExport(sess, reader, defaultIfBlank(user.Handle, "caller"), "profile", body)
 	if saveErr != nil {
 		adminPause(sess, reader, touch, "Could not save profile export: "+saveErr.Error())
@@ -608,7 +608,7 @@ func (s *Server) runAttentionExportViewer(sess gssh.Session, reader *bufio.Reade
 	}
 	writeClear(sess, ansiEnabled)
 	renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "Attention Export JSON", defaultIfBlank(user.Handle, "caller"), time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
-	pagerWrite(sess, reader, string(body))
+	pagerWriteSession(sess, reader, string(body))
 	path, saveErr := promptSaveExport(sess, reader, defaultIfBlank(user.Handle, "caller"), "notifications", body)
 	if saveErr != nil {
 		adminPause(sess, reader, touch, "Could not save attention export: "+saveErr.Error())

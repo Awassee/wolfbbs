@@ -12,7 +12,7 @@ Launch links:
 
 ## Release v2.0.2 Snapshot
 
-This showcase tracks the `v2.0.2` distribution target: SSH-first caller flow, full admin parity, modern gateway surfaces, turnkey install/upgrade lifecycle, and the calmer 2.0 web shell with grouped controls and compacted nav rails ready for public GitHub delivery.
+This showcase tracks the `v2.0.2` distribution target: SSH-first caller flow, full admin parity, modern gateway surfaces, turnkey install/upgrade lifecycle, a calmer 2.0 web shell, and the newer multi-channel chat + plain-language terminal caller UX.
 
 ## Product Description
 
@@ -65,7 +65,8 @@ Highlights:
 ![WolfBBS Live Chat](assets/screenshots/chat.png)
 
 Highlights:
-- real-time room timeline
+- joined-room sidebar plus active-room discovery
+- per-channel drafts and compact mode
 - shared moderation model
 - IRC bridge compatibility
 

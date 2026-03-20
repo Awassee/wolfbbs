@@ -23,6 +23,12 @@ func TestLegacyHotkeyToAction(t *testing.T) {
 	if got := legacyHotkeyToAction("y"); got != "system.status_center" {
 		t.Fatalf("expected system.status_center, got %q", got)
 	}
+	if got := legacyHotkeyToAction("o"); got != "files.offline" {
+		t.Fatalf("expected files.offline, got %q", got)
+	}
+	if got := legacyHotkeyToAction("v"); got != "system.showcase" {
+		t.Fatalf("expected system.showcase, got %q", got)
+	}
 	if got := legacyHotkeyToAction("/"); got != "system.quick_jump" {
 		t.Fatalf("expected system.quick_jump, got %q", got)
 	}

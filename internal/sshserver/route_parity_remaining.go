@@ -649,7 +649,7 @@ func (s *Server) runOfflineCenter(sess gssh.Session, reader *bufio.Reader, termW
 			}
 			writeClear(sess, ansiEnabled)
 			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "Offline Packet JSON", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
-			pagerWrite(sess, reader, string(body))
+			pagerWriteSession(sess, reader, string(body))
 			path, saveErr := promptSaveOfflineArtifact(sess, reader, handle, "watched", "json", body)
 			if saveErr != nil {
 				adminPause(sess, reader, touch, "Could not save JSON packet: "+saveErr.Error())
@@ -662,7 +662,7 @@ func (s *Server) runOfflineCenter(sess gssh.Session, reader *bufio.Reader, termW
 			body := []byte(renderSSHOfflinePacketText(packet))
 			writeClear(sess, ansiEnabled)
 			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "Offline Packet Text", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
-			pagerWrite(sess, reader, string(body))
+			pagerWriteSession(sess, reader, string(body))
 			path, saveErr := promptSaveOfflineArtifact(sess, reader, handle, "watched", "txt", body)
 			if saveErr != nil {
 				adminPause(sess, reader, touch, "Could not save text packet: "+saveErr.Error())

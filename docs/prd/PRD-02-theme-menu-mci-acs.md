@@ -59,10 +59,10 @@ This slice covers four tightly related UX/runtime systems:
   - MCI view foundation in `internal/mci`:
     - control schema + HJSON parsing + render helpers
     - integrated into SSH `(S)ettings` flow with persisted preference updates
-- Planned next work:
-  - Wire HJSON menu runtime as default menu path in production config.
-  - Extend ACS checks into repository-level board/file permission enforcement.
-  - Add lightbar navigation mode and editable input controls in more SSH screens.
+- Post-baseline enhancement track:
+  - Continue pushing more secondary SSH/web surfaces through the shared runtime structures where it improves maintainability.
+  - Keep tightening ACS coverage and test depth as new caller/sysop surfaces are added.
+  - Expand richer lightbar/input usage where it materially improves usability rather than just increasing framework surface area.
 
 ## Rollout
 - Default remains current hardcoded menus until `menus.enabled=true` config toggle is set.

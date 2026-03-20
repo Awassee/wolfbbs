@@ -573,7 +573,7 @@ if [[ "$run_web" == "true" ]]; then
   fi
   web_test_args=(test)
   if [[ "$web_functional_only" == "true" ]]; then
-    web_test_args+=(-- tests/user_admin.spec.js tests/extended_surface.spec.js)
+    web_test_args+=(-- tests/user_admin.spec.js tests/end_user_journey.spec.js tests/extended_surface.spec.js)
   fi
   prune_web_e2e_artifacts
   if ! run_with_timeout "$web_timeout_seconds" run_npm "${web_test_args[@]}"; then

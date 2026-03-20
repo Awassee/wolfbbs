@@ -22,7 +22,7 @@ func TestBuildSettingsMCIViewDefault(t *testing.T) {
 	if view.ID != "settings" {
 		t.Fatalf("expected settings id, got %q", view.ID)
 	}
-	if view.Title != "Settings" {
+	if view.Title != "My Settings" {
 		t.Fatalf("expected default title, got %q", view.Title)
 	}
 	normalized, err := mci.Normalize(view)

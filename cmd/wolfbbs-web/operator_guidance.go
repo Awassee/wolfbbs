@@ -156,9 +156,16 @@ func (a *webApp) renderSysopFirstRunBlock(user *domain.User) string {
 
 	stepRows := strings.Builder{}
 	done := 0
+	nextHref := "/admin/launch"
+	nextTitle := "Open Launch Center"
+	nextDetail := "Use Launch Center as the safe home base if you are not sure what to do next."
 	for _, row := range steps {
 		if row.OK {
 			done++
+		} else if nextHref == "/admin/launch" {
+			nextHref = row.Href
+			nextTitle = row.Title
+			nextDetail = row.Detail
 		}
 		status := "Open"
 		if row.OK {
@@ -171,6 +178,7 @@ func (a *webApp) renderSysopFirstRunBlock(user *domain.User) string {
 		`<article class="wolfbbs-card"><h2>First 15 Minutes As Sysop</h2><p><strong>` + strconv.Itoa(done) + `/` + strconv.Itoa(len(steps)) + `</strong> first-run operator checkpoints cleared.</p>` +
 		`<table border="1"><tr><th>Checkpoint</th><th>Status</th><th>Action</th></tr>` + stepRows.String() + `</table>` +
 		`<p><a href="/admin/launch">Launch Center</a> | <a href="/admin/analytics">Analytics</a> | <a href="/status">Status</a> | <code>docs/FIRST_30_MINUTES.md</code></p></article>` +
+		`<article class="wolfbbs-card"><h2>Next Safest Action</h2><p><strong>` + htmlEscape(nextTitle) + `</strong></p><p>` + htmlEscape(nextDetail) + `</p><p><a href="` + htmlEscape(nextHref) + `">Open next step</a></p><ul class="wolfbbs-list-clean"><li>Do the identity/setup basics before turning on advanced gateway options.</li><li>Create one real non-sysop account before trusting the board as “ready”.</li><li>Walk both the web and SSH caller path after each meaningful config change.</li></ul></article>` +
 		`<article class="wolfbbs-card"><h2>7-Day Operator Signals</h2>` +
 		`<div class="wolfbbs-kpi-grid">` +
 		`<article class="wolfbbs-kpi-card"><strong>` + strconv.Itoa(signals.FirstCallCompletes) + `</strong><span>first-call completes</span></article>` +

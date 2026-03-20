@@ -125,19 +125,25 @@ def run_oputil_set_role(db_path: Path, handle: str, role: str) -> None:
         "--role",
         role,
     ]
-    completed = subprocess.run(
-        cmd,
-        cwd=str(ROOT),
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        raise RuntimeError(
-            f"oputil set-role failed ({completed.returncode}):\n"
-            f"stdout:\n{completed.stdout}\n"
-            f"stderr:\n{completed.stderr}"
+    last_completed: subprocess.CompletedProcess[str] | None = None
+    for attempt in range(1, 4):
+        completed = subprocess.run(
+            cmd,
+            cwd=str(ROOT),
+            text=True,
+            capture_output=True,
+            check=False,
         )
+        last_completed = completed
+        if completed.returncode == 0:
+            return
+        time.sleep(0.4 * attempt)
+    assert last_completed is not None
+    raise RuntimeError(
+        f"oputil set-role failed ({last_completed.returncode}):\n"
+        f"stdout:\n{last_completed.stdout}\n"
+        f"stderr:\n{last_completed.stderr}"
+    )
 
 
 def spawn_ssh(port: int, term_name: str = "xterm-256color", cols: int = 80, rows: int = 25) -> pexpect.spawn:
@@ -264,7 +270,8 @@ def exit_optional_pager(child: pexpect.spawn, next_pattern: str, timeout: int = 
 
 def quick_jump(child: pexpect.spawn, target: str, heading: str) -> None:
     child.send("/")
-    child.expect("Jump target")
+    child.expect("Quick Jump Deck")
+    child.expect("Feature or place")
     child.sendline(target)
     child.expect(heading)
 
@@ -297,7 +304,7 @@ def run_regular_user_smoke(child: pexpect.spawn) -> None:
     child.expect("Enter selection:")
 
     child.send("F")
-    child.expect("Files")
+    child.expect("Files & Downloads")
     child.sendline("Q")
     child.expect("Enter selection:")
 
@@ -307,12 +314,12 @@ def run_regular_user_smoke(child: pexpect.spawn) -> None:
     child.expect("Enter selection:")
 
     child.send("G")
-    child.expect("Gateway Menu")
+    child.expect("Internet Tools")
     child.send("Q")
     child.expect("Enter selection:")
 
     child.send("D")
-    child.expect("Door Hub")
+    child.expect("Games & Doors")
     child.send("R")
     child.expect("Enter selection:")
 
@@ -327,7 +334,7 @@ def run_regular_user_smoke(child: pexpect.spawn) -> None:
     child.expect("Enter selection:")
 
     child.send("S")
-    child.expect("MCI Preferences")
+    child.expect("My Settings")
     child.send("Q")
     child.expect("Enter selection:")
 
@@ -343,7 +350,7 @@ def run_regular_user_smoke(child: pexpect.spawn) -> None:
     child.expect("Enter selection:")
 
     child.send("/")
-    child.expect("Jump target")
+    child.expect("Feature or place")
     child.sendline("boards")
     child.expect("Select board ID")
     child.sendline("Q")
@@ -481,10 +488,10 @@ def run_regular_user_deep(child: pexpect.spawn) -> None:
 
     # Files: help/search/indexed queue surface/download queue surface.
     child.send("F")
-    child.expect("Files")
+    child.expect("Files & Downloads")
     child.expect("Selection:")
     child.sendline("?")
-    child.expect("Files Commands")
+    child.expect("Files & Downloads Commands")
     child.send("x")
     child.expect("Selection:")
     child.sendline("R")
@@ -521,7 +528,7 @@ def run_regular_user_deep(child: pexpect.spawn) -> None:
     child.send("x")
     child.expect("Selection:")
     child.send("Q")
-    child.expect("Files")
+    child.expect("Files & Downloads")
     child.expect("Selection:")
     child.sendline("S")
     child.expect("Search query:")
@@ -542,7 +549,7 @@ def run_regular_user_deep(child: pexpect.spawn) -> None:
     child.send("x")
     child.expect("Selection:")
     child.sendline("Q")
-    child.expect("Files")
+    child.expect("Files & Downloads")
     child.expect("Selection:")
     child.sendline("1")
     child.expect("Files: Uploads")
@@ -552,9 +559,14 @@ def run_regular_user_deep(child: pexpect.spawn) -> None:
     child.sendline("Q")
     child.expect("Enter selection:")
 
-    # Chat: online list, channel switch, send, refresh.
+    # Chat: multi-channel deck, roster, slot switching, leave fallback, send, refresh.
     child.send("C")
     child.expect("Live Chat")
+    child.expect("Current room: #lobby")
+    child.expect("Open Rooms")
+    child.send("?")
+    child.expect("Live Chat Commands")
+    child.send("x")
     child.expect("Selection:")
     child.send("O")
     child.expect("Online users:")
@@ -563,12 +575,26 @@ def run_regular_user_deep(child: pexpect.spawn) -> None:
     child.send("x")
     child.expect("Selection:")
     child.send("J")
-    child.expect("Join channel")
+    child.expect("Open or join room")
     child.sendline("#ux")
+    child.expect("Current room: #ux")
+    child.expect("#ux")
+    child.expect("Selection:")
+    child.send("2")
+    child.expect("Current room: #lobby")
+    child.expect("Selection:")
+    child.send("J")
+    child.expect("Open or join room")
+    child.sendline("#art")
+    child.expect("Current room: #art")
+    child.expect("#art")
     child.expect("Selection:")
     child.send("S")
     child.expect("Message:")
-    type_with_backspace(child, "hello ux channel")
+    type_with_backspace(child, "hello art channel")
+    child.expect("Selection:")
+    child.send("L")
+    child.expect("Current room:")
     child.expect("Selection:")
     child.send("R")
     child.expect("Selection:")
@@ -577,7 +603,7 @@ def run_regular_user_deep(child: pexpect.spawn) -> None:
 
     # Gateway: URL validation and compose validation.
     child.send("G")
-    child.expect("Gateway Menu")
+    child.expect("Internet Tools")
     child.send("W")
     child.expect("URL:")
     type_with_backspace(child, "http://127.0.0.1")
@@ -585,7 +611,7 @@ def run_regular_user_deep(child: pexpect.spawn) -> None:
     child.send("x")
     child.expect("Enter selection:")
     child.send("G")
-    child.expect("Gateway Menu")
+    child.expect("Internet Tools")
     child.send("E")
     child.expect("To external email:")
     child.sendline("")
@@ -599,7 +625,7 @@ def run_regular_user_deep(child: pexpect.spawn) -> None:
     child.expect("Enter selection:")
 
     child.send("G")
-    child.expect("Gateway Menu")
+    child.expect("Internet Tools")
     child.send("F")
     child.expect("Feed URL:")
     child.sendline("")
@@ -608,7 +634,7 @@ def run_regular_user_deep(child: pexpect.spawn) -> None:
     child.expect("Enter selection:")
 
     child.send("G")
-    child.expect("Gateway Menu")
+    child.expect("Internet Tools")
     child.send("S")
     child.expect("Article URL:")
     child.sendline("")
@@ -617,7 +643,7 @@ def run_regular_user_deep(child: pexpect.spawn) -> None:
     child.expect("Enter selection:")
 
     child.send("G")
-    child.expect("Gateway Menu")
+    child.expect("Internet Tools")
     child.send("J")
     child.expect("JSON URL:")
     child.sendline("")
@@ -626,7 +652,7 @@ def run_regular_user_deep(child: pexpect.spawn) -> None:
     child.expect("Enter selection:")
 
     child.send("G")
-    child.expect("Gateway Menu")
+    child.expect("Internet Tools")
     child.send("A")
     ai_idx = child.expect(
         [
@@ -644,9 +670,9 @@ def run_regular_user_deep(child: pexpect.spawn) -> None:
 
     # Doors + caller visibility panels.
     child.send("D")
-    child.expect("Door Hub")
+    child.expect("Games & Doors")
     child.send("?")
-    child.expect("Door Hub Commands")
+    child.expect("Games & Doors Commands")
     child.send("x")
     child.expect("Selection:")
     child.send("R")
@@ -683,7 +709,7 @@ def run_regular_user_deep(child: pexpect.spawn) -> None:
     child.expect("Enter selection:")
 
     child.send("S")
-    child.expect("MCI Preferences")
+    child.expect("My Settings")
     child.send("B")
     child.expect("Bookmarks")
     child.sendline("Q")
@@ -703,13 +729,22 @@ def run_regular_user_deep(child: pexpect.spawn) -> None:
     child.sendline("N")
     child.expect("Selection:")
     child.send("A")
-    child.expect("MCI Preferences")
+    child.expect("My Settings")
     child.send("P")
-    child.expect("MCI Preferences")
+    child.expect("My Settings")
     child.send("C")
-    child.expect("MCI Preferences")
+    child.expect("My Settings")
     child.send("S")
     child.expect("Preferences saved. Press any key.")
+    child.send("x")
+    expect_main_menu_ready(child)
+
+    child.send("O")
+    child.expect("Offline Center")
+    child.send("Q")
+    expect_main_menu_ready(child)
+    child.send("V")
+    child.expect("Product Showcase")
     child.send("x")
     expect_main_menu_ready(child)
 

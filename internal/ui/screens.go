@@ -127,40 +127,61 @@ func RenderWelcomeForProfile(width int, compact bool, hints []string) string {
 
 func RenderMainMenu(width int) string {
 	lines := []string{
-		"Retro flow, modern rails. Choose a lane and jump fast.",
+		"Pick the job you want to do. Help is always one key away.",
 		"",
-		sectionLabel("Comms + Content"),
+		sectionLabel("Start Here"),
 	}
+	lines = append(lines, commandStripLines(width, []string{
+		"[N] What's New",
+		"[M] Read Boards",
+		"[C] Chat Rooms",
+		"[P] Private Mail",
+	})...)
+	lines = append(lines, "",
+		sectionLabel("Talk + Read"),
+		"Public messages, personal mail, live rooms, downloads, games, and internet tools.",
+	)
 	lines = append(lines, renderMenuGrid(width, []menuEntry{
-		{Key: "M", Label: "Message Boards"},
+		{Key: "M", Label: "Read Boards"},
 		{Key: "P", Label: "Private Mail"},
-		{Key: "F", Label: "Files"},
-		{Key: "C", Label: "Chat"},
-		{Key: "G", Label: "Gateways"},
-		{Key: "D", Label: "Doors"},
+		{Key: "C", Label: "Chat Rooms"},
+		{Key: "F", Label: "Files & Downloads"},
+		{Key: "D", Label: "Games & Doors"},
+		{Key: "G", Label: "Internet Tools"},
 	}, 3)...)
-	lines = append(lines, "", sectionLabel("Caller Intel + System"))
+	lines = append(lines, "", sectionLabel("Track + Return"), "Catch up, see people, save packets for later, and revisit highlights.")
 	lines = append(lines, renderMenuGrid(width, []menuEntry{
-		{Key: "N", Label: "Newscan"},
-		{Key: "R", Label: "Caller Pulse"},
-		{Key: "L", Label: "Last Callers"},
-		{Key: "W", Label: "Who's Online"},
-		{Key: "S", Label: "Settings"},
-		{Key: "X", Label: "Config Center"},
-		{Key: "Y", Label: "Status Center"},
+		{Key: "N", Label: "What's New"},
+		{Key: "R", Label: "My Activity"},
+		{Key: "L", Label: "Recent Callers"},
+		{Key: "W", Label: "Who's Here Now"},
+		{Key: "O", Label: "Offline Packets"},
+		{Key: "V", Label: "Showcase Tour"},
 	}, 3)...)
-	lines = append(lines, "", sectionLabel("Quick Ops"))
+	lines = append(lines, "", sectionLabel("Personal + System"), "Adjust your experience, inspect board info, find hidden features, or sign off.")
 	lines = append(lines, renderMenuGrid(width, []menuEntry{
-		{Key: "/", Label: "Quick Jump"},
-		{Key: "A", Label: "Admin"},
-		{Key: "Q", Label: "Quit to prompt"},
+		{Key: "S", Label: "My Settings"},
+		{Key: "X", Label: "Board Info"},
+		{Key: "Y", Label: "System Status"},
+		{Key: "/", Label: "Find a Feature"},
+		{Key: "A", Label: "Sysop Center"},
+		{Key: "Q", Label: "Sign Off"},
 	}, 3)...)
+	lines = append(lines, "", sectionLabel("Popular Places"))
+	lines = append(lines, commandStripLines(width, []string{
+		"collections",
+		"bookmarks",
+		"circles",
+		"events",
+		"challenges",
+		"digest-prefs",
+	})...)
 	lines = append(lines, "", sectionLabel("Global Shortcuts"))
 	lines = append(lines, commandStripLines(width, []string{
-		"Single-letter hotkeys only",
+		"Single-letter hotkeys",
 		"Esc = Back",
 		"? = Help",
-		"/ = Quick Jump",
+		"/ = Find a Feature",
 	})...)
 	return renderPanel(width, "Main Menu", lines, FgCyan)
 }
@@ -170,11 +191,38 @@ func RenderConfiguredMainMenu(width int, title, help string, entries []ActionMen
 	if menuTitle == "" {
 		menuTitle = "Main Menu"
 	}
-	lines := []string{
-		sectionLabel("Custom Command Deck"),
+	talk, track, personal, extras := partitionConfiguredMenuEntries(entries)
+	lines := []string{}
+	if len(talk) > 0 {
+		lines = append(lines, sectionLabel("Talk + Read"))
+		lines = append(lines, "Public messages, personal mail, live rooms, downloads, games, and internet tools.")
+		lines = append(lines, renderMenuGrid(width, talk, 3)...)
 	}
-	lines = append(lines, renderConfiguredMenuRows(width, entries)...)
+	if len(track) > 0 {
+		if len(lines) > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, sectionLabel("Track + Return"))
+		lines = append(lines, "Catch up, see people, save packets, and revisit highlights.")
+		lines = append(lines, renderMenuGrid(width, track, 3)...)
+	}
+	if len(personal) > 0 {
+		if len(lines) > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, sectionLabel("Personal + System"))
+		lines = append(lines, "Adjust your experience, inspect board info, or sign off.")
+		lines = append(lines, renderMenuGrid(width, personal, 3)...)
+	}
+	if len(extras) > 0 {
+		if len(lines) > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, sectionLabel("Custom Command Deck"))
+		lines = append(lines, renderConfiguredMenuRows(width, extras)...)
+	}
 	if len(entries) == 0 {
+		lines = append(lines, sectionLabel("Custom Command Deck"))
 		lines = append(lines, "No menu options are currently available.")
 	}
 	if trimmedHelp := strings.TrimSpace(help); trimmedHelp != "" {
@@ -191,25 +239,118 @@ func RenderConfiguredMainMenu(width int, title, help string, entries []ActionMen
 	return renderPanel(width, menuTitle, lines, FgCyan)
 }
 
+func partitionConfiguredMenuEntries(entries []ActionMenuEntry) ([]menuEntry, []menuEntry, []menuEntry, []ActionMenuEntry) {
+	talk := make([]menuEntry, 0, len(entries))
+	track := make([]menuEntry, 0, len(entries))
+	personal := make([]menuEntry, 0, len(entries))
+	extras := make([]ActionMenuEntry, 0, len(entries))
+	for _, entry := range entries {
+		menuRow := menuEntry{Key: entry.Key, Label: friendlyLabelForTarget(entry.Target, entry.Label)}
+		switch configuredMenuLane(entry.Target) {
+		case "talk":
+			talk = append(talk, menuRow)
+		case "track":
+			track = append(track, menuRow)
+		case "personal":
+			personal = append(personal, menuRow)
+		default:
+			extras = append(extras, entry)
+		}
+	}
+	return talk, track, personal, extras
+}
+
+func configuredMenuLane(target string) string {
+	switch strings.ToLower(strings.TrimSpace(target)) {
+	case "boards.open", "mail.open", "chat.open", "files.open", "doors.open", "gateway.open":
+		return "talk"
+	case "system.newscan", "pulse.open", "system.last_callers", "system.who_online", "files.offline", "system.showcase":
+		return "track"
+	case "settings.open", "system.config_center", "system.status_center", "system.quick_jump", "admin.open", "session.quit":
+		return "personal"
+	default:
+		return ""
+	}
+}
+
+func friendlyLabelForTarget(target, fallback string) string {
+	switch strings.ToLower(strings.TrimSpace(target)) {
+	case "boards.open":
+		return "Read Boards"
+	case "mail.open":
+		return "Private Mail"
+	case "chat.open":
+		return "Chat Rooms"
+	case "files.open":
+		return "Files & Downloads"
+	case "doors.open":
+		return "Games & Doors"
+	case "gateway.open":
+		return "Internet Tools"
+	case "system.newscan":
+		return "What's New"
+	case "pulse.open":
+		return "My Activity"
+	case "system.last_callers":
+		return "Recent Callers"
+	case "system.who_online":
+		return "Who's Here Now"
+	case "files.offline":
+		return "Offline Packets"
+	case "system.showcase":
+		return "Showcase Tour"
+	case "settings.open":
+		return "My Settings"
+	case "system.config_center":
+		return "Board Info"
+	case "system.status_center":
+		return "System Status"
+	case "system.quick_jump":
+		return "Find a Feature"
+	case "admin.open":
+		return "Sysop Center"
+	case "session.quit":
+		return "Sign Off"
+	case "system.app_upgrade":
+		return "Upgrade App"
+	}
+	if strings.TrimSpace(fallback) != "" {
+		return strings.TrimSpace(fallback)
+	}
+	return strings.TrimSpace(target)
+}
+
 func RenderMainMenuHelp(width int, menuHint string) string {
 	lines := []string{
 		"Main Menu Key Guide",
 		"",
-		"M  Message Boards        P  Private Mail",
-		"F  Files                 C  Chat",
-		"G  Gateways              D  Doors",
-		"N  Newscan Digest        R  Caller Pulse",
-		"S  Settings",
-		"A  Sysop/Admin",
-		"L  Last Callers          W  Who's Online",
-		"X  Config Center         Y  Status Center",
-		"/  Quick Jump prompt",
-		"   - Includes bookmarks/circles/showcase/statusz aliases",
+		"If you are new here:",
+		"N  Start with what's new since your last visit",
+		"M  Read boards        C  Join chat rooms",
+		"P  Check private mail Q  Sign off when done",
+		"",
+		"Talk + Read",
+		"M  Read Boards           P  Private Mail",
+		"C  Chat Rooms            F  Files & Downloads",
+		"D  Games & Doors         G  Internet Tools",
+		"",
+		"Track + Return",
+		"N  What's New            R  My Activity",
+		"L  Recent Callers        W  Who's Here Now",
+		"O  Offline Packets       V  Showcase Tour",
+		"",
+		"Personal + System",
+		"S  My Settings           X  Board Info",
+		"Y  System Status         A  Sysop/Admin",
+		"/  Find a Feature prompt",
+		"   - Includes collections, offline packets, bookmarks, circles",
+		"   - Includes events, recaps, challenges, digest choices, showcase",
 		"   - Includes app-upgrade (/app upgrade) for sysop",
 		"Q  Quit to sign-off      Esc = Back",
 		"?  Show this help panel",
 		"",
 		"Use single-letter keys. Menus are immediate and case-insensitive.",
+		"Find a Feature is the fastest way to reach newer parity screens by name.",
 	}
 	if hint := strings.TrimSpace(menuHint); hint != "" {
 		lines = append(lines, "")
@@ -217,6 +358,43 @@ func RenderMainMenuHelp(width int, menuHint string) string {
 		lines = append(lines, hint)
 	}
 	return renderHelpPanel(width, "Help: Main Menu", lines)
+}
+
+func RenderQuickJumpGuide(width int, sysop bool) string {
+	lines := []string{
+		"Use Find a Feature when you know the job but not the menu key.",
+		"",
+		sectionLabel("Talk + Read"),
+		"boards/messages   read public message boards",
+		"mail/private      check private mail",
+		"chat/rooms        jump into live chat rooms",
+		"files/downloads   browse file areas and tickets",
+		"doors/games       play games and utilities",
+		"gateway/internet  web, email, feeds, JSON, AI",
+		"",
+		sectionLabel("Follow-up + Utility"),
+		"collections       curated file bundles",
+		"offline/packets   save packets or import replies",
+		"bookmarks         personal quick links",
+		"circles           caller groups and tags",
+		"settings          theme, pager, clock, exports",
+		"showcase/tour     guided feature tour",
+		"statusz/config    board or runtime snapshots",
+		"",
+		sectionLabel("Pulse + Community"),
+		"pulse/activity    streaks, missions, next actions",
+		"events/recaps     scheduled community events",
+		"challenges        seasonal challenge board",
+		"spotlights        feature highlights",
+		"digest-prefs      weekly digest choices",
+	}
+	if sysop {
+		lines = append(lines, "", sectionLabel("Sysop"))
+		lines = append(lines, "admin             sysop tools")
+		lines = append(lines, "app-upgrade       upgrade this board")
+	}
+	lines = append(lines, "", "Prompt shown below: Feature or place", "Press Enter on blank input to cancel.")
+	return renderPanel(width, "Quick Jump Deck", lines, FgYellow) + "\r\n"
 }
 
 func RenderStatusCenter(width int, lines []string) string {
@@ -436,25 +614,26 @@ func RenderPostEditor(width int, subject string) string {
 
 func RenderGatewayMenu(width int) string {
 	lines := []string{
-		sectionLabel("Gateway Desk"),
-		"[W]eb browser     Read URL in ANSI pager + offline save",
-		"[E]mail gateway   Send external mail via SMTP relay",
-		"[F]eed reader     Parse RSS/Atom into compact headlines",
-		"[S]ummarizer      Build quick bullets from article URL",
-		"[J]SON explorer   Pretty-print JSON API responses",
-		"[X] Caller pulse  Terminal parity for next/streaks/events/challenges",
-		"[A]I assistant    Prompt configured AI model",
+		sectionLabel("Internet Tools"),
+		"[W]eb browser     Read a web page in the pager and save it for later",
+		"[E]mail gateway   Send outside email through the configured relay",
+		"[F]eed reader     Turn RSS/Atom feeds into short headlines",
+		"[S]ummarizer      Pull quick bullets from an article URL",
+		"[J]SON explorer   Inspect JSON API responses in a readable view",
+		"[X] My activity   Open your activity, events, and challenge center",
+		"[A]I assistant    Ask the configured AI helper a question",
 	}
 	lines = append(lines, commandStripLines(width, []string{"[R]eturn", "[Q]uit", "[?] Help"})...)
-	return renderPanel(width, "Gateway Menu", lines, FgCyan) + "\r\n"
+	return renderPanel(width, "Internet Tools", lines, FgCyan) + "\r\n"
 }
 
 func RenderMailOverview(width int, inboxRows []string, outboxRows []string) string {
 	lines := []string{
 		sectionLabel("Mail Command Bar"),
 	}
-	lines = append(lines, commandStripLines(width, []string{"[C] Compose", "[T] Reply kits", "[R] Read", "Re[P]ly", "[D] Delete", "[H] Handles", "[Q] Quit", "[?] Help"})...)
-	lines = append(lines, "", sectionLabel("Inbox:"))
+	lines = append(lines, commandStripLines(width, []string{"[C] Write mail", "[T] Saved replies", "[R] Read", "Re[P]ly", "[D] Delete", "[H] Find people", "[Q] Return", "[?] Help"})...)
+	lines = append(lines, "Write personal notes, reuse saved replies, or look up a caller by handle.", "")
+	lines = append(lines, sectionLabel("Inbox:"))
 	if len(inboxRows) == 0 {
 		lines = append(lines, "  (empty)")
 	} else {
@@ -473,15 +652,15 @@ func RenderMailOverview(width int, inboxRows []string, outboxRows []string) stri
 
 func RenderGatewayHelp(width int) string {
 	lines := []string{
-		"Gateway Commands",
+		"Internet Tools Commands",
 		"",
 		"W  Web browser",
-		"   - Fetches URL with timeout, size caps, SSRF blocks",
-		"   - Displays text in ANSI pager",
+		"   - Fetches a web page with timeout, size caps, and SSRF blocks",
+		"   - Displays text in the ANSI pager",
 		"   - Optional offline save per user",
 		"",
 		"E  Email gateway",
-		"   - Sends through configured SMTP relay",
+		"   - Sends through the configured SMTP relay",
 		"   - Verified accounts only (policy controlled)",
 		"",
 		"F  Feed reader",
@@ -494,7 +673,7 @@ func RenderGatewayHelp(width int) string {
 		"J  JSON explorer",
 		"   - Fetches JSON endpoints and pretty-prints output",
 		"",
-		"X  Caller pulse",
+		"X  My activity",
 		"   - Terminal parity snapshot for /next, /streaks, /topx,",
 		"     /missions, /tournaments, /events, /events/recaps,",
 		"     /challenges, /spotlights, /digest/preferences,",
@@ -508,38 +687,38 @@ func RenderGatewayHelp(width int) string {
 		"",
 		"Use complete URL input such as https://example.org",
 	}
-	return renderHelpPanel(width, "Help: Gateways", lines)
+	return renderHelpPanel(width, "Help: Internet Tools", lines)
 }
 
 func RenderFilesMenu(width int, areas []string) string {
 	lines := []string{
-		sectionLabel("File Command Bar"),
+		sectionLabel("Files & Downloads"),
 	}
-	lines = append(lines, commandStripLines(width, []string{"[ID] Open area", "[R]ecent files", "[N]ew since last call", "[S]earch", "[I]ndexed search", "[D]ownload queue", "[C]ollections", "[O]ffline center", "[Q] Return", "[?] Help"})...)
-	lines = append(lines, "", filesHeader(width), filesDivider(width))
+	lines = append(lines, commandStripLines(width, []string{"[ID] Open area", "[R]ecent files", "[N]ew since last call", "[S]earch", "[I]ndexed search", "[D]ownload queue", "[C]ollections", "[O]ffline packets", "[Q] Return", "[?] Help"})...)
+	lines = append(lines, "Open a file area or jump straight into collections, tickets, indexed search, and offline packets.", "", filesHeader(width), filesDivider(width))
 	if len(areas) == 0 {
 		lines = append(lines, "No file areas configured yet.")
 	} else {
 		lines = append(lines, areas...)
 	}
 	lines = append(lines, "")
-	lines = append(lines, "Classic file areas with modern metadata safety.")
-	return renderPanel(width, "Files", lines, FgCyan) + "\r\n"
+	lines = append(lines, "Classic file areas with modern search, tickets, and packet tools.")
+	return renderPanel(width, "Files & Downloads", lines, FgCyan) + "\r\n"
 }
 
 func RenderFilesHelp(width int) string {
 	lines := []string{
-		"Files Commands",
+		"Files & Downloads Commands",
 		"",
-		"From files menu:",
+		"From the files menu:",
 		"- Enter area ID to browse that area",
 		"- R lists recent files across all areas",
 		"- N lists files newer than your last login",
 		"- S searches filenames across all areas",
-		"- I uses indexed FileBase search + queue add by file ID",
+		"- I uses indexed FileBase search and queue add by file ID",
 		"- D manages your download queue and one-time tickets",
-		"- C opens featured collections parity for /collections",
-		"- O opens offline packet export/import parity for /offline",
+		"- C opens curated file bundles for /collections",
+		"- O opens offline packet export/import for /offline",
 		"- Q or Esc returns to Main Menu",
 		"",
 		"Inside an area:",
@@ -547,7 +726,7 @@ func RenderFilesHelp(width int) string {
 		"- R refreshes listing",
 		"- Q exits to area list",
 	}
-	return renderHelpPanel(width, "Help: Files", lines)
+	return renderHelpPanel(width, "Help: Files & Downloads", lines)
 }
 
 type DoorMenuItem struct {
@@ -569,7 +748,7 @@ type DoorMenuSummary struct {
 
 func RenderDoorMenu(width int, items []DoorMenuItem, favoriteIDs []string, recentIDs []string, summary DoorMenuSummary) string {
 	lines := []string{
-		sectionLabel("Door Command Bar"),
+		sectionLabel("Games & Doors"),
 	}
 	lines = append(lines, commandStripLines(width, []string{"[R]eturn", "[Q]uit", "[!] Favorite Toggle", "[F]avorites", "[V]Recent", "[C]ategory", "[T] Trophies", "[?] Help"})...)
 	lines = append(lines, "")
@@ -599,7 +778,7 @@ func RenderDoorMenu(width int, items []DoorMenuItem, favoriteIDs []string, recen
 	}
 	if len(items) == 0 {
 		lines = append(lines, "No doors matched the active filter.")
-		return renderPanel(width, "Door Hub", lines, FgYellow) + "\r\n"
+		return renderPanel(width, "Games & Doors", lines, FgYellow) + "\r\n"
 	}
 	lines = append(lines, doorHeader(width))
 	lines = append(lines, doorDivider(width))
@@ -614,12 +793,12 @@ func RenderDoorMenu(width int, items []DoorMenuItem, favoriteIDs []string, recen
 		}
 		lines = append(lines, formatDoorRow(width, item, turns, flags))
 	}
-	return renderPanel(width, "Door Hub", lines, FgYellow) + "\r\n"
+	return renderPanel(width, "Games & Doors", lines, FgYellow) + "\r\n"
 }
 
 func RenderDoorsHelp(width int) string {
 	lines := []string{
-		"Door Hub Commands",
+		"Games & Doors Commands",
 		"",
 		"[Door hotkey] launch selected door",
 		"!            toggle favorite by hotkey",
@@ -635,7 +814,7 @@ func RenderDoorsHelp(width int) string {
 		"",
 		"External doors run with timeouts and sandbox limits.",
 	}
-	return renderHelpPanel(width, "Help: Doors", lines)
+	return renderHelpPanel(width, "Help: Games & Doors", lines)
 }
 
 func RenderMailHelp(width int) string {
@@ -643,16 +822,16 @@ func RenderMailHelp(width int) string {
 		"Private Mail Commands",
 		"",
 		"C  Compose message",
-		"T  Saved reply kits",
+		"T  Saved replies",
 		"R  Read message by ID",
 		"P  Reply to message by ID",
 		"D  Delete message by ID",
-		"H  Search recipient handles",
+		"H  Find recipient handles",
 		"Q  Return to Main Menu",
 		"",
 		"Compose details:",
 		"- Recipient can be local handle or external email",
-		"- Reply kits preload reusable subject/body patterns",
+		"- Saved replies preload reusable subject/body patterns",
 		"- Type ?prefix in recipient prompt to search handles",
 		"- Body entry ends with single period on its own line",
 		"",
@@ -668,23 +847,61 @@ func RenderChatHelp(width int) string {
 	lines := []string{
 		"Live Chat Commands",
 		"",
-		"S  Send message",
-		"J  Join channel",
-		"O  Show online users",
-		"R/Enter refresh current channel",
+		"1-9 switch visible room slots",
+		"S   Send message",
+		"J   Join/open another room",
+		"L   Leave current room",
+		"O   Show online roster",
+		"R/Enter refresh current room",
 		"Q/Esc return to Main Menu",
 		"",
 		"Notes:",
-		"- Default channel is #lobby",
-		"- Moderation and rate-limit rules are enforced server-side",
+		"- Default room is #lobby and it stays available as a safe fallback",
+		"- Joining another room does not drop your current set",
+		"- Locked rooms show read-only state for non-moderators",
 		"- Messages persist and are shared with web and IRC clients",
 	}
 	return renderHelpPanel(width, "Help: Live Chat", lines)
 }
 
+func RenderChatDesk(width int, current, topic string, joinedCount, onlineCount int, locked bool, slotRows []string, transcriptRows []string) string {
+	lockState := "open"
+	if locked {
+		lockState = "locked"
+	}
+	topic = strings.TrimSpace(topic)
+	if topic == "" {
+		topic = "Shared live room for web, SSH, and IRC callers."
+	}
+	lines := []string{
+		sectionLabel("Chat Command Bar"),
+	}
+	lines = append(lines, commandStripLines(width, []string{"[1-9] Switch room", "[S] Send", "[J] Join/open", "[L] Leave current", "[O] Online roster", "[R] Refresh", "[?] Help", "[Q] Return"})...)
+	lines = append(lines,
+		"",
+		fmt.Sprintf("Current room: %s   Open rooms: %d   Online here: %d   Mode: %s", current, joinedCount, onlineCount, lockState),
+		"Room guide: "+topic,
+		"",
+		sectionLabel("Open Rooms"),
+	)
+	if len(slotRows) == 0 {
+		lines = append(lines, "No rooms available yet.")
+	} else {
+		lines = append(lines, slotRows...)
+	}
+	lines = append(lines, "", sectionLabel("Transcript"))
+	if len(transcriptRows) == 0 {
+		lines = append(lines, "No messages yet.")
+	} else {
+		lines = append(lines, transcriptRows...)
+	}
+	lines = append(lines, "", "Use J to open another room without losing the ones you already joined.")
+	return renderPanel(width, "Live Chat", lines, FgCyan) + "\r\n"
+}
+
 func RenderSettingsHelp(width int) string {
 	lines := []string{
-		"Settings Screen Commands",
+		"My Settings Commands",
 		"",
 		"T  cycle theme",
 		"A  toggle ANSI on/off",

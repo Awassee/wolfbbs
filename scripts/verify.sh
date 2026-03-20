@@ -475,6 +475,7 @@ run_static_checks() {
   must "VER-003" "verify supports --fast and --smoke" bash -c "./scripts/verify.sh --help | grep -Eiq -- '--fast' && ./scripts/verify.sh --help | grep -Eiq -- '--smoke'"
   must "UX-001" "web e2e Playwright suite exists" bash -c "test -f e2e/web/playwright.config.js && test -f e2e/web/tests/user_admin.spec.js"
   must "UX-002" "terminal e2e pexpect suite exists" bash -c "test -x scripts/test_tui_pexpect.py && test -x scripts/run-e2e.sh"
+  must "UX-003" "end-user coverage audit exists and passes" bash -c "test -x scripts/check-end-user-coverage.py && python3 scripts/check-end-user-coverage.py >/dev/null"
   must "VER-004" "scripted IRC test exists" bash -c "test -x scripts/test_irc.py"
 
   must "CI-001" "ci runs bash -n and shellcheck for installers" check_ci_installer_workflow
