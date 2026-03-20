@@ -7,6 +7,7 @@ The canonical public repo is [Awassee/wolfbbs](https://github.com/Awassee/wolfbb
 [![Release](https://img.shields.io/github/v/release/Awassee/wolfbbs?display_name=tag)](https://github.com/Awassee/wolfbbs/releases)
 [![Install Check](https://img.shields.io/github/actions/workflow/status/Awassee/wolfbbs/install-check.yml?branch=main&label=install%20check)](https://github.com/Awassee/wolfbbs/actions/workflows/install-check.yml)
 [![Integration Smoke](https://img.shields.io/github/actions/workflow/status/Awassee/wolfbbs/integration-smoke.yml?branch=main&label=integration%20smoke)](https://github.com/Awassee/wolfbbs/actions/workflows/integration-smoke.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/Awassee/wolfbbs?style=social)](https://github.com/Awassee/wolfbbs/stargazers)
 
 WolfBBS gives you classic BBS texture with a modern operator control plane and turnkey install/upgrade workflows.
@@ -19,6 +20,8 @@ Quick links:
 - [First 30 minutes as sysop](docs/FIRST_30_MINUTES.md)
 - [Running a community](docs/RUNNING_A_COMMUNITY.md)
 - [Documentation hub](docs/README.md)
+- [Open source and licensing](docs/OPEN_SOURCE.md)
+- [Contributing](CONTRIBUTING.md)
 - [Releases](https://github.com/Awassee/wolfbbs/releases)
 
 ![WolfBBS Getting Started in 60 seconds](docs/assets/screenshots/getting-started.gif)
@@ -257,6 +260,13 @@ bash install.sh --repair
 ```
 
 `--repair` backfills in-app upgrade env wiring on older installs. Then in the SSH main menu press `/` and enter `/app upgrade`.
+
+## License
+
+WolfBBS is open source under the [MIT License](LICENSE).
+
+- licensing details: [docs/OPEN_SOURCE.md](docs/OPEN_SOURCE.md)
+- contribution terms: [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Documentation
 

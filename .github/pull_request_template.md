@@ -17,3 +17,7 @@
 - [ ] user-facing web UI changed
 - [ ] SSH / ANSI behavior changed
 - [ ] release notes needed
+
+## Licensing
+
+- [ ] I understand this contribution will be released under the MIT License in the root `LICENSE` file

@@ -14,6 +14,10 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -
 
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates curl docker-cli docker-cli-compose netcat-openbsd
+LABEL org.opencontainers.image.title="WolfBBS" \
+      org.opencontainers.image.description="SSH-first bulletin board system with web companion, IRC bridge, doors, and turnkey installation" \
+      org.opencontainers.image.source="https://github.com/Awassee/wolfbbs" \
+      org.opencontainers.image.licenses="MIT"
 WORKDIR /app
 COPY --from=build /out/wolfbbs /app/wolfbbs
 COPY --from=build /out/wolfbbs-web /app/wolfbbs-web

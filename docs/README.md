@@ -25,6 +25,7 @@ This directory is organized for three common audiences: operators, contributors,
 - [SHOWCASE.md](SHOWCASE.md): feature tour with screenshot links
 - [DATASHEET.md](DATASHEET.md): concise deployment and capability summary
 - [feature-reference.md](feature-reference.md): route/surface inventory
+- [OPEN_SOURCE.md](OPEN_SOURCE.md): MIT license, contribution terms, and third-party license notes
 
 ## Operator Playbooks
 
