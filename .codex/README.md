@@ -6,7 +6,7 @@ Source:
 - https://github.com/pbakaus/impeccable
 
 Installed into:
-- `/Users/seanheiney/wolfbbs/.codex/skills`
+- `.codex/skills`
 
 Included skills:
 - `frontend-design`
@@ -32,7 +32,7 @@ Included skills:
 - `overdrive`
 
 Project context for these skills lives in:
-- `/Users/seanheiney/wolfbbs/.impeccable.md`
+- `.impeccable.md`
 
 Notes:
 - This is design-assistant tooling only; it is not shipped in the application runtime.

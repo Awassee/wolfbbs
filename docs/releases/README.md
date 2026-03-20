@@ -1,12 +1,13 @@
 # WolfBBS Release Notes Index
 
-Current public release: `v2.0.0`
+Current public release: `v2.0.1`
 
-- [v2.0.0](v2.0.0.md): current public distribution release.
+- [v2.0.1](v2.0.1.md): current public distribution release.
 - [v1.0.0](v1.0.0.md): original consumer-ready distro baseline.
 
 Recent historical notes:
 
+- [v2.0.0](v2.0.0.md)
 - [v1.1.27](v1.1.27.md)
 - [v1.1.26](v1.1.26.md)
 - [v1.1.25](v1.1.25.md)

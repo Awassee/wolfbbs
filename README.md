@@ -13,7 +13,7 @@ WolfBBS gives you classic BBS texture with a modern operator control plane and t
 
 Quick links:
 - [Install now](#quick-install-linux)
-- [Release v2.0.0 notes](docs/releases/v2.0.0.md)
+- [Release v2.0.1 notes](docs/releases/v2.0.1.md)
 - [Screenshot showcase](docs/SHOWCASE.md)
 - [Feature datasheet](docs/DATASHEET.md)
 - [First 30 minutes as sysop](docs/FIRST_30_MINUTES.md)
@@ -25,10 +25,10 @@ Quick links:
 
 ## Current Release Status
 
-WolfBBS is currently shipped as `v2.0.0` with:
+WolfBBS is currently shipped as `v2.0.1` with:
 
-- clean package generation via `scripts/package-dist.sh --clean --version v2.0.0`
-- checksum + manifest output per bundle under `dist/v2.0.0/`
+- clean package generation via `scripts/package-dist.sh --clean --version v2.0.1`
+- checksum + manifest output per bundle under `dist/v2.0.1/`
 - full acceptance validation (`go test`, verifier fast/smoke, automated manual acceptance)
 - a simplified web shell with grouped status/tools menus, compact legacy nav rails, and lower-noise dense pages
 - refreshed screenshots and public docs that match the shipped UI
@@ -186,10 +186,10 @@ cd wolfbbs_<version>_<os>_<arch>
 bash install.sh --yes
 ```
 
-Build clean `v2.0.0` distro bundles locally:
+Build clean `v2.0.1` distro bundles locally:
 
 ```bash
-scripts/package-dist.sh --clean --version v2.0.0 \
+scripts/package-dist.sh --clean --version v2.0.1 \
   --platform linux/amd64 --platform linux/arm64 \
   --platform darwin/amd64 --platform darwin/arm64
 ```
