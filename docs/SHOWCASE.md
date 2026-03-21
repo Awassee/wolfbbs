@@ -7,12 +7,12 @@ Launch links:
 - [Start Here](START_HERE.md)
 - [Feature Datasheet](DATASHEET.md)
 - [Documentation Hub](README.md)
-- [Release v2.1.1 notes](releases/v2.1.1.md)
+- [Release v2.1.2 notes](releases/v2.1.2.md)
 - [GitHub Releases](https://github.com/Awassee/wolfbbs/releases)
 
-## Release v2.1.1 Snapshot
+## Release v2.1.2 Snapshot
 
-This showcase tracks the `v2.1.1` distribution target: SSH-first caller flow, full admin parity, modern gateway surfaces, turnkey install/upgrade lifecycle, a calmer 2.0 web shell, and the newer multi-channel chat + plain-language terminal caller UX.
+This showcase tracks the `v2.1.2` distribution target: SSH-first caller flow, full admin parity, modern gateway surfaces, turnkey install/upgrade lifecycle, a calmer 2.0 web shell, and the newer multi-channel chat + plain-language terminal caller UX.
 
 ## Product Description
 
