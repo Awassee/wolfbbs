@@ -2861,7 +2861,6 @@ docker_compose_down() {
     log "DRY-RUN: would stop compose services"
     return 0
   fi
-  ensure_supported_compose_backend "$WORK_DIR"
   local cmd
   cmd="$(compose_cmd)"
   if [[ -z "$cmd" ]]; then
@@ -2880,7 +2879,6 @@ docker_compose_down_purge() {
     log "DRY-RUN: would stop and purge compose services"
     return 0
   fi
-  ensure_supported_compose_backend "$WORK_DIR"
   local cmd
   cmd="$(compose_cmd)"
   if [[ -z "$cmd" ]]; then
@@ -2895,7 +2893,6 @@ docker_compose_down_purge() {
 }
 
 docker_compose_status() {
-  ensure_supported_compose_backend "$WORK_DIR"
   local cmd
   cmd="$(compose_cmd)"
   if [[ -z "$cmd" ]]; then
@@ -2933,7 +2930,6 @@ docker_compose_stop() {
     log "DRY-RUN: would stop compose services"
     return 0
   fi
-  ensure_supported_compose_backend "$WORK_DIR"
   local cmd
   cmd="$(compose_cmd)"
   if [[ -z "$cmd" ]]; then
@@ -2952,7 +2948,6 @@ docker_compose_restart() {
     log "DRY-RUN: would restart compose services"
     return 0
   fi
-  ensure_supported_compose_backend "$WORK_DIR"
   local cmd
   cmd="$(compose_cmd)"
   if [[ -z "$cmd" ]]; then
@@ -2971,7 +2966,6 @@ docker_compose_logs() {
     log "DRY-RUN: would show compose service logs"
     return 0
   fi
-  ensure_supported_compose_backend "$WORK_DIR"
   local cmd
   cmd="$(compose_cmd)"
   if [[ -z "$cmd" ]]; then

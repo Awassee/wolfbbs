@@ -247,6 +247,13 @@ EOF
   assert_contains "$compose_buildx_guard_out" "needs the modern 'docker compose' plugin with Buildx" \
     "installer should explain the compose plus buildx requirement for source builds"
 
+  local compose_down_ok_out="${TMP_WORK}/compose-down-ok.out"
+  bash -c "set -euo pipefail; source \"\$1\"; DRY_RUN=false; WORK_DIR=\"${TMP_WORK}/source-down-app\"; compose_file=\"\$WORK_DIR/docker-compose.yml\"; mkdir -p \"\$WORK_DIR\"; printf '%s\n' 'FROM --platform=\$BUILDPLATFORM golang:1.26.1-alpine AS build' > \"\$WORK_DIR/Dockerfile\"; : > \"\$WORK_DIR/docker-compose.yml\"; compose_cmd() { echo docker compose; }; docker_buildx_plugin_ready() { return 1; }; run() { printf 'RUN:%s\n' \"\$*\"; }; docker_compose_down_purge" _ "$installer_lib" >"$compose_down_ok_out" 2>&1
+  assert_contains "$compose_down_ok_out" "RUN:cd '${TMP_WORK}/source-down-app' && docker compose -f \"${TMP_WORK}/source-down-app/docker-compose.yml\" down -v --remove-orphans" \
+    "cleanup paths should not require buildx just to tear down an existing stack"
+  assert_not_contains "$compose_down_ok_out" "needs the modern 'docker compose' plugin with Buildx" \
+    "cleanup paths should bypass the buildx/source-build guard"
+
   local adopt_gate_out="${TMP_WORK}/adopt-gate.out"
   bash -c "set -euo pipefail; source \"\$1\"; SCRIPT_PATH=\"${TMP_WORK}/bootstrap-installer\"; mkdir -p \"\$SCRIPT_PATH\"; PREFIX=\"${TMP_WORK}/consumer-prefix\"; mkdir -p \"\$PREFIX/app\"; : > \"\$PREFIX/app/docker-compose.yml\"; if should_adopt_installed_compose; then echo DIRECT_INSTALL_ADOPTS; else echo DIRECT_INSTALL_REFRESHES; fi; STATUS=true; if should_adopt_installed_compose; then echo STATUS_ADOPTS; fi" _ "$installer_lib" >"$adopt_gate_out"
   assert_contains "$adopt_gate_out" "DIRECT_INSTALL_REFRESHES" \
