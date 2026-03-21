@@ -217,6 +217,20 @@ EOF
   assert_not_contains "$bundle_preferred_out" "GIT_PULL_USED" \
     "managed app sync should not pull a git checkout before trying the release bundle"
 
+  local bundle_mode_out="${TMP_WORK}/bundle-mode.out"
+  bash -c "set -euo pipefail; source \"\$1\"; good=\"${TMP_WORK}/bundle-good\"; bad=\"${TMP_WORK}/bundle-bad\"; mkdir -p \"\$good/bin\" \"\$good/container-bin\" \"\$bad/bin\"; : > \"\$good/RELEASE_NOTES.txt\"; : > \"\$good/Dockerfile\"; : > \"\$good/docker-compose.yml\"; : > \"\$bad/RELEASE_NOTES.txt\"; : > \"\$bad/docker-compose.yml\"; if release_bundle_mode \"\$good\"; then echo GOOD_OK; fi; if ! release_bundle_mode \"\$bad\"; then echo BAD_REJECTED; fi" _ "$installer_lib" >"$bundle_mode_out"
+  assert_contains "$bundle_mode_out" "GOOD_OK" \
+    "release bundle detection should accept complete packaged bundles"
+  assert_contains "$bundle_mode_out" "BAD_REJECTED" \
+    "release bundle detection should reject incomplete directories that only look partially bundled"
+
+  local compose_guard_out="${TMP_WORK}/compose-guard.out"
+  bash -c "set -euo pipefail; source \"\$1\"; DRY_RUN=false; WORK_DIR=\"${TMP_WORK}/source-app\"; compose_file=\"\$WORK_DIR/docker-compose.yml\"; mkdir -p \"\$WORK_DIR\"; printf '%s\n' 'FROM --platform=\$BUILDPLATFORM golang:1.26.1-alpine AS build' > \"\$WORK_DIR/Dockerfile\"; : > \"\$WORK_DIR/docker-compose.yml\"; compose_cmd() { echo docker-compose; }; is_macos() { return 0; }; docker_compose_up" _ "$installer_lib" >"$compose_guard_out" 2>&1 || true
+  assert_contains "$compose_guard_out" "needs the modern 'docker compose' plugin with Buildx" \
+    "installer should fail early instead of letting docker-compose hit a source-build platform error"
+  assert_contains "$compose_guard_out" "rerun the installer so it can install and wire docker-compose + docker-buildx via Homebrew" \
+    "installer should give a concrete macOS recovery message for legacy compose backends"
+
   if [[ "$(uname -s)" == "Darwin" ]]; then
     local prefix_socket="${TMP_WORK}/WolfBBSCase/SocketInstall"
     (

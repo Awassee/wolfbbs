@@ -1381,6 +1381,8 @@ release_bundle_mode() {
   [[ -n "$dir" ]] || return 1
   [[ -f "${dir}/RELEASE_NOTES.txt" ]] || return 1
   [[ -d "${dir}/bin" ]] || return 1
+  [[ -d "${dir}/container-bin" ]] || return 1
+  [[ -f "${dir}/Dockerfile" ]] || return 1
   [[ -f "${dir}/docker-compose.yml" || -f "${dir}/compose.yml" ]] || return 1
   return 0
 }
@@ -2097,9 +2099,54 @@ compose_cmd() {
   echo ""
 }
 
+compose_backend_name() {
+  local cmd=""
+  cmd="$(compose_cmd)"
+  if [[ -z "$cmd" ]]; then
+    printf '%s' ""
+    return
+  fi
+  if [[ "$cmd" == *"docker-compose"* ]]; then
+    printf '%s' "docker-compose"
+    return
+  fi
+  printf '%s' "docker compose"
+}
+
 docker_compose_plugin_ready() {
   command -v docker >/dev/null 2>&1 || return 1
   eval "$DOCKER_BIN compose version" >/dev/null 2>&1
+}
+
+source_build_requires_modern_compose() {
+  local dir="${1:-$WORK_DIR}"
+  local dockerfile="${dir}/Dockerfile"
+  [[ -f "$dockerfile" ]] || return 1
+  if release_bundle_mode "$dir"; then
+    return 1
+  fi
+  grep -Fq 'FROM --platform=$BUILDPLATFORM' "$dockerfile" || return 1
+}
+
+ensure_supported_compose_backend() {
+  local dir="${1:-$WORK_DIR}"
+  local backend=""
+  backend="$(compose_backend_name)"
+  if [[ -z "$backend" ]]; then
+    echo "Docker Compose not found."
+    exit 1
+  fi
+  if [[ "$backend" == "docker-compose" ]] && source_build_requires_modern_compose "$dir"; then
+    echo "This WolfBBS app checkout needs the modern 'docker compose' plugin with Buildx."
+    echo "The legacy 'docker-compose' binary cannot build this source checkout safely."
+    if is_macos; then
+      echo "Fix: rerun the installer so it can install and wire docker-compose + docker-buildx via Homebrew."
+    else
+      echo "Fix: install Docker's compose plugin and buildx plugin, then rerun the installer."
+    fi
+    echo "If this install was supposed to use the packaged release bundle, rerun the installer to refresh app files."
+    exit 1
+  fi
 }
 
 brew_cli_plugin_path() {
@@ -2715,6 +2762,7 @@ docker_compose_up() {
     log "DRY-RUN: would start compose services"
     return 0
   fi
+  ensure_supported_compose_backend "$WORK_DIR"
   local cmd
   cmd="$(compose_cmd)"
   if [[ -z "$cmd" ]]; then
@@ -2733,6 +2781,7 @@ docker_compose_pull_restart() {
     log "DRY-RUN: would pull and restart compose services"
     return 0
   fi
+  ensure_supported_compose_backend "$WORK_DIR"
   local cmd
   cmd="$(compose_cmd)"
   if [[ -z "$cmd" ]]; then
@@ -2752,6 +2801,7 @@ docker_compose_rapid_upgrade() {
     log "DRY-RUN: would rebuild and restart compose services from local source"
     return 0
   fi
+  ensure_supported_compose_backend "$WORK_DIR"
   local cmd
   cmd="$(compose_cmd)"
   if [[ -z "$cmd" ]]; then
@@ -2770,6 +2820,7 @@ docker_compose_down() {
     log "DRY-RUN: would stop compose services"
     return 0
   fi
+  ensure_supported_compose_backend "$WORK_DIR"
   local cmd
   cmd="$(compose_cmd)"
   if [[ -z "$cmd" ]]; then
@@ -2788,6 +2839,7 @@ docker_compose_down_purge() {
     log "DRY-RUN: would stop and purge compose services"
     return 0
   fi
+  ensure_supported_compose_backend "$WORK_DIR"
   local cmd
   cmd="$(compose_cmd)"
   if [[ -z "$cmd" ]]; then
@@ -2802,6 +2854,7 @@ docker_compose_down_purge() {
 }
 
 docker_compose_status() {
+  ensure_supported_compose_backend "$WORK_DIR"
   local cmd
   cmd="$(compose_cmd)"
   if [[ -z "$cmd" ]]; then
@@ -2820,6 +2873,7 @@ docker_compose_start() {
     log "DRY-RUN: would start compose services"
     return 0
   fi
+  ensure_supported_compose_backend "$WORK_DIR"
   local cmd
   cmd="$(compose_cmd)"
   if [[ -z "$cmd" ]]; then
@@ -2838,6 +2892,7 @@ docker_compose_stop() {
     log "DRY-RUN: would stop compose services"
     return 0
   fi
+  ensure_supported_compose_backend "$WORK_DIR"
   local cmd
   cmd="$(compose_cmd)"
   if [[ -z "$cmd" ]]; then
@@ -2856,6 +2911,7 @@ docker_compose_restart() {
     log "DRY-RUN: would restart compose services"
     return 0
   fi
+  ensure_supported_compose_backend "$WORK_DIR"
   local cmd
   cmd="$(compose_cmd)"
   if [[ -z "$cmd" ]]; then
@@ -2874,6 +2930,7 @@ docker_compose_logs() {
     log "DRY-RUN: would show compose service logs"
     return 0
   fi
+  ensure_supported_compose_backend "$WORK_DIR"
   local cmd
   cmd="$(compose_cmd)"
   if [[ -z "$cmd" ]]; then
