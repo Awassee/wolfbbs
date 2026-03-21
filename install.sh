@@ -537,7 +537,7 @@ detect_docker_socket_path() {
   if [[ "$host_value" == unix://* ]]; then
     candidate="${host_value#unix://}"
     if [[ -n "$candidate" ]]; then
-      printf '%s' "$candidate"
+      printf '%s' "$(mount_safe_docker_socket_path "$candidate")"
       return
     fi
   fi
@@ -548,12 +548,31 @@ detect_docker_socket_path() {
     "${HOME}/.colima/default/docker.sock" \
     "${HOME}/.docker/run/docker.sock"; do
     if [[ -S "$candidate" || -e "$candidate" ]]; then
-      printf '%s' "$candidate"
+      printf '%s' "$(mount_safe_docker_socket_path "$candidate")"
       return
     fi
   done
 
   printf '%s' "/var/run/docker.sock"
+}
+
+mount_safe_docker_socket_path() {
+  local candidate="${1:-}"
+  if [[ -z "$candidate" ]]; then
+    printf '%s' "/var/run/docker.sock"
+    return
+  fi
+  if is_macos; then
+    case "$candidate" in
+      "${HOME}/.colima/"*|\
+      "${HOME}/.docker/run/"*|\
+      "${HOME}/Library/Containers/"*)
+        printf '%s' "/var/run/docker.sock"
+        return
+        ;;
+    esac
+  fi
+  printf '%s' "$candidate"
 }
 
 append_env_value_if_missing() {
@@ -568,6 +587,35 @@ append_env_value_if_missing() {
     return
   fi
   printf '%s=%s\n' "$key" "$value" >>"$file_path"
+}
+
+upsert_env_value() {
+  local file_path="$1"
+  local key="$2"
+  local value="$3"
+  local tmp_file=""
+
+  if [[ ! -f "$file_path" ]]; then
+    return
+  fi
+
+  tmp_file="$(mktemp "${TMPDIR:-/tmp}/wolfbbs-env.XXXXXX")"
+  awk -v key="$key" -v value="$value" '
+    BEGIN { replaced = 0 }
+    index($0, key "=") == 1 {
+      print key "=" value
+      replaced = 1
+      next
+    }
+    { print }
+    END {
+      if (replaced == 0) {
+        print key "=" value
+      }
+    }
+  ' "$file_path" >"$tmp_file"
+  cat "$tmp_file" >"$file_path"
+  rm -f "$tmp_file"
 }
 
 docs_root_path() {
@@ -2052,7 +2100,7 @@ ensure_runtime_env_defaults() {
 
   append_env_value_if_missing "$file_path" "WOLFBBS_INSTALL_PREFIX" "$(quote_env_literal "${PREFIX}")"
   append_env_value_if_missing "$file_path" "WOLFBBS_INSTALL_WORKDIR" "$(quote_env_literal "${install_workdir}")"
-  append_env_value_if_missing "$file_path" "WOLFBBS_DOCKER_SOCKET" "$(quote_env_literal "${docker_socket}")"
+  upsert_env_value "$file_path" "WOLFBBS_DOCKER_SOCKET" "$(quote_env_literal "${docker_socket}")"
   append_env_value_if_missing "$file_path" "WOLFBBS_APP_UPGRADE_WORKDIR" "$(quote_env_literal "${app_upgrade_workdir}")"
   append_env_value_if_missing "$file_path" "WOLFBBS_APP_UPGRADE_COMMAND" "$(quote_env_literal "${app_upgrade_command}")"
   append_env_value_if_missing "$file_path" "WOLFBBS_APP_UPGRADE_TIMEOUT_SECONDS" "$app_upgrade_timeout"

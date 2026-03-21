@@ -4,6 +4,7 @@ WolfBBS is released under the MIT License.
 
 - Canonical license file: [../LICENSE](../LICENSE)
 - Contribution policy: [../CONTRIBUTING.md](../CONTRIBUTING.md)
+- Security policy: [../SECURITY.md](../SECURITY.md)
 
 ## What is covered
 

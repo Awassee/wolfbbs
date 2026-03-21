@@ -21,6 +21,7 @@ Quick links:
 - [Running a community](docs/RUNNING_A_COMMUNITY.md)
 - [Documentation hub](docs/README.md)
 - [Open source and licensing](docs/OPEN_SOURCE.md)
+- [Security policy](SECURITY.md)
 - [Contributing](CONTRIBUTING.md)
 - [Releases](https://github.com/Awassee/wolfbbs/releases)
 

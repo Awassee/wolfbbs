@@ -170,7 +170,7 @@ for platform in "${PLATFORMS[@]}"; do
     build_bin "$os" "$arch" "$bundle_root/bin/$bin_name" "$pkg"
   done
 
-  cp README.md LICENSE CONTRIBUTING.md docker-compose.yml .env.example install.sh bootstrap.sh "$bundle_root/"
+  cp README.md LICENSE CONTRIBUTING.md SECURITY.md docker-compose.yml .env.example install.sh bootstrap.sh "$bundle_root/"
   for doc in "${doc_list[@]}"; do
     rel="${doc#docs/}"
     mkdir -p "$bundle_root/docs/$(dirname "$rel")"
@@ -189,7 +189,7 @@ Contents:
 - bin/: server, web, irc, mailin, trivia, and oputil binaries
 - install.sh: installer and upgrade entrypoint
 - bootstrap.sh: one-line downloader/bootstrap entrypoint
-- LICENSE + CONTRIBUTING.md: open-source license and contribution terms
+- LICENSE + CONTRIBUTING.md + SECURITY.md: open-source license, contribution terms, and security disclosure policy
 - docker-compose.yml + .env.example: default stack runtime
 - docs/: documentation hub, install/start guides, open-source licensing guide, datasheet, showcase, launch checklist, operator playbook, acceptance, feature reference, and release notes
 - scripts/: verify and build helpers
@@ -211,7 +211,7 @@ EOF
     echo "  tarball: $(basename "$tarball")"
     echo "  binaries: ${#targets[@]}"
     echo "  docs: ${#doc_list[@]} files copied (README/START_HERE/INSTALL/OPEN_SOURCE/SHOWCASE/DATASHEET/ACCEPTANCE/etc)"
-    echo "  root notices: LICENSE CONTRIBUTING.md"
+    echo "  root notices: LICENSE CONTRIBUTING.md SECURITY.md"
   } >>"$manifest_file"
   rm -rf "$stage_dir"
 done

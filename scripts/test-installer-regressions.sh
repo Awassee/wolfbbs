@@ -109,7 +109,27 @@ main() {
   mkdir -p "$installer_dir"
   cp "$INSTALL_SRC" "${installer_dir}/install.sh"
   chmod +x "${installer_dir}/install.sh"
+  cat > "${installer_dir}/docker-compose.yml" <<'EOF'
+services:
+  web:
+    image: wolfbbs-web:latest
+EOF
   build_fake_runtime "$fake_bin"
+
+  local prefix_socket="${TMP_WORK}/WolfBBSCase/SocketInstall"
+  (
+    cd "$installer_dir"
+    PATH="${fake_bin}:${PATH}" \
+    HOME="${installer_dir}/home" \
+    DOCKER_HOST="unix://${installer_dir}/home/.colima/docker.sock" \
+    WOLFBBS_FAKE_DOCKER_LOG="$docker_log" \
+    bash ./install.sh --yes --prefix "$prefix_socket"
+  ) >"$out_file" 2>&1
+  assert_contains "${prefix_socket}/.env" "WOLFBBS_DOCKER_SOCKET='/var/run/docker.sock'" \
+    "installer should normalize macOS docker socket mounts to /var/run/docker.sock"
+  assert_not_contains "${prefix_socket}/.env" ".colima/docker.sock" \
+    "installer should not persist host-side colima socket paths into runtime env"
+  rm -f "${installer_dir}/docker-compose.yml"
 
   local prefix_uninstall="${TMP_WORK}/WolfBBSCase/InstallA"
   mkdir -p "${prefix_uninstall}/app"
