@@ -161,6 +161,20 @@ EOF
   assert_not_contains "$slug_check" ".git" \
     "repo slug parsing should not leak .git into release bundle URLs"
 
+  local confirm_yes_out="${TMP_WORK}/confirm-yes.out"
+  bash -c "set -euo pipefail; source \"\$1\"; NON_INTERACTIVE=false; if printf 'yes\n' | confirm 'Proceed?'; then echo CONFIRM_YES; else echo CONFIRM_NO; fi" _ "$installer_lib" >"$confirm_yes_out"
+  assert_contains "$confirm_yes_out" "CONFIRM_YES" \
+    "confirm helper should accept full yes responses"
+
+  local mac_choice_out="${TMP_WORK}/mac-choice.out"
+  bash -c "set -euo pipefail; source \"\$1\"; NON_INTERACTIVE=false; install_colima_stack() { echo COLIMA_SELECTED; }; ensure_brew() { :; }; run() { printf 'RUN:%s\n' \"\$*\"; }; printf '\n' | prompt_macos_docker_setup_choice" _ "$installer_lib" >"$mac_choice_out"
+  assert_contains "$mac_choice_out" "Selection [1]:" \
+    "macOS docker setup should present a single guided selection prompt"
+  assert_contains "$mac_choice_out" "COLIMA_SELECTED" \
+    "macOS docker setup should choose the recommended Colima path by default"
+  assert_not_contains "$mac_choice_out" "Install Docker Desktop via Homebrew cask instead?" \
+    "macOS docker setup should avoid chaining multiple yes/no prompts"
+
   if [[ "$(uname -s)" == "Darwin" ]]; then
     local prefix_socket="${TMP_WORK}/WolfBBSCase/SocketInstall"
     (

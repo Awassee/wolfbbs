@@ -1570,12 +1570,26 @@ run_root_retry() {
 
 confirm() {
   local prompt="$1"
+  local default="${2:-N}"
+  local reply=""
+  local normalized=""
   if [[ "$NON_INTERACTIVE" == "true" ]]; then
     return 0
   fi
-  printf '%s [y/N] ' "$prompt"
+  if [[ "$default" =~ ^[Yy]$ ]]; then
+    printf '%s [Y/n] ' "$prompt"
+  else
+    default="N"
+    printf '%s [y/N] ' "$prompt"
+  fi
   read -r reply
-  [[ "$reply" =~ ^[Yy]$ ]]
+  reply="$(trim "$reply")"
+  if [[ -z "$reply" ]]; then
+    [[ "$default" =~ ^[Yy]$ ]]
+    return
+  fi
+  normalized="$(printf '%s' "$reply" | tr '[:upper:]' '[:lower:]')"
+  [[ "$normalized" == "y" || "$normalized" == "yes" ]]
 }
 
 require_cmd() {
@@ -1923,6 +1937,54 @@ install_colima_stack() {
   fi
 }
 
+show_macos_docker_manual_steps() {
+  echo "Install Docker manually, then rerun the installer."
+  echo "Recommended Colima path:"
+  echo "  brew install docker docker-compose colima"
+  echo "  colima start"
+  echo "Docker Desktop path:"
+  echo "  brew install --cask docker"
+  echo "  open -a Docker"
+}
+
+prompt_macos_docker_setup_choice() {
+  local choice=""
+
+  while true; do
+    echo "Docker is missing on macOS."
+    echo "Choose how you want WolfBBS to set up the container runtime:"
+    echo "  1) Recommended: install Colima stack (docker + colima)"
+    echo "  2) Install Docker Desktop via Homebrew cask"
+    echo "  3) Show manual steps and exit"
+    printf 'Selection [1]: '
+    read -r choice
+    choice="$(trim "$choice")"
+    if [[ -z "$choice" ]]; then
+      choice="1"
+    fi
+    case "$(printf '%s' "$choice" | tr '[:upper:]' '[:lower:]')" in
+      1|recommended|colima)
+        install_colima_stack
+        return
+        ;;
+      2|desktop|docker-desktop)
+        ensure_brew
+        run "brew install --cask docker"
+        echo "Start Docker Desktop: open -a Docker"
+        exit 1
+        ;;
+      3|manual|q|quit|exit)
+        show_macos_docker_manual_steps
+        exit 1
+        ;;
+      *)
+        echo "Enter 1, 2, or 3."
+        echo
+        ;;
+    esac
+  done
+}
+
 wait_for_docker_daemon() {
   local timeout_seconds="${1:-90}"
   local elapsed=0
@@ -2040,26 +2102,14 @@ ensure_docker_macos() {
   if [[ "$NON_INTERACTIVE" == "true" ]]; then
     if [[ "$INSTALL_BREW" != "true" ]]; then
       echo "Rerun with --install-brew for automatic dependency setup on macOS."
-      echo "Or install manually:"
-      echo "  brew install docker colima docker-compose && colima start"
+      show_macos_docker_manual_steps
       exit 1
     fi
     install_colima_stack
     return
   fi
 
-  if confirm "Install recommended Colima Docker stack now (docker + colima)?"; then
-    install_colima_stack
-    return
-  fi
-  if confirm "Install Docker Desktop via Homebrew cask instead?"; then
-    ensure_brew
-    run "brew install --cask docker"
-    echo "Start Docker Desktop: open -a Docker"
-    exit 1
-  fi
-  echo "Please install Docker Desktop or Colima and rerun."
-  exit 1
+  prompt_macos_docker_setup_choice
 }
 
 ensure_compose_runtime() {
