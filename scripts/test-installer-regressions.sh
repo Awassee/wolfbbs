@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_SRC="${ROOT_DIR}/install.sh"
 TMP_WORK=""
+TMP_PARENT="${ROOT_DIR}/.tmp"
 
 fail() {
   echo "FAIL: $*"
@@ -103,6 +104,7 @@ run_installer_case() {
     cd "$installer_dir"
     PATH="${fake_bin}:${PATH}" \
     HOME="${installer_dir}/home" \
+    WOLFBBS_SKIP_SPACE_CHECK=1 \
     WOLFBBS_FAKE_DOCKER_LOG="$docker_log" \
     WOLFBBS_FAKE_CURL_LOG="$curl_log" \
     WOLFBBS_FAKE_NC_LOG="$nc_log" \
@@ -111,7 +113,8 @@ run_installer_case() {
 }
 
 main() {
-  TMP_WORK="$(mktemp -d "${TMPDIR:-/tmp}/wolfbbs-installer-regressions.XXXXXX")"
+  mkdir -p "$TMP_PARENT"
+  TMP_WORK="$(mktemp -d "${TMP_PARENT}/wolfbbs-installer-regressions.XXXXXX")"
   trap 'rm -rf "$TMP_WORK"' EXIT
 
   local installer_dir="${TMP_WORK}/installer"
@@ -136,6 +139,7 @@ EOF
     PATH="${fake_bin}:${PATH}" \
     HOME="${installer_dir}/home" \
     DOCKER_HOST="unix://${installer_dir}/home/.colima/docker.sock" \
+    WOLFBBS_SKIP_SPACE_CHECK=1 \
     WOLFBBS_FAKE_DOCKER_LOG="$docker_log" \
     bash ./install.sh --yes --prefix "$prefix_socket"
   ) >"$out_file" 2>&1

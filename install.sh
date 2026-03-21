@@ -1590,6 +1590,10 @@ require_ports_free() {
 
 check_space() {
   local dir="$1"
+  if [[ "${WOLFBBS_SKIP_SPACE_CHECK:-}" == "1" ]]; then
+    log "Skipping disk-space check because WOLFBBS_SKIP_SPACE_CHECK=1."
+    return
+  fi
   if [[ ! -d "$dir" ]]; then
     dir="$(dirname "$dir")"
   fi
