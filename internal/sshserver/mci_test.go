@@ -18,7 +18,7 @@ func TestBuildSettingsMCIViewDefault(t *testing.T) {
 		PagingEnabled: true,
 		TimeFormat24h: true,
 	}
-	view := s.buildSettingsMCIView(user, []string{"retro-amber", "ice-blue"}, 0)
+	view := s.buildSettingsMCIView(user, []string{"retro-amber", "ice-blue"}, 0, outputModePlain)
 	if view.ID != "settings" {
 		t.Fatalf("expected settings id, got %q", view.ID)
 	}
@@ -31,6 +31,18 @@ func TestBuildSettingsMCIViewDefault(t *testing.T) {
 	}
 	if len(normalized.Controls) < 6 {
 		t.Fatalf("expected controls, got %d", len(normalized.Controls))
+	}
+	foundOutputMode := false
+	for _, control := range normalized.Controls {
+		if control.ID == "output_mode" {
+			foundOutputMode = true
+			if control.Value != outputModePlain.Label() {
+				t.Fatalf("expected output mode label %q, got %+v", outputModePlain.Label(), control)
+			}
+		}
+	}
+	if !foundOutputMode {
+		t.Fatal("expected output mode control")
 	}
 }
 
@@ -59,7 +71,7 @@ func TestBuildSettingsMCIViewTemplate(t *testing.T) {
 		t.Fatalf("write template: %v", err)
 	}
 	t.Setenv("WOLFBBS_MCI_SETTINGS_FILE", path)
-	view := s.buildSettingsMCIView(user, []string{"retro-amber", "ice-blue"}, 1)
+	view := s.buildSettingsMCIView(user, []string{"retro-amber", "ice-blue"}, 1, outputModeAuto)
 	if view.Title != "Custom Settings" {
 		t.Fatalf("expected template title, got %q", view.Title)
 	}

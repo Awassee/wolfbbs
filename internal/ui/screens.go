@@ -905,6 +905,7 @@ func RenderSettingsHelp(width int) string {
 		"",
 		"T  cycle theme",
 		"A  toggle ANSI on/off",
+		"U  cycle output mode for this session",
 		"P  toggle pager on/off",
 		"C  toggle 24-hour clock",
 		"B  open bookmarks manager",
@@ -915,8 +916,49 @@ func RenderSettingsHelp(width int) string {
 		"Q/Esc return without saving changes",
 		"",
 		"Theme + ANSI settings apply on next redraw immediately.",
+		"Use Plain text safe mode if your terminal feels glitchy or frozen.",
 	}
 	return renderHelpPanel(width, "Help: Settings", lines)
+}
+
+func RenderReconnectNotice(width int, area string, disconnectedAt time.Time, duration time.Duration, time24h bool) string {
+	area = strings.TrimSpace(area)
+	if area == "" {
+		area = "Main Menu"
+	}
+	when := disconnectedAt.Local().Format("2006-01-02 15:04")
+	if !time24h {
+		when = disconnectedAt.Local().Format("2006-01-02 03:04 PM")
+	}
+	lines := []string{
+		"It looks like your last session ended before you signed off.",
+		"",
+		"Last place: " + area,
+		"Disconnected: " + when,
+		"Visit length: " + humanDuration(duration),
+		"",
+		"If the terminal looked strange before disconnecting, open My Settings",
+		"and switch Output mode to Plain text safe mode for this session.",
+	}
+	return renderHelpPanel(width, "Welcome Back", lines)
+}
+
+func humanDuration(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	hours := int(d / time.Hour)
+	minutes := int((d % time.Hour) / time.Minute)
+	if minutes == 0 {
+		return fmt.Sprintf("%dh", hours)
+	}
+	return fmt.Sprintf("%dh %dm", hours, minutes)
 }
 
 func RenderLastCallers(width int, users []string) string {

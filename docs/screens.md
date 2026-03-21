@@ -352,13 +352,30 @@ Selection:
 │ WolfBBS personal settings                                        │
 │                                                                   │
 │ Color + ANSI            On                                         │
+│ Output mode             Auto detect                                │
 │ Pause on long screens   On                                         │
 │ Theme list              Midnight ANSI                              │
 │ Clock style             24-hour                                    │
 │                                                                   │
-│ B Bookmarks   O Circles   X Profile export   E Attention export   │
-│ T Theme      A Color     P Pager            C Clock               │
+│ U Output mode  B Bookmarks   O Circles   X Profile export         │
+│ E Attention export  T Theme  A Color  P Pager  C Clock           │
 │ S Save My Settings      Q Return                                 │
+└───────────────────────────────────────────────────────────────────┘
+```
+
+### Welcome back notice
+```text
+┌────────────────────────── Welcome Back ───────────────────────────┐
+│ It looks like your last session ended before you signed off.     │
+│                                                                   │
+│ Last place: Chat Rooms                                            │
+│ Disconnected: 2026-03-20 21:15                                    │
+│ Visit length: 12m                                                 │
+│                                                                   │
+│ If the terminal looked strange before disconnecting, open         │
+│ My Settings and switch Output mode to Plain text safe mode.       │
+│                                                                   │
+│ Press any key to return.                                          │
 └───────────────────────────────────────────────────────────────────┘
 ```
 

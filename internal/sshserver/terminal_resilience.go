@@ -10,7 +10,47 @@ import (
 	"wolfbbs/internal/ui"
 )
 
-func resolveSessionOutput(profile term.Profile, ansiPreference bool) (bool, string) {
+type outputModeOverride string
+
+const (
+	outputModeAuto      outputModeOverride = "auto"
+	outputModeForceANSI outputModeOverride = "force-ansi"
+	outputModePlain     outputModeOverride = "plain"
+)
+
+func (m outputModeOverride) Label() string {
+	switch m {
+	case outputModeForceANSI:
+		return "Try color"
+	case outputModePlain:
+		return "Plain text safe mode"
+	default:
+		return "Auto detect"
+	}
+}
+
+func (m outputModeOverride) Next() outputModeOverride {
+	switch m {
+	case outputModeForceANSI:
+		return outputModePlain
+	case outputModePlain:
+		return outputModeAuto
+	default:
+		return outputModeForceANSI
+	}
+}
+
+func resolveSessionOutput(profile term.Profile, ansiPreference bool, override outputModeOverride) (bool, string) {
+	switch override {
+	case outputModePlain:
+		return false, string(term.EncodingASCII)
+	case outputModeForceANSI:
+		encoding := strings.TrimSpace(string(profile.Encoding))
+		if encoding == "" {
+			encoding = string(term.EncodingUTF8)
+		}
+		return true, encoding
+	}
 	sessionANSI := ansiPreference && profile.ANSI
 	if !sessionANSI {
 		return false, string(term.EncodingASCII)
@@ -22,7 +62,7 @@ func resolveSessionOutput(profile term.Profile, ansiPreference bool) (bool, stri
 	return true, encoding
 }
 
-func sessionProfileStatusLines(profile term.Profile, sessionANSI bool, encoding string) []string {
+func sessionProfileStatusLines(profile term.Profile, sessionANSI bool, encoding string, override outputModeOverride) []string {
 	termName := strings.TrimSpace(profile.TermName)
 	if termName == "" {
 		termName = "(unknown)"
@@ -32,6 +72,7 @@ func sessionProfileStatusLines(profile term.Profile, sessionANSI bool, encoding 
 		fmt.Sprintf("Terminal size: %dx%d", profile.Width, profile.Height),
 		fmt.Sprintf("Session ANSI: %s", boolText(sessionANSI)),
 		fmt.Sprintf("Session encoding: %s", strings.ToLower(strings.TrimSpace(encoding))),
+		fmt.Sprintf("Output mode: %s", override.Label()),
 		fmt.Sprintf("Compact mode: %s", boolText(profile.CompactUI)),
 		fmt.Sprintf("Degraded fallback: %s", boolText(profile.Degraded)),
 	}

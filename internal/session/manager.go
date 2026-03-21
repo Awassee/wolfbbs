@@ -19,6 +19,7 @@ type NodeState struct {
 	LoginAt      time.Time
 	LastActivity time.Time
 	IdleSeconds  int64
+	CleanExit    bool
 }
 
 type CallerState struct {
@@ -31,6 +32,15 @@ type CallerState struct {
 	Duration   time.Duration
 }
 
+type ReconnectNotice struct {
+	Username     string
+	Area         string
+	RemoteAddr   string
+	LoginAt      time.Time
+	DisconnectAt time.Time
+	Duration     time.Duration
+}
+
 type Manager struct {
 	mu          sync.Mutex
 	maxNodes    int
@@ -38,6 +48,7 @@ type Manager struct {
 	nodeToSID   map[int]string
 	sessions    map[string]*NodeState
 	lastCallers []CallerState
+	reconnect   map[string]ReconnectNotice
 }
 
 func NewManager(maxNodes, maxCallers int) *Manager {
@@ -52,6 +63,7 @@ func NewManager(maxNodes, maxCallers int) *Manager {
 		maxCallers: maxCallers,
 		nodeToSID:  map[int]string{},
 		sessions:   map[string]*NodeState{},
+		reconnect:  map[string]ReconnectNotice{},
 	}
 }
 
@@ -124,6 +136,15 @@ func (m *Manager) Touch(sessionID string) {
 	}
 }
 
+func (m *Manager) MarkCleanExit(sessionID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if state := m.sessions[strings.TrimSpace(sessionID)]; state != nil {
+		state.CleanExit = true
+		state.LastActivity = time.Now().UTC()
+	}
+}
+
 func (m *Manager) Get(sessionID string) (NodeState, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -160,11 +181,39 @@ func (m *Manager) End(sessionID string) {
 		LogoutAt:   now,
 		Duration:   duration,
 	}}, m.lastCallers...)
+	if !state.CleanExit {
+		usernameKey := strings.ToLower(strings.TrimSpace(state.Username))
+		if usernameKey != "" && usernameKey != "guest" {
+			m.reconnect[usernameKey] = ReconnectNotice{
+				Username:     state.Username,
+				Area:         state.Area,
+				RemoteAddr:   state.RemoteAddr,
+				LoginAt:      state.LoginAt,
+				DisconnectAt: now,
+				Duration:     duration,
+			}
+		}
+	}
 	if len(m.lastCallers) > m.maxCallers {
 		m.lastCallers = m.lastCallers[:m.maxCallers]
 	}
 	delete(m.sessions, sessionID)
 	delete(m.nodeToSID, state.NodeID)
+}
+
+func (m *Manager) TakeReconnectNotice(username string) (ReconnectNotice, bool) {
+	username = strings.ToLower(strings.TrimSpace(username))
+	if username == "" {
+		return ReconnectNotice{}, false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	notice, ok := m.reconnect[username]
+	if !ok {
+		return ReconnectNotice{}, false
+	}
+	delete(m.reconnect, username)
+	return notice, true
 }
 
 func (m *Manager) Online() []NodeState {

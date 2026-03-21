@@ -88,7 +88,7 @@ func TestRenderHelpPanels(t *testing.T) {
 		{
 			name:     "settings",
 			rendered: RenderSettingsHelp(80),
-			wants:    []string{"Help: Settings", "My Settings Commands", "profile export JSON", "save preferences", "Press any key to return."},
+			wants:    []string{"Help: Settings", "My Settings Commands", "cycle output mode for this session", "profile export JSON", "safe mode", "save preferences", "Press any key to return."},
 		},
 	}
 
@@ -97,6 +97,15 @@ func TestRenderHelpPanels(t *testing.T) {
 			if !strings.Contains(tc.rendered, want) {
 				t.Fatalf("%s help panel missing %q", tc.name, want)
 			}
+		}
+	}
+}
+
+func TestRenderReconnectNotice(t *testing.T) {
+	rendered := RenderReconnectNotice(80, "Chat Rooms", time.Date(2026, 3, 20, 21, 15, 0, 0, time.UTC), 12*time.Minute, true)
+	for _, want := range []string{"Welcome Back", "last session ended before you signed off", "Last place: Chat Rooms", "Visit length: 12m", "Plain text safe mode"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("reconnect notice missing %q", want)
 		}
 	}
 }

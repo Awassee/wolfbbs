@@ -83,3 +83,32 @@ func TestLastCallersLimit(t *testing.T) {
 		t.Fatalf("unexpected caller order: %+v", callers)
 	}
 }
+
+func TestReconnectNoticeCapturedOnlyForUnexpectedDisconnects(t *testing.T) {
+	mgr := NewManager(2, 4)
+	if _, err := mgr.Start("s1", "alice", "127.0.0.1"); err != nil {
+		t.Fatalf("start alice: %v", err)
+	}
+	mgr.SetArea("s1", "Chat Rooms")
+	mgr.End("s1")
+
+	notice, ok := mgr.TakeReconnectNotice("alice")
+	if !ok {
+		t.Fatal("expected reconnect notice for unexpected disconnect")
+	}
+	if notice.Area != "Chat Rooms" {
+		t.Fatalf("expected area Chat Rooms, got %+v", notice)
+	}
+	if _, ok := mgr.TakeReconnectNotice("alice"); ok {
+		t.Fatal("expected reconnect notice to be consumed once")
+	}
+
+	if _, err := mgr.Start("s2", "bob", "127.0.0.2"); err != nil {
+		t.Fatalf("start bob: %v", err)
+	}
+	mgr.MarkCleanExit("s2")
+	mgr.End("s2")
+	if _, ok := mgr.TakeReconnectNotice("bob"); ok {
+		t.Fatal("did not expect reconnect notice for clean sign-off")
+	}
+}

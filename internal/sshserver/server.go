@@ -193,7 +193,8 @@ func (s *Server) handleSession(sess gssh.Session) {
 	th := ui.DefaultTheme()
 	state := stateWelcome
 	termProfile := term.DetectProfile(pty.Term, os.Getenv("LANG"), strings.TrimSpace(os.Getenv("WOLFBBS_TERM_ENCODING")), termWidth, h, true)
-	sessionANSI, sessionEncoding := resolveSessionOutput(termProfile, true)
+	sessionOutputMode := outputModeAuto
+	sessionANSI, sessionEncoding := resolveSessionOutput(termProfile, true, sessionOutputMode)
 	sessionTime24h := true
 	currentUser := "Guest"
 	currentAccount := &domain.User{Handle: "Guest", Role: "user", ANSIEnabled: true, TimeFormat24h: true, Theme: "retro-amber"}
@@ -297,10 +298,10 @@ func (s *Server) handleSession(sess gssh.Session) {
 	refreshLayout := func() {
 		termWidth, renderWidth, termProfile = currentSessionLayout(sess)
 		if currentAccount == nil {
-			sessionANSI, sessionEncoding = resolveSessionOutput(termProfile, true)
+			sessionANSI, sessionEncoding = resolveSessionOutput(termProfile, true, sessionOutputMode)
 			return
 		}
-		sessionANSI, sessionEncoding = resolveSessionOutput(termProfile, currentAccount.ANSIEnabled)
+		sessionANSI, sessionEncoding = resolveSessionOutput(termProfile, currentAccount.ANSIEnabled, sessionOutputMode)
 	}
 	runtimeCfg, cfgErr := config.CachedRuntime()
 	if cfgErr != nil {
@@ -468,7 +469,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 
 			currentUser = user.Handle
 			currentAccount = user
-			sessionANSI, sessionEncoding = resolveSessionOutput(termProfile, user.ANSIEnabled)
+			sessionANSI, sessionEncoding = resolveSessionOutput(termProfile, user.ANSIEnabled, sessionOutputMode)
 			sessionTime24h = user.TimeFormat24h
 			th = ui.ThemeByName(user.Theme)
 			s.nodes.SetUser(sessionID, currentUser)
@@ -476,6 +477,13 @@ func (s *Server) handleSession(sess gssh.Session) {
 			s.logger.Info("user authenticated", "user", currentUser, "session_id", sessionID, "node", nodeID, "remote_host", remoteHost, "remote_origin", remoteOrigin)
 			recordAudit(s.admin, currentUser, nodeLabel, "session_login",
 				fmt.Sprintf("origin=%s host=%s transport=ssh", strings.ToUpper(remoteOrigin), remoteHost))
+			if notice, ok := s.nodes.TakeReconnectNotice(currentUser); ok {
+				writeClear(sess, sessionANSI)
+				renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName(), currentUser, time.Now(), nodeLabel, th, sessionTime24h)+"\r\n", sessionANSI, sessionEncoding)
+				renderFrame(sess, termWidth, renderWidth, ui.RenderReconnectNotice(renderWidth, notice.Area, notice.DisconnectAt, notice.Duration, sessionTime24h), sessionANSI, sessionEncoding)
+				_, _ = readKey(reader)
+				touch()
+			}
 			state = stateBulletins
 		case stateBulletins:
 			setArea("Bulletins")
@@ -709,7 +717,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 					s.runOfflineCenter(sess, reader, termWidth, renderWidth, currentUser, currentAccount, th, sessionANSI, sessionEncoding, sessionTime24h, nodeLabel, touch)
 					setArea("Main Menu")
 				case "settings.open":
-					updated, updateErr := s.runSettingsMCI(sess, reader, termWidth, renderWidth, currentUser, currentAccount, sessionANSI, sessionEncoding, sessionTime24h, nodeLabel, touch)
+					updated, updateErr := s.runSettingsMCI(sess, reader, termWidth, renderWidth, currentUser, currentAccount, sessionANSI, sessionEncoding, sessionTime24h, nodeLabel, &sessionOutputMode, touch)
 					if updateErr != nil {
 						io.WriteString(sess, "\r\nSettings update failed: "+updateErr.Error()+"\r\nPress any key.")
 						_, _ = readKey(reader)
@@ -718,7 +726,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 					}
 					if updated != nil {
 						currentAccount = updated
-						sessionANSI, sessionEncoding = resolveSessionOutput(termProfile, updated.ANSIEnabled)
+						sessionANSI, sessionEncoding = resolveSessionOutput(termProfile, updated.ANSIEnabled, sessionOutputMode)
 						sessionTime24h = updated.TimeFormat24h
 						th = ui.ThemeByName(updated.Theme)
 					}
@@ -762,7 +770,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 				s.runOfflineCenter(sess, reader, termWidth, renderWidth, currentUser, currentAccount, th, sessionANSI, sessionEncoding, sessionTime24h, nodeLabel, touch)
 				setArea("Main Menu")
 			case "settings.open":
-				updated, err := s.runSettingsMCI(sess, reader, termWidth, renderWidth, currentUser, currentAccount, sessionANSI, sessionEncoding, sessionTime24h, nodeLabel, touch)
+				updated, err := s.runSettingsMCI(sess, reader, termWidth, renderWidth, currentUser, currentAccount, sessionANSI, sessionEncoding, sessionTime24h, nodeLabel, &sessionOutputMode, touch)
 				if err != nil {
 					io.WriteString(sess, "\r\nSettings update failed: "+err.Error()+"\r\nPress any key.")
 					_, _ = readKey(reader)
@@ -771,7 +779,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 				}
 				if updated != nil {
 					currentAccount = updated
-					sessionANSI, sessionEncoding = resolveSessionOutput(termProfile, updated.ANSIEnabled)
+					sessionANSI, sessionEncoding = resolveSessionOutput(termProfile, updated.ANSIEnabled, sessionOutputMode)
 					sessionTime24h = updated.TimeFormat24h
 					th = ui.ThemeByName(updated.Theme)
 				}
@@ -1496,7 +1504,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 				fmt.Sprintf("WebSocket TLS: %s (%s%s)", boolText(s.flagFromConfig("runtime.login.wss.enabled", "WOLFBBS_WSS_ENABLE", false)), s.textFromConfig("runtime.login.wss.listen", "WOLFBBS_WSS_LISTEN", ":6443"), s.textFromConfig("runtime.login.wss.path", "WOLFBBS_WSS_PATH", "/ws-login")),
 				"",
 			}
-			cfgLines = append(cfgLines, sessionProfileStatusLines(termProfile, sessionANSI, sessionEncoding)...)
+			cfgLines = append(cfgLines, sessionProfileStatusLines(termProfile, sessionANSI, sessionEncoding, sessionOutputMode)...)
 			cfgLines = append(cfgLines,
 				"",
 				"User preferences: press S at main menu for Settings.",
@@ -1526,7 +1534,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 					fmt.Sprintf("Role: %s", currentAccount.Role),
 					fmt.Sprintf("Current area: %s", currentArea),
 				}
-				statusLines = append(statusLines, sessionProfileStatusLines(termProfile, sessionANSI, sessionEncoding)...)
+				statusLines = append(statusLines, sessionProfileStatusLines(termProfile, sessionANSI, sessionEncoding, sessionOutputMode)...)
 				statusLines = append(statusLines,
 					fmt.Sprintf("Boards backend ready: %s", boolText(s.boards != nil && s.msgs != nil)),
 					fmt.Sprintf("Mail backend ready: %s", boolText(s.mail != nil)),
@@ -1614,6 +1622,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 				}
 			}
 		case stateExit:
+			s.nodes.MarkCleanExit(sessionID)
 			writeClear(sess, sessionANSI)
 			io.WriteString(sess, "Signing off "+s.siteName()+"...\r\n")
 			return
@@ -4251,7 +4260,7 @@ func formatFileRows(width int, rows []fileListing, includeArea bool, time24h boo
 	return out
 }
 
-func (s *Server) runSettingsMCI(sess gssh.Session, reader *bufio.Reader, termWidth, renderWidth int, handle string, account *domain.User, ansiEnabled bool, encoding string, time24h bool, nodeLabel string, touch func()) (*domain.User, error) {
+func (s *Server) runSettingsMCI(sess gssh.Session, reader *bufio.Reader, termWidth, renderWidth int, handle string, account *domain.User, ansiEnabled bool, encoding string, time24h bool, nodeLabel string, outputMode *outputModeOverride, touch func()) (*domain.User, error) {
 	if touch == nil {
 		touch = func() {}
 	}
@@ -4277,6 +4286,10 @@ func (s *Server) runSettingsMCI(sess gssh.Session, reader *bufio.Reader, termWid
 
 	themes := ui.ThemeNames()
 	selectedTheme := themeIndex(themes, user.Theme)
+	mode := outputModeAuto
+	if outputMode != nil {
+		mode = *outputMode
+	}
 
 	for {
 		termWidth, renderWidth, _ = currentSessionLayout(sess)
@@ -4284,7 +4297,7 @@ func (s *Server) runSettingsMCI(sess gssh.Session, reader *bufio.Reader, termWid
 			selectedTheme = 0
 		}
 		user.Theme = themes[selectedTheme]
-		view, err := mci.Normalize(s.buildSettingsMCIView(user, themes, selectedTheme))
+		view, err := mci.Normalize(s.buildSettingsMCIView(user, themes, selectedTheme, mode))
 		if err != nil {
 			return user, err
 		}
@@ -4292,7 +4305,7 @@ func (s *Server) runSettingsMCI(sess gssh.Session, reader *bufio.Reader, termWid
 		lines = append(lines, "")
 		lines = append(lines, "Selection:")
 		_, _, profile := currentSessionLayout(sess)
-		currentANSI, currentEncoding := resolveSessionOutput(profile, user.ANSIEnabled)
+		currentANSI, currentEncoding := resolveSessionOutput(profile, user.ANSIEnabled, mode)
 		if !currentANSI {
 			currentEncoding = string(term.EncodingASCII)
 		}
@@ -4308,11 +4321,16 @@ func (s *Server) runSettingsMCI(sess gssh.Session, reader *bufio.Reader, termWid
 		touch()
 		switch key {
 		case "Q", "ESC":
+			if outputMode != nil {
+				*outputMode = mode
+			}
 			return user, nil
 		case "T":
 			selectedTheme = (selectedTheme + 1) % len(themes)
 		case "A":
 			user.ANSIEnabled = !user.ANSIEnabled
+		case "U":
+			mode = mode.Next()
 		case "P":
 			user.PagingEnabled = !user.PagingEnabled
 		case "C":
@@ -4333,6 +4351,9 @@ func (s *Server) runSettingsMCI(sess gssh.Session, reader *bufio.Reader, termWid
 				user = latest
 				selectedTheme = themeIndex(themes, user.Theme)
 			}
+			if outputMode != nil {
+				*outputMode = mode
+			}
 			io.WriteString(sess, "\r\nPreferences saved. Press any key.")
 			_, _ = readKey(reader)
 			touch()
@@ -4347,15 +4368,16 @@ func (s *Server) runSettingsMCI(sess gssh.Session, reader *bufio.Reader, termWid
 	}
 }
 
-func (s *Server) buildSettingsMCIView(user *domain.User, themes []string, selectedTheme int) mci.View {
+func (s *Server) buildSettingsMCIView(user *domain.User, themes []string, selectedTheme int, mode outputModeOverride) mci.View {
 	base := mci.View{
 		ID:     "settings",
 		Title:  "My Settings",
-		Footer: "T theme, A color, P paging, C clock, B bookmarks, O circles, X profile export, E attention export, S save, Q back",
+		Footer: "T theme, A color, U output mode, P paging, C clock, B bookmarks, O circles, X profile export, E attention export, S save, Q back",
 		Controls: []mci.Control{
 			{Type: mci.ControlLabel, ID: "header", Label: s.siteName() + " personal settings"},
 			{Type: mci.ControlInput, ID: "theme", Label: "Theme", Value: user.Theme},
 			{Type: mci.ControlToggle, ID: "ansi", Label: "Color + ANSI", Value: boolText(user.ANSIEnabled)},
+			{Type: mci.ControlInput, ID: "output_mode", Label: "Output mode", Value: mode.Label()},
 			{Type: mci.ControlToggle, ID: "paging", Label: "Pause on long screens", Value: boolText(user.PagingEnabled)},
 			{Type: mci.ControlToggle, ID: "clock", Label: "24-hour clock", Value: boolText(user.TimeFormat24h)},
 			{Type: mci.ControlLightbar, ID: "theme_list", Label: "Theme list", Options: themes, Selected: selectedTheme},
@@ -4395,6 +4417,7 @@ func (s *Server) buildSettingsMCIView(user *domain.User, themes []string, select
 	}
 	setControl(mci.Control{Type: mci.ControlInput, ID: "theme", Label: "Theme", Value: user.Theme})
 	setControl(mci.Control{Type: mci.ControlToggle, ID: "ansi", Label: "ANSI enabled", Value: boolText(user.ANSIEnabled)})
+	setControl(mci.Control{Type: mci.ControlInput, ID: "output_mode", Label: "Output mode", Value: mode.Label()})
 	setControl(mci.Control{Type: mci.ControlToggle, ID: "paging", Label: "Paging enabled", Value: boolText(user.PagingEnabled)})
 	setControl(mci.Control{Type: mci.ControlToggle, ID: "clock", Label: "24-hour clock", Value: boolText(user.TimeFormat24h)})
 	setControl(mci.Control{Type: mci.ControlLightbar, ID: "theme_list", Label: "Themes", Options: themes, Selected: selectedTheme})
