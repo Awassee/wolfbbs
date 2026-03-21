@@ -291,6 +291,7 @@ commit_if_needed() {
     return
   fi
   git add README.md docs/DATASHEET.md docs/FIRST_30_MINUTES.md docs/INSTALL.md docs/README.md docs/SHOWCASE.md docs/START_HERE.md docs/manual-acceptance-latest.md docs/releases/README.md scripts/release.sh "$NOTES_FILE"
+  git add docs/assets/screenshots
   git add -A -f dist
   if [[ -n "$(git diff --cached --name-only)" ]]; then
     git commit -m "Ship ${VERSION}"
