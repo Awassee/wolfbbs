@@ -66,6 +66,12 @@ run_step() {
   "$@"
 }
 
+compose_up_ref() {
+  local repo_dir="$1"
+  local env_file="$2"
+  run_step docker compose -f "${repo_dir}/docker-compose.yml" --env-file "$env_file" up -d --build --remove-orphans
+}
+
 wait_for_http() {
   local url="$1"
   local timeout="${2:-120}"
@@ -231,7 +237,7 @@ trap 'cleanup "$PREFIX_DIR"' EXIT
 
   log "rollback to $FROM_REF"
   run_step git checkout "$FROM_REF"
-  run_step bash install.sh --yes --prefix "$PREFIX_DIR" --rapid-upgrade
+  compose_up_ref "$CHECKOUT_DIR" "${PREFIX_DIR}/.env"
   assert_health "$PREFIX_DIR" "$SSH_PORT" "$WEB_PORT" "$IRC_PORT"
 
   log "restore candidate after rollback"
