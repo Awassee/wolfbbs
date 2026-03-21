@@ -205,7 +205,7 @@ Quick start:
 EOF
 
   tarball="$release_dir/${bundle_name}.tar.gz"
-  tar -C "$stage_dir" -czf "$tarball" "$bundle_name"
+  COPYFILE_DISABLE=1 COPY_EXTENDED_ATTRIBUTES_DISABLE=1 tar -C "$stage_dir" -czf "$tarball" "$bundle_name"
   (
     cd "$release_dir"
     sha256_file "$(basename "$tarball")"
