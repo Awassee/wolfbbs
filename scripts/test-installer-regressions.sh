@@ -175,10 +175,12 @@ EOF
   local prefix_fresh="${TMP_WORK}/WolfBBSCase/FreshInstall"
   run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$curl_log" "$nc_log" "$out_file" \
     --dry-run --yes --with-docker --repo Awassee/wolfbbs --prefix "$prefix_fresh"
-  assert_contains "$out_file" "DRY-RUN: would download repository archive to" \
-    "fresh install should support archive download path when git is unavailable"
+  assert_contains "$out_file" "DRY-RUN: would download the latest packaged release bundle to" \
+    "fresh install should prefer packaged release bundles when no local app files exist"
+  assert_contains "$out_file" "DRY-RUN: would fall back to source archive or git only if no matching release bundle is available" \
+    "fresh install should explain its fallback behavior"
   assert_contains "$out_file" "${prefix_fresh}/app/docker-compose.yml" \
-    "fresh install dry-run should resolve managed checkout compose path"
+    "fresh install dry-run should resolve managed app dir compose path"
 
   local prefix_rapid="${TMP_WORK}/WolfBBSCase/InstallB"
   mkdir -p "${prefix_rapid}/app"

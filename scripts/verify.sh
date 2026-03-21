@@ -212,7 +212,7 @@ EOF
   )" || status=$?
   rm -rf "$tmpdir"
   [[ "$status" -eq 0 ]] || return 1
-  printf '%s' "$output" | grep -Eiq 'download repository archive'
+  printf '%s' "$output" | grep -Eiq 'latest packaged release bundle'
 }
 
 compose_file() {
@@ -458,7 +458,7 @@ run_static_checks() {
   must "INS-007" "docs state docker compose as default install path" file_contains "docs/INSTALL.md" "Docker-based install"
   must "INS-008" "installer has post-install verification hooks" check_installer_verification_hooks
   must "INS-009" "installer prints connection summary strings" check_installer_summary_strings
-  must "INS-010" "standalone installer dry-run works without git by using archive fallback" check_installer_no_git_dry_run
+  must "INS-010" "standalone installer dry-run works without git by using packaged bundle fallback" check_installer_no_git_dry_run
   must "INS-011" "installer regression harness covers uninstall/upgrade edge cases" bash -c "test -x scripts/test-installer-regressions.sh && scripts/test-installer-regressions.sh >/dev/null"
   must "INS-LNX-001" "installer detects linux distro and package manager" check_installer_linux_detection
   must "INS-LNX-002" "linux prereqs documented" check_linux_prereq_docs

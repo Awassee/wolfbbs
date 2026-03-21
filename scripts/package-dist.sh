@@ -171,6 +171,7 @@ for platform in "${PLATFORMS[@]}"; do
   done
 
   cp README.md LICENSE CONTRIBUTING.md SECURITY.md docker-compose.yml .env.example install.sh bootstrap.sh "$bundle_root/"
+  cp Dockerfile.bundle "$bundle_root/Dockerfile"
   for doc in "${doc_list[@]}"; do
     rel="${doc#docs/}"
     mkdir -p "$bundle_root/docs/$(dirname "$rel")"
@@ -187,6 +188,7 @@ Platform: $os/$arch
 
 Contents:
 - bin/: server, web, irc, mailin, trivia, and oputil binaries
+- Dockerfile: runtime image definition that uses the bundled binaries directly
 - install.sh: installer and upgrade entrypoint
 - bootstrap.sh: one-line downloader/bootstrap entrypoint
 - LICENSE + CONTRIBUTING.md + SECURITY.md: open-source license, contribution terms, and security disclosure policy

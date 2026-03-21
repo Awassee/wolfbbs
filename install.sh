@@ -416,7 +416,7 @@ show_interactive_install_plan() {
     menu_line "OpenClaw-style flow: quick defaults, plus optional advanced controls."
     menu_divider
     menu_line "Install dir : ${PREFIX}"
-    menu_line "Code checkout: $(managed_checkout_dir)"
+    menu_line "App files   : $(managed_checkout_dir)"
     menu_line "Ports       : SSH ${SSH_PORT} | Web ${WEB_PORT} | IRC ${IRC_PORT} | TLS ${IRC_TLS_PORT} | Mail ${MAILIN_PORT}"
     menu_line "Source repo : ${repo_display}"
     menu_line "Profile     : ${SETUP_PROFILE} | Dry-run: $(bool_word "$DRY_RUN") | Force .env: $(bool_word "$FORCE")"
@@ -495,12 +495,12 @@ print_splash() {
   fi
 
   printf '\n'
-  printf '%b\n' "${c1} __          __   _  __ ____  ____   ____   ____${reset}"
-  printf '%b\n' "${c1} \\ \\        / /__| |/ // __ )| __ ) / ___| / ___|${reset}"
-  printf '%b\n' "${c2}  \\ \\  /\\  / / _ \\ ' /|  _ \\|  _ \\ \\___ \\ \\___ \\${reset}"
-  printf '%b\n' "${c2}   \\ \\/  \\/ /  __/ . \\| |_) | |_) | ___) | ___) |${reset}"
-  printf '%b\n' "${c3}    \\__/\\__/ \\___|_|\\_\\____/|____/ |____/ |____/${reset}"
-  printf '%b\n' "${c3}                     /\\_/\\    Installer Control Center${reset}"
+  printf '%b\n' "${c1}W   W  OOO   L      FFFFF  BBBB   BBBB    SSSS${reset}"
+  printf '%b\n' "${c1}W   W O   O  L      F      B   B  B   B  S${reset}"
+  printf '%b\n' "${c2}W W W O   O  L      FFFF   BBBB   BBBB    SSS${reset}"
+  printf '%b\n' "${c2}WW WW O   O  L      F      B   B  B   B      S${reset}"
+  printf '%b\n' "${c3}W   W  OOO   LLLLL  F      BBBB   BBBB   SSSS${reset}"
+  printf '%b\n' "${c3}                     /\\_/\\\\    Installer Control Center${reset}"
   printf '%b\n' "${c3}                    ( o.o )   ${DEFAULT_BBS_NAME} rapid setup${reset}"
   printf '%b\n' "${c3}                     > ^ <    ops + troubleshooting${reset}"
   printf '%b\n' "${dim}Target: ${PREFIX} | Platform: ${OS}/${ARCH} | Profile: ${SETUP_PROFILE}${reset}"
@@ -685,7 +685,7 @@ Board:
 
 Install layout:
 - Prefix: ${PREFIX}
-- Managed checkout: $(managed_checkout_dir)
+- Managed app dir: $(managed_checkout_dir)
 - Env file: ${ENV_FILE:-${PREFIX}/.env}
 - Compose file: ${compose_file:-$(managed_checkout_dir)/docker-compose.yml}
 - Installer log: ${LOG_FILE}
@@ -953,7 +953,7 @@ print_first_login_wizard() {
   echo "   - Users: ${admin_users_url}"
   if [[ -f "$start_here_doc" ]]; then
     echo
-    echo "6) Read the operator guides in this checkout:"
+    echo "6) Read the operator guides in the installed app bundle:"
     echo "   - Start here: ${start_here_doc}"
     if [[ -f "$ops_doc" ]]; then
       echo "   - Operations: ${ops_doc}"
@@ -1084,7 +1084,7 @@ show_interactive_action_menu() {
     menu_line "Setup and Upgrade"
     menu_line "1) Easy install / first setup        Recommended for first-time operators"
     menu_line "2) Guided install options            Tune install profile and advanced defaults"
-    menu_line "3) Rapid upgrade                     Rebuild and restart this checkout"
+    menu_line "3) Rapid upgrade                     Refresh app files and rebuild this install"
     menu_line "4) Upgrade                           Pull latest shipped images"
     menu_line "5) Repair                            Fix deps/env and verify the stack"
     menu_divider
@@ -1245,7 +1245,7 @@ normalize_repo_input() {
     return 0
   fi
 
-  # Accept owner/repo shorthand and expand to GitHub HTTPS clone URL.
+  # Accept owner/repo shorthand and expand to a GitHub HTTPS repo URL.
   if [[ "$raw" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
     printf 'https://github.com/%s.git' "$raw"
     return 0
@@ -1259,7 +1259,7 @@ normalize_repo_input() {
     raw="https://${raw}"
   fi
 
-  # Keep canonical GitHub clone URLs untouched.
+  # Keep canonical GitHub repo URLs untouched.
   if [[ "$raw" =~ ^https?://github\.com/[^/]+/[^/]+\.git/?$ ]]; then
     raw="${raw%/}"
     printf '%s' "$raw"
@@ -1299,6 +1299,77 @@ repo_archive_url() {
   printf 'https://codeload.github.com/%s/tar.gz/refs/heads/main' "$slug"
 }
 
+bundle_platform_os() {
+  case "$OS" in
+    linux)
+      printf '%s' "linux"
+      ;;
+    macos)
+      printf '%s' "darwin"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+bundle_platform_arch() {
+  case "$ARCH" in
+    amd64|x86_64)
+      printf '%s' "amd64"
+      ;;
+    arm64|aarch64)
+      printf '%s' "arm64"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+release_latest_tag() {
+  local slug=""
+  local final_url=""
+  slug="$(repo_slug_from_url "${1:-}")" || return 1
+  final_url="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${slug}/releases/latest")" || return 1
+  case "$final_url" in
+    *"/releases/tag/"*)
+      printf '%s' "${final_url##*/}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+release_bundle_filename() {
+  local version="$1"
+  local bundle_os=""
+  local bundle_arch=""
+  bundle_os="$(bundle_platform_os)" || return 1
+  bundle_arch="$(bundle_platform_arch)" || return 1
+  printf 'wolfbbs_%s_%s_%s.tar.gz' "$version" "$bundle_os" "$bundle_arch"
+}
+
+release_bundle_url() {
+  local source_repo="$1"
+  local version="$2"
+  local slug=""
+  local filename=""
+  slug="$(repo_slug_from_url "$source_repo")" || return 1
+  filename="$(release_bundle_filename "$version")" || return 1
+  printf 'https://github.com/%s/releases/download/%s/%s' "$slug" "$version" "$filename"
+}
+
+release_bundle_mode() {
+  local dir="${1:-}"
+  [[ -n "$dir" ]] || return 1
+  [[ -f "${dir}/RELEASE_NOTES.txt" ]] || return 1
+  [[ -d "${dir}/bin" ]] || return 1
+  [[ -f "${dir}/docker-compose.yml" || -f "${dir}/compose.yml" ]] || return 1
+  return 0
+}
+
 has_working_git() {
   command -v git >/dev/null 2>&1 || return 1
   git --version >/dev/null 2>&1
@@ -1335,6 +1406,53 @@ download_repo_archive() {
   run "rm -rf '$tmp_dir'"
 }
 
+download_release_bundle() {
+  local source_repo="$1"
+  local checkout_dir="$2"
+  local parent_dir=""
+  local tmp_dir=""
+  local archive_path=""
+  local extracted_dir=""
+  local release_tag=""
+  local asset_url=""
+  local bundle_name=""
+
+  release_tag="${WOLFBBS_RELEASE_VERSION:-}"
+  if [[ -z "$release_tag" ]]; then
+    release_tag="$(release_latest_tag "$source_repo")" || return 1
+  fi
+  bundle_name="$(release_bundle_filename "$release_tag")" || return 1
+  asset_url="$(release_bundle_url "$source_repo" "$release_tag")" || return 1
+  parent_dir="$(dirname "$checkout_dir")"
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "DRY-RUN: would download release bundle ${bundle_name} to ${checkout_dir}"
+    return 0
+  fi
+
+  mkdir -p "$parent_dir"
+  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/wolfbbs-bundle.XXXXXX")"
+  archive_path="${tmp_dir}/${bundle_name}"
+  log "Fetching release bundle ${bundle_name} from ${asset_url}"
+  if ! curl -fsSL "$asset_url" -o "$archive_path"; then
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  if ! tar -xzf "$archive_path" -C "$tmp_dir"; then
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  extracted_dir="$(find "$tmp_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+  if [[ -z "$extracted_dir" ]]; then
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  rm -rf "$checkout_dir"
+  mv "$extracted_dir" "$checkout_dir"
+  rm -rf "$tmp_dir"
+  log "Using packaged release bundle ${release_tag} in ${checkout_dir}"
+}
+
 resolve_repo_url() {
   if [[ -n "$REPO_URL" ]]; then
     REPO_URL="$(normalize_repo_input "$REPO_URL")"
@@ -1353,6 +1471,31 @@ resolve_repo_url() {
 
   # Fallback to project default so curl|bash stays one-command.
   REPO_URL="$(normalize_repo_input "$DEFAULT_REPO_URL")"
+}
+
+sync_managed_app_dir() {
+  local checkout_dir="$1"
+
+  if [[ -d "$checkout_dir/.git" ]] && has_working_git; then
+    run_retry 3 3 "git -C '$checkout_dir' pull --ff-only"
+    return 0
+  fi
+
+  if download_release_bundle "$REPO_URL" "$checkout_dir"; then
+    return 0
+  fi
+
+  if [[ -d "$checkout_dir" && -n "$(ls -A "$checkout_dir" 2>/dev/null)" ]]; then
+    download_repo_archive "$REPO_URL" "$checkout_dir"
+    return 0
+  fi
+
+  if has_working_git; then
+    run_retry 3 3 "git clone '$REPO_URL' '$checkout_dir'"
+    return 0
+  fi
+
+  download_repo_archive "$REPO_URL" "$checkout_dir"
 }
 
 log() {
@@ -2029,21 +2172,26 @@ ensure_compose_file() {
     checkout_dir="$(managed_checkout_dir)"
     if [[ -d "$checkout_dir" && -n "$(ls -A "$checkout_dir" 2>/dev/null)" && "$FORCE" != "true" ]]; then
       if [[ -d "$checkout_dir/.git" ]]; then
-        echo "Managed code checkout will be updated: $checkout_dir"
+        echo "Managed app dir will be updated from git: $checkout_dir"
+      elif release_bundle_mode "$checkout_dir"; then
+        echo "Managed app dir will be refreshed from the packaged release bundle: $checkout_dir"
       elif find_compose_file_in_dir "$checkout_dir" >/dev/null 2>&1; then
-        echo "Managed code checkout will be refreshed from archive: $checkout_dir"
+        echo "Managed app dir will be refreshed from downloaded app files: $checkout_dir"
       else
-        echo "Managed code checkout exists and is not empty: $checkout_dir"
+        echo "Managed app dir exists and is not empty: $checkout_dir"
         echo "Use --force to replace it, or choose a different --prefix."
         exit 1
       fi
     fi
-    log "No local compose file found. Fetching repository from ${REPO_URL} into ${checkout_dir}."
+    log "No local compose file found. Fetching WolfBBS app files from ${REPO_URL} into ${checkout_dir}."
     init_install_dir
     if [[ "$DRY_RUN" == "true" ]]; then
       WORK_DIR="$checkout_dir"
       compose_file="${checkout_dir}/docker-compose.yml"
-      if has_working_git; then
+      if repo_slug_from_url "$REPO_URL" >/dev/null 2>&1; then
+        log "DRY-RUN: would download the latest packaged release bundle to ${checkout_dir} and use ${compose_file}"
+        log "DRY-RUN: would fall back to source archive or git only if no matching release bundle is available"
+      elif has_working_git; then
         log "DRY-RUN: would clone repository to ${checkout_dir} and use ${compose_file}"
       else
         log "DRY-RUN: would download repository archive to ${checkout_dir} and use ${compose_file}"
@@ -2051,21 +2199,13 @@ ensure_compose_file() {
       return
     fi
     run "mkdir -p '$(dirname "$checkout_dir")'"
-    if [[ -d "$checkout_dir/.git" ]] && has_working_git; then
-      run_retry 3 3 "git -C '$checkout_dir' pull --ff-only"
-    elif [[ -d "$checkout_dir" && -n "$(ls -A "$checkout_dir" 2>/dev/null)" ]]; then
-      download_repo_archive "$REPO_URL" "$checkout_dir"
-    elif has_working_git; then
-      run_retry 3 3 "git clone '$REPO_URL' '$checkout_dir'"
-    else
-      download_repo_archive "$REPO_URL" "$checkout_dir"
-    fi
+    sync_managed_app_dir "$checkout_dir"
     WORK_DIR="$checkout_dir"
     compose_file="$(find_compose_file || true)"
     if [[ -n "$compose_file" ]]; then
       return
     fi
-    echo "compose file still not found after clone."
+    echo "compose file still not found after downloading app files."
     exit 1
   fi
 
@@ -2582,7 +2722,7 @@ status_view() {
   echo "Mail Ingest: http://${status_host}:${runtime_mailin_port}/ingest"
   echo "Install layout:"
   echo "  Prefix: ${PREFIX}"
-  echo "  Managed checkout: $(managed_checkout_dir)"
+  echo "  Managed app dir: $(managed_checkout_dir)"
   echo "  Env file: ${ENV_FILE}"
   echo "  Compose file: ${compose_file}"
   echo "  First-steps brief: $(launch_brief_path)"
@@ -2747,7 +2887,7 @@ Board:
 
 Install layout:
 - Prefix: ${PREFIX}
-- Managed checkout: $(managed_checkout_dir)
+- Managed app dir: $(managed_checkout_dir)
 - Env file: ${ENV_FILE}
 - Env mode: ${env_mode:-unknown}
 - Compose file: ${compose_file}
@@ -2872,7 +3012,7 @@ doctor_report() {
   if [[ -n "$local_compose" ]]; then
     doctor_ok "compose file in working dir: ${local_compose}"
   else
-    doctor_warn "no compose file in working dir (installer can clone via --repo)"
+    doctor_warn "no compose file in working dir (installer can download app files via --repo)"
     warnings+=("No compose file in the current working directory.")
   fi
 

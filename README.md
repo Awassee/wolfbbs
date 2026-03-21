@@ -169,13 +169,13 @@ More visuals and route-level notes: [docs/SHOWCASE.md](docs/SHOWCASE.md)
 
 | If you want to... | Use this | Why |
 | --- | --- | --- |
-| get WolfBBS running as fast as possible | bootstrap installer | installs dependencies, pulls the app, and starts the stack |
+| get WolfBBS running as fast as possible | bootstrap installer | installs dependencies, downloads the latest packaged app bundle, and starts the stack |
 | inspect or modify the code locally | clone the repo | best for operators who also want a working tree |
 | download a packaged bundle | GitHub Release tarball | best for controlled installs and offline handoff |
 
 ## Install In Minutes
 
-Interactive local flow:
+Source checkout flow:
 
 ```bash
 git clone https://github.com/Awassee/wolfbbs.git wolfbbs
@@ -183,13 +183,15 @@ cd wolfbbs
 bash install.sh
 ```
 
-If you want packaged downloads instead of cloning source, use [GitHub Releases](https://github.com/Awassee/wolfbbs/releases):
+Packaged app bundle flow:
 
 ```bash
 tar -xzf wolfbbs_<version>_<os>_<arch>.tar.gz
 cd wolfbbs_<version>_<os>_<arch>
 bash install.sh --yes
 ```
+
+The paste-and-go bootstrap path now aims for the same bundle-first experience. It should not need `git` for a normal install.
 
 Build clean `v2.1.1` distro bundles locally:
 

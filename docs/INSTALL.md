@@ -1,6 +1,6 @@
 # Install WolfBBS
 
-`install.sh` is the primary installation path and supports local checkout usage and curl-pipe bootstrap.
+`install.sh` is the primary installation path and supports both local checkout usage and a bundle-first curl-pipe bootstrap.
 
 If you want the shortest route, start with [QUICKSTART.md](QUICKSTART.md). If you want the product overview first, read [PRODUCT_GUIDE.md](PRODUCT_GUIDE.md) and [DATASHEET.md](DATASHEET.md).
 
@@ -56,7 +56,7 @@ macOS:
 curl -fsSL https://raw.githubusercontent.com/Awassee/wolfbbs/main/bootstrap.sh | bash -s -- --install-brew
 ```
 
-Interactive menu mode (no flags):
+Interactive source-checkout mode:
 
 ```bash
 git clone https://github.com/Awassee/wolfbbs.git wolfbbs && cd wolfbbs && bash install.sh
@@ -74,9 +74,10 @@ What the bootstrap does:
 1. Downloads the current `install.sh` to a temp location.
 2. Runs the installer with any flags you pass after `bash -s --`.
 3. Installs base dependencies and Docker runtime when supported.
-4. Fetches or updates a managed WolfBBS checkout under `<prefix>/app`.
-   - uses `git` when it is available
-   - falls back to a GitHub archive download when `git` is not installed
+4. Fetches or updates managed WolfBBS app files under `<prefix>/app`.
+   - prefers the latest packaged GitHub Release bundle for your platform
+   - falls back to a GitHub source archive if no matching bundle is available
+   - only uses `git` when a source checkout is the best remaining path
 5. Writes runtime config into `<prefix>/.env`.
 6. Starts the stack and prints first-login steps.
 
@@ -94,7 +95,7 @@ What you have at the end:
 - `<prefix>/.env`: runtime configuration and bootstrap sysop credentials
 - `<prefix>/FIRST_STEPS.txt`: exact launch workflow and URLs
 - `<prefix>/SERVICE_STATUS.txt`: last status snapshot from `bash install.sh --status`
-- `<prefix>/app/`: managed WolfBBS checkout when using the standalone installer path
+- `<prefix>/app/`: managed WolfBBS app files when using the standalone installer path
 - `<prefix>/install.log`: installer log
 
 ## What To Expect On First Login
@@ -248,8 +249,8 @@ These operator surfaces are part of the `v2.1.1` distro baseline:
    - macOS: supports Docker Desktop or Colima; with `--yes --install-brew`, can bootstrap Colima stack.
 5. Resolves compose file.
    - Uses local repo if present.
-   - If missing and `--repo`/`--repo-url` set, fetches/updates into `--prefix`.
-   - GitHub repos can be downloaded without `git` by using archive fallback.
+   - If missing and `--repo`/`--repo-url` set, fetches/updates app files into `--prefix`.
+   - GitHub repos prefer packaged release bundles first, then source archive fallback, then `git`.
 6. Generates `.env` (unless existing and no `--force`), sets `chmod 600`.
 7. Runs `docker compose up -d --build`.
 8. Verifies health and key ports.
@@ -275,7 +276,7 @@ When run without flags in an interactive terminal, `install.sh` opens an action 
 - `--irc-port <port>`: default `6667`
 - `--irc-tls-port <port>`: default `6697`
 - `--mailin-port <port>`: default `8091`
-- `--repo <owner/repo|url>`: clone target for standalone bootstrap
+- `--repo <owner/repo|url>`: app source/bundle target for standalone bootstrap
 - `--repo-url <url>`: alias for `--repo`
 - `--status`: show current install status/endpoints
 - `--doctor`: run non-mutating diagnostics (preflight + current install health)
@@ -290,15 +291,15 @@ When run without flags in an interactive terminal, `install.sh` opens an action 
 - `--upgrade`: pull/rebuild/restart stack in existing install
 - `--rapid-upgrade`: rebuild/restart from local source (no image pull) for fast iteration
 - `--uninstall`: stop services and optionally remove data
-- `--clean-uninstall`: stop services, purge volumes, and remove install directory (git checkout requires `--force`)
+- `--clean-uninstall`: stop services, purge volumes, and remove install directory (git checkout still requires `--force`)
 - `--purge`: with uninstall, remove volumes/data
 - `--help`: show flag summary
 
 ## Generated and Managed Files
 
 - `<prefix>/.env` (mode `600`)
-- `<prefix>/app/` managed source checkout for bootstrap installs
-- `<prefix>/install.log` (or script-dir log before clone)
+- `<prefix>/app/` managed app bundle or source checkout for bootstrap installs
+- `<prefix>/install.log` (or script-dir log before app download)
 
 Important generated values include:
 

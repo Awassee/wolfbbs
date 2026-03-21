@@ -421,7 +421,7 @@ INS-LNX-003 (MUST) Supports curl|bash bootstrap
 
 INS-010 (MUST) Standalone install path works without git preinstalled for GitHub-hosted repo bootstrap
   Evidence:
-    installer dry-run from a temp directory succeeds with `git` unavailable and reports archive download fallback
+    installer dry-run from a temp directory succeeds with `git` unavailable and reports packaged release bundle download with source fallback
 
 ---------------------------
 macOS-specific (REQUIRED)
