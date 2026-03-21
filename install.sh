@@ -2125,6 +2125,7 @@ source_build_requires_modern_compose() {
   if release_bundle_mode "$dir"; then
     return 1
   fi
+  # shellcheck disable=SC2016
   grep -Fq 'FROM --platform=$BUILDPLATFORM' "$dockerfile" || return 1
 }
 
