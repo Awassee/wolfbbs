@@ -161,13 +161,14 @@ for platform in "${PLATFORMS[@]}"; do
   stage_dir="$(mktemp -d)"
   bundle_name="wolfbbs_${VERSION}_${os}_${arch}"
   bundle_root="$stage_dir/$bundle_name"
-  mkdir -p "$bundle_root/bin" "$bundle_root/docs" "$bundle_root/scripts"
+  mkdir -p "$bundle_root/bin" "$bundle_root/container-bin" "$bundle_root/docs" "$bundle_root/scripts"
 
   echo "Packaging $bundle_name"
   for target in "${targets[@]}"; do
     bin_name="${target%% *}"
     pkg="${target#* }"
     build_bin "$os" "$arch" "$bundle_root/bin/$bin_name" "$pkg"
+    build_bin "linux" "$arch" "$bundle_root/container-bin/$bin_name" "$pkg"
   done
 
   cp README.md LICENSE CONTRIBUTING.md SECURITY.md docker-compose.yml .env.example install.sh bootstrap.sh "$bundle_root/"
@@ -180,6 +181,7 @@ for platform in "${PLATFORMS[@]}"; do
   cp scripts/verify.sh scripts/build.sh "$bundle_root/scripts/"
   chmod +x "$bundle_root/install.sh" "$bundle_root/bootstrap.sh" "$bundle_root/scripts/verify.sh" "$bundle_root/scripts/build.sh"
   chmod +x "$bundle_root/bin/"*
+  chmod +x "$bundle_root/container-bin/"*
 
   cat >"$bundle_root/RELEASE_NOTES.txt" <<EOF
 WolfBBS distribution bundle
@@ -199,7 +201,7 @@ Contents:
 Quick start:
 1. Review docs/START_HERE.md, docs/PRODUCT_GUIDE.md, and docs/OPERATOR_PLAYBOOK.md
 2. Copy .env.example to a local .env if needed
-3. Run ./install.sh or launch binaries from bin/
+3. Run ./install.sh or launch host binaries from bin/
 EOF
 
   tarball="$release_dir/${bundle_name}.tar.gz"
@@ -212,6 +214,7 @@ EOF
     echo "$bundle_name"
     echo "  tarball: $(basename "$tarball")"
     echo "  binaries: ${#targets[@]}"
+    echo "  container runtime binaries: ${#targets[@]} linux/${arch}"
     echo "  docs: ${#doc_list[@]} files copied (README/START_HERE/INSTALL/OPEN_SOURCE/SHOWCASE/DATASHEET/ACCEPTANCE/etc)"
     echo "  root notices: LICENSE CONTRIBUTING.md SECURITY.md"
   } >>"$manifest_file"

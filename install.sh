@@ -1278,6 +1278,7 @@ repo_slug_from_url() {
   local raw
   raw="$(trim "${1:-}")"
   raw="${raw%/}"
+  raw="${raw%.git}"
   if [[ "$raw" =~ ^https?://github\.com/([^/]+/[^/]+)(\.git)?$ ]]; then
     printf '%s' "${BASH_REMATCH[1]}"
     return 0

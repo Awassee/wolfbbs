@@ -5,12 +5,12 @@ LABEL org.opencontainers.image.title="WolfBBS" \
       org.opencontainers.image.source="https://github.com/Awassee/wolfbbs" \
       org.opencontainers.image.licenses="MIT"
 WORKDIR /app
-COPY bin/wolfbbs /app/wolfbbs
-COPY bin/wolfbbs-web /app/wolfbbs-web
-COPY bin/wolfbbs-irc /app/wolfbbs-irc
-COPY bin/wolfbbs-mailin /app/wolfbbs-mailin
-COPY bin/wolfbbs-trivia /app/wolfbbs-trivia
-COPY bin/oputil /app/oputil
+COPY container-bin/wolfbbs /app/wolfbbs
+COPY container-bin/wolfbbs-web /app/wolfbbs-web
+COPY container-bin/wolfbbs-irc /app/wolfbbs-irc
+COPY container-bin/wolfbbs-mailin /app/wolfbbs-mailin
+COPY container-bin/wolfbbs-trivia /app/wolfbbs-trivia
+COPY container-bin/oputil /app/oputil
 RUN chmod +x /app/wolfbbs /app/wolfbbs-web /app/wolfbbs-irc /app/wolfbbs-mailin /app/wolfbbs-trivia /app/oputil
 EXPOSE 2222 8080 6667 8091
 ENTRYPOINT ["/app/wolfbbs", "-listen", ":2222"]

@@ -353,6 +353,8 @@ scripts/package-dist.sh --platform linux/amd64 --platform linux/arm64
 
 Artifacts are written to `dist/<version>/`.
 
+Each release tarball includes host binaries in `bin/` plus Linux container runtime binaries in `container-bin/`, so the bundled Docker install path works correctly on both Linux and macOS hosts.
+
 Current product-facing docs included in release bundles:
 
 - `docs/START_HERE.md`
