@@ -146,6 +146,41 @@ def run_oputil_set_role(db_path: Path, handle: str, role: str) -> None:
     )
 
 
+def run_oputil_create_board(db_path: Path, name: str, description: str) -> None:
+    cmd = [
+        "go",
+        "run",
+        "./cmd/oputil",
+        "--db",
+        f"sqlite://{db_path}",
+        "boards",
+        "create",
+        "--name",
+        name,
+        "--description",
+        description,
+    ]
+    last_completed: subprocess.CompletedProcess[str] | None = None
+    for attempt in range(1, 4):
+        completed = subprocess.run(
+            cmd,
+            cwd=str(ROOT),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        last_completed = completed
+        if completed.returncode == 0:
+            return
+        time.sleep(0.4 * attempt)
+    assert last_completed is not None
+    raise RuntimeError(
+        f"oputil create-board failed ({last_completed.returncode}):\n"
+        f"stdout:\n{last_completed.stdout}\n"
+        f"stderr:\n{last_completed.stderr}"
+    )
+
+
 def spawn_ssh(port: int, term_name: str = "xterm-256color", cols: int = 80, rows: int = 25) -> pexpect.spawn:
     cmd = (
         "ssh "
@@ -925,6 +960,7 @@ def main() -> int:
         third_port = free_port()
     proc = None
     try:
+        run_oputil_create_board(db_path, "General", "General discussion")
         proc = start_bbs_server(db_path, first_port, log_path, files_root)
         run_regular_user_flow(first_port, term_name="ansi", cols=60, rows=24, create_if_missing=True, deep=False)
         run_regular_user_flow(first_port, term_name="vt100", cols=40, rows=22, create_if_missing=False, deep=False)
