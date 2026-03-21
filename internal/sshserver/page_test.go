@@ -77,6 +77,35 @@ func TestReadLineHandlesBackspaceAndMaxLength(t *testing.T) {
 	}
 }
 
+func TestReadLineHandlesCursorMotionAndDelete(t *testing.T) {
+	reader := bufio.NewReader(strings.NewReader("boars\x1b[Dd\n"))
+	got, err := readLine(reader, 16)
+	if err != nil {
+		t.Fatalf("read line with cursor insert: %v", err)
+	}
+	if got != "boards" {
+		t.Fatalf("expected cursor insertion to produce boards, got %q", got)
+	}
+
+	reader = bufio.NewReader(strings.NewReader("abcde\x1b[D\x1b[D\x1b[3~\n"))
+	got, err = readLine(reader, 16)
+	if err != nil {
+		t.Fatalf("read line with delete: %v", err)
+	}
+	if got != "abce" {
+		t.Fatalf("expected delete to remove current char, got %q", got)
+	}
+
+	reader = bufio.NewReader(strings.NewReader("tail\x1b[Hpre-\x1b[F!\n"))
+	got, err = readLine(reader, 16)
+	if err != nil {
+		t.Fatalf("read line with home/end: %v", err)
+	}
+	if got != "pre-tail!" {
+		t.Fatalf("expected home/end editing, got %q", got)
+	}
+}
+
 func TestPagerWriteHonorsContinueAndQuit(t *testing.T) {
 	var lines []string
 	for i := 1; i <= 34; i++ {

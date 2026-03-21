@@ -4,11 +4,20 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	gssh "github.com/gliderlabs/ssh"
 	"wolfbbs/internal/term"
 	"wolfbbs/internal/ui"
 )
+
+type sessionLayoutState struct {
+	termName string
+	width    int
+	height   int
+}
+
+var sessionLayoutRegistry sync.Map
 
 type outputModeOverride string
 
@@ -86,7 +95,15 @@ func currentSessionLayout(sess gssh.Session) (int, int, term.Profile) {
 	width := ui.DefaultWidth
 	height := 25
 	termName := ""
-	if pty, _, ok := sess.Pty(); ok {
+	if layout, ok := currentRegisteredLayout(sess); ok {
+		if layout.width > 0 {
+			width = layout.width
+		}
+		if layout.height > 0 {
+			height = layout.height
+		}
+		termName = layout.termName
+	} else if pty, _, ok := sess.Pty(); ok {
 		if pty.Window.Width > 0 {
 			width = pty.Window.Width
 		}
@@ -107,6 +124,62 @@ func currentSessionLayout(sess gssh.Session) (int, int, term.Profile) {
 	}
 	profile := term.DetectProfile(termName, os.Getenv("LANG"), strings.TrimSpace(os.Getenv("WOLFBBS_TERM_ENCODING")), width, height, true)
 	return width, renderWidth, profile
+}
+
+func registerSessionLayout(sessionID, termName string, width, height int) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return
+	}
+	sessionLayoutRegistry.Store(sessionID, sessionLayoutState{
+		termName: strings.TrimSpace(termName),
+		width:    width,
+		height:   height,
+	})
+}
+
+func updateSessionLayoutWindow(sessionID string, width, height int) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return
+	}
+	value, ok := sessionLayoutRegistry.Load(sessionID)
+	if !ok {
+		sessionLayoutRegistry.Store(sessionID, sessionLayoutState{width: width, height: height})
+		return
+	}
+	state, _ := value.(sessionLayoutState)
+	if width > 0 {
+		state.width = width
+	}
+	if height > 0 {
+		state.height = height
+	}
+	sessionLayoutRegistry.Store(sessionID, state)
+}
+
+func unregisterSessionLayout(sessionID string) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return
+	}
+	sessionLayoutRegistry.Delete(sessionID)
+}
+
+func currentRegisteredLayout(sess gssh.Session) (sessionLayoutState, bool) {
+	if sess == nil || sess.Context() == nil {
+		return sessionLayoutState{}, false
+	}
+	sessionID := strings.TrimSpace(sess.Context().SessionID())
+	if sessionID == "" {
+		return sessionLayoutState{}, false
+	}
+	value, ok := sessionLayoutRegistry.Load(sessionID)
+	if !ok {
+		return sessionLayoutState{}, false
+	}
+	state, ok := value.(sessionLayoutState)
+	return state, ok
 }
 
 func pagerPageSizeForHeight(height int) int {

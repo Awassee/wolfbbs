@@ -159,7 +159,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 func (s *Server) handleSession(sess gssh.Session) {
-	pty, _, ok := sess.Pty()
+	pty, winCh, ok := sess.Pty()
 	if !ok {
 		io.WriteString(sess, "PTY required. Reconnect with a terminal.\n")
 		return
@@ -208,6 +208,13 @@ func (s *Server) handleSession(sess gssh.Session) {
 	if sessionID == "" {
 		sessionID = fmt.Sprintf("anon-%d", time.Now().UnixNano())
 	}
+	registerSessionLayout(sessionID, pty.Term, pty.Window.Width, pty.Window.Height)
+	defer unregisterSessionLayout(sessionID)
+	go func() {
+		for win := range winCh {
+			updateSessionLayoutWindow(sessionID, win.Width, win.Height)
+		}
+	}()
 	remoteAddr := ""
 	if ra := sess.RemoteAddr(); ra != nil {
 		remoteAddr = ra.String()
@@ -1748,32 +1755,100 @@ func readLine(reader *bufio.Reader, max int) (string, error) {
 	if max <= 0 {
 		max = 80
 	}
-	var b strings.Builder
+	buf := make([]byte, 0, max)
+	cursor := 0
+	readBufferedByte := func() (byte, bool) {
+		if reader.Buffered() == 0 {
+			return 0, false
+		}
+		next, err := reader.ReadByte()
+		if err != nil {
+			return 0, false
+		}
+		return next, true
+	}
 	for {
 		ch, err := reader.ReadByte()
 		if err != nil {
 			return "", err
 		}
 		if ch == '\r' || ch == '\n' {
-			return b.String(), nil
+			return string(buf), nil
 		}
 		if ch == 0x7f || ch == 0x08 {
-			if b.Len() > 0 {
-				cur := b.String()
-				if len(cur) > 0 {
-					cur = cur[:len(cur)-1]
-					b.Reset()
-					_, _ = b.WriteString(cur)
+			if cursor > 0 && len(buf) > 0 {
+				buf = append(buf[:cursor-1], buf[cursor:]...)
+				cursor--
+			}
+			continue
+		}
+		if ch == 0x1b {
+			next, ok := readBufferedByte()
+			if !ok || next != '[' {
+				continue
+			}
+			next2, ok := readBufferedByte()
+			if !ok {
+				continue
+			}
+			switch next2 {
+			case 'C':
+				if cursor < len(buf) {
+					cursor++
+				}
+			case 'D':
+				if cursor > 0 {
+					cursor--
+				}
+			case 'H':
+				cursor = 0
+			case 'F':
+				cursor = len(buf)
+			case '3':
+				tail, ok := readBufferedByte()
+				if ok && tail == '~' && cursor < len(buf) {
+					buf = append(buf[:cursor], buf[cursor+1:]...)
+				}
+			case '1':
+				mid, ok := readBufferedByte()
+				if !ok {
+					continue
+				}
+				if mid == '~' {
+					cursor = 0
+					continue
+				}
+				tail, ok := readBufferedByte()
+				if !ok {
+					continue
+				}
+				if next, ok := readBufferedByte(); ok && next == '~' && mid == ';' {
+					if tail == '5' {
+						cursor = 0
+					}
+					if tail == '6' {
+						cursor = len(buf)
+					}
+				}
+			case '4':
+				if tail, ok := readBufferedByte(); ok && tail == '~' {
+					cursor = len(buf)
 				}
 			}
 			continue
 		}
-		if b.Len() >= max {
+		if ch < 32 || ch > 126 || len(buf) >= max {
 			continue
 		}
-		if ch >= 32 && ch <= 126 {
-			b.WriteByte(ch)
+		if cursor == len(buf) {
+			buf = append(buf, ch)
+			cursor = len(buf)
+			continue
 		}
+		buf = append(buf, 0)
+		copy(buf[cursor+1:], buf[cursor:])
+		buf[cursor] = ch
+		cursor++
 	}
 }
 

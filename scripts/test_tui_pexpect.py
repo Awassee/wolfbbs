@@ -218,6 +218,7 @@ def complete_login(
     handle: str,
     password: str,
     create_if_missing: bool = False,
+    expect_reconnect_notice: bool = False,
 ) -> None:
     child.sendline(handle)
     child.expect("Password:")
@@ -227,6 +228,7 @@ def complete_login(
             r"Create account\? \(Y/N\):",
             "Any key to return.",
             "Enter selection:",
+            "Welcome Back",
         ]
     )
     if idx == 0:
@@ -238,6 +240,12 @@ def complete_login(
         child.expect("Any key to return.")
         child.send("x")
     elif idx == 1:
+        child.send("x")
+    elif idx == 3:
+        if not expect_reconnect_notice:
+            raise RuntimeError("unexpected reconnect notice")
+        child.send("x")
+        child.expect("Any key to return.")
         child.send("x")
     child.expect("Enter selection:")
 
@@ -710,6 +718,12 @@ def run_regular_user_deep(child: pexpect.spawn) -> None:
 
     child.send("S")
     child.expect("My Settings")
+    child.send("U")
+    child.expect("Try color")
+    child.send("U")
+    child.expect("Plain text safe mode")
+    child.send("U")
+    child.expect("Auto detect")
     child.send("B")
     child.expect("Bookmarks")
     child.sendline("Q")
@@ -749,6 +763,16 @@ def run_regular_user_deep(child: pexpect.spawn) -> None:
     expect_main_menu_ready(child)
 
     # Quick-jump parity and terminal resize/redraw.
+    child.send("/")
+    child.expect("Feature or place")
+    child.send("boars")
+    child.send("\x1b[D")
+    child.send("d")
+    child.sendline("")
+    child.expect("Select board ID")
+    child.sendline("Q")
+    expect_main_menu_ready(child)
+
     quick_jump(child, "collections", "Featured Collections")
     child.sendline("Q")
     expect_main_menu_ready(child)
@@ -766,11 +790,56 @@ def run_regular_user_deep(child: pexpect.spawn) -> None:
     expect_main_menu_ready(child)
     child.send("Y")
     child.expect("Status Center")
+    child.expect("Compact mode: true")
     child.send("J")
     expect_after_optional_pager(child, '"area"')
     exit_optional_pager(child, "Selection:")
     child.send("Q")
     expect_main_menu_ready(child)
+
+
+def run_degraded_terminal_flow(port: int) -> None:
+    child = spawn_ssh(port, term_name="dumb", cols=48, rows=20)
+    try:
+        complete_login(child, "e2eadmin", "password123", create_if_missing=False)
+        child.send("Y")
+        child.expect("Status Center")
+        child.expect("Session ANSI: false")
+        child.expect("Degraded fallback: true")
+        child.send("x")
+        child.expect("Enter selection:")
+        child.send("S")
+        child.expect("My Settings")
+        child.send("U")
+        child.expect("Try color")
+        child.send("U")
+        child.expect("Plain text")
+        child.send("U")
+        child.expect("Auto detect")
+        child.send("Q")
+        child.expect("Enter selection:")
+        child.send("Q")
+        child.expect(pexpect.EOF)
+    finally:
+        child.close(force=True)
+
+
+def run_reconnect_notice_flow(port: int) -> None:
+    child = spawn_ssh(port, term_name="xterm-256color", cols=90, rows=28)
+    try:
+        complete_login(child, "e2eadmin", "password123", create_if_missing=False)
+        child.send("C")
+        child.expect("Live Chat")
+    finally:
+        child.close(force=True)
+
+    child = spawn_ssh(port, term_name="xterm-256color", cols=90, rows=28)
+    try:
+        complete_login(child, "e2eadmin", "password123", create_if_missing=False, expect_reconnect_notice=True)
+        child.send("Q")
+        child.expect(pexpect.EOF)
+    finally:
+        child.close(force=True)
 
 
 def run_regular_user_flow(
@@ -859,11 +928,13 @@ def main() -> int:
         proc = start_bbs_server(db_path, first_port, log_path, files_root)
         run_regular_user_flow(first_port, term_name="ansi", cols=60, rows=24, create_if_missing=True, deep=False)
         run_regular_user_flow(first_port, term_name="vt100", cols=40, rows=22, create_if_missing=False, deep=False)
+        run_degraded_terminal_flow(first_port)
         stop_process(proc)
         proc = None
 
         proc = start_bbs_server(db_path, second_port, log_path, files_root)
         run_regular_user_flow(second_port, term_name="xterm-256color", cols=100, rows=30, create_if_missing=False, deep=True)
+        run_reconnect_notice_flow(second_port)
         stop_process(proc)
         proc = None
 
