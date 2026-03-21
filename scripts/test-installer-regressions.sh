@@ -57,6 +57,9 @@ EOF
   cat > "${bin_dir}/curl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ -n "${WOLFBBS_FAKE_CURL_LOG:-}" ]]; then
+  printf '%s\n' "$*" >> "${WOLFBBS_FAKE_CURL_LOG}"
+fi
 if [[ "${1:-}" == "--version" ]]; then
   echo "curl 8.fake"
 fi
@@ -77,6 +80,9 @@ EOF
   cat > "${bin_dir}/nc" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ -n "${WOLFBBS_FAKE_NC_LOG:-}" ]]; then
+  printf '%s\n' "$*" >> "${WOLFBBS_FAKE_NC_LOG}"
+fi
 exit 0
 EOF
   chmod +x "${bin_dir}/nc"
@@ -86,14 +92,20 @@ run_installer_case() {
   local installer_dir="$1"
   local fake_bin="$2"
   local docker_log="$3"
-  local out_file="$4"
-  shift 4
+  local curl_log="$4"
+  local nc_log="$5"
+  local out_file="$6"
+  shift 6
   : > "$docker_log"
+  : > "$curl_log"
+  : > "$nc_log"
   (
     cd "$installer_dir"
     PATH="${fake_bin}:${PATH}" \
     HOME="${installer_dir}/home" \
     WOLFBBS_FAKE_DOCKER_LOG="$docker_log" \
+    WOLFBBS_FAKE_CURL_LOG="$curl_log" \
+    WOLFBBS_FAKE_NC_LOG="$nc_log" \
     bash ./install.sh "$@"
   ) >"$out_file" 2>&1
 }
@@ -105,6 +117,8 @@ main() {
   local installer_dir="${TMP_WORK}/installer"
   local fake_bin="${TMP_WORK}/fake-bin"
   local docker_log="${TMP_WORK}/docker.log"
+  local curl_log="${TMP_WORK}/curl.log"
+  local nc_log="${TMP_WORK}/nc.log"
   local out_file="${TMP_WORK}/run.out"
   mkdir -p "$installer_dir"
   cp "$INSTALL_SRC" "${installer_dir}/install.sh"
@@ -139,7 +153,7 @@ services:
     image: wolfbbs-web:latest
 EOF
 
-  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$out_file" \
+  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$curl_log" "$nc_log" "$out_file" \
     --yes --uninstall --prefix "$prefix_uninstall"
   assert_contains "$out_file" "RUN: cd '${prefix_uninstall}/app' && docker compose -f \"${prefix_uninstall}/app/docker-compose.yml\" down --remove-orphans" \
     "uninstall should target installed compose path"
@@ -155,7 +169,7 @@ EOF
   fi
 
   local prefix_fresh="${TMP_WORK}/WolfBBSCase/FreshInstall"
-  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$out_file" \
+  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$curl_log" "$nc_log" "$out_file" \
     --dry-run --yes --with-docker --repo Awassee/wolfbbs --prefix "$prefix_fresh"
   assert_contains "$out_file" "DRY-RUN: would download repository archive to" \
     "fresh install should support archive download path when git is unavailable"
@@ -176,7 +190,7 @@ WOLFBBS_IRC_PORT=6667
 WOLFBBS_MAILIN_PORT=8091
 EOF
 
-  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$out_file" \
+  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$curl_log" "$nc_log" "$out_file" \
     --yes --rapid-upgrade --prefix "$prefix_rapid"
   assert_contains "$out_file" "--env-file \"${prefix_rapid}/.env\" up -d --build --remove-orphans" \
     "rapid-upgrade should include populated env-file and remove-orphans"
@@ -189,7 +203,7 @@ EOF
       "rapid-upgrade should preserve path casing in compose working directory"
   fi
 
-  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$out_file" \
+  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$curl_log" "$nc_log" "$out_file" \
     --yes --upgrade --prefix "$prefix_rapid"
   assert_contains "$out_file" "pull" \
     "upgrade should pull published images before restart"
@@ -198,63 +212,89 @@ EOF
   assert_contains "$docker_log" "compose -f ${prefix_rapid}/app/docker-compose.yml --env-file ${prefix_rapid}/.env pull" \
     "upgrade docker command should include pull"
 
-  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$out_file" \
+  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$curl_log" "$nc_log" "$out_file" \
     --yes --start --prefix "$prefix_rapid"
   assert_contains "$docker_log" "compose -f ${prefix_rapid}/app/docker-compose.yml --env-file ${prefix_rapid}/.env up -d" \
     "start should bring services up with env-file context"
 
-  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$out_file" \
+  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$curl_log" "$nc_log" "$out_file" \
     --yes --stop --prefix "$prefix_rapid"
   assert_contains "$docker_log" "compose -f ${prefix_rapid}/app/docker-compose.yml --env-file ${prefix_rapid}/.env stop" \
     "stop should stop compose services"
 
-  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$out_file" \
+  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$curl_log" "$nc_log" "$out_file" \
     --yes --restart --prefix "$prefix_rapid"
   assert_contains "$docker_log" "compose -f ${prefix_rapid}/app/docker-compose.yml --env-file ${prefix_rapid}/.env restart" \
     "restart should restart compose services"
 
-  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$out_file" \
+  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$curl_log" "$nc_log" "$out_file" \
     --yes --uninstall --purge --prefix "$prefix_rapid"
   assert_contains "$out_file" "down -v --remove-orphans" \
     "uninstall --purge should include volume removal"
   assert_not_contains "$out_file" "--env-file \"\"" \
     "uninstall --purge should not emit blank env-file argument"
 
-  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$out_file" \
+  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$curl_log" "$nc_log" "$out_file" \
     --yes --status --prefix "$prefix_rapid"
   assert_contains "$out_file" "WolfBBS install status: ${prefix_rapid}" \
     "status should render install summary"
   assert_contains "$docker_log" "compose -f ${prefix_rapid}/app/docker-compose.yml --env-file ${prefix_rapid}/.env ps" \
     "status should inspect compose ps with resolved env-file"
 
-  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$out_file" \
+  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$curl_log" "$nc_log" "$out_file" \
     --yes --repair --prefix "$prefix_rapid"
   assert_contains "$out_file" "Repair complete." \
     "repair should report success"
   assert_contains "$docker_log" "compose -f ${prefix_rapid}/app/docker-compose.yml --env-file ${prefix_rapid}/.env up -d --build" \
     "repair should rebuild and start services with env-file"
 
-  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$out_file" \
+  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$curl_log" "$nc_log" "$out_file" \
     --yes --doctor --prefix "$prefix_rapid"
   assert_contains "$out_file" "WolfBBS doctor report" \
     "doctor should render health diagnostics"
   assert_contains "$out_file" "PASS doctor: docker daemon reachable" \
     "doctor should probe docker daemon health"
 
-  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$out_file" \
+  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$curl_log" "$nc_log" "$out_file" \
     --yes --port-audit --prefix "$prefix_rapid"
   assert_contains "$out_file" "WolfBBS port audit" \
     "port audit should render listener summary"
   assert_contains "$out_file" "Port audit summary:" \
     "port audit should include totals"
 
-  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$out_file" \
+  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$curl_log" "$nc_log" "$out_file" \
     --yes --debug-bundle --prefix "$prefix_rapid"
   assert_contains "$out_file" "Debug bundle written:" \
     "debug bundle should emit output path"
   if ! find "$prefix_rapid" -maxdepth 1 -type f -name 'WOLFBBS_DIAGNOSTICS_*.txt' | grep -q .; then
     fail "debug bundle should create a diagnostics report"
   fi
+
+  local prefix_verify="${TMP_WORK}/WolfBBSCase/InstallVerify"
+  mkdir -p "${prefix_verify}/app"
+  cat > "${prefix_verify}/app/docker-compose.yml" <<'EOF'
+services:
+  web:
+    image: wolfbbs-web:latest
+EOF
+  cat > "${prefix_verify}/.env" <<'EOF'
+WOLFBBS_WEB_PORT=18080
+WOLFBBS_SSH_PORT=12222
+WOLFBBS_IRC_PORT=16667
+WOLFBBS_MAILIN_PORT=18091
+EOF
+  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$curl_log" "$nc_log" "$out_file" \
+    --yes --upgrade --prefix "$prefix_verify"
+  assert_contains "$curl_log" "-fsS http://127.0.0.1:18080/healthz" \
+    "upgrade verification should probe the env-file web health port"
+  assert_contains "$curl_log" "-fsS http://127.0.0.1:18080/readyz" \
+    "upgrade verification should probe the env-file web ready port"
+  assert_contains "$nc_log" "-z 127.0.0.1 12222" \
+    "upgrade verification should probe the env-file ssh port"
+  assert_contains "$nc_log" "-z 127.0.0.1 16667" \
+    "upgrade verification should probe the env-file irc port"
+  assert_contains "$nc_log" "-z 127.0.0.1 18091" \
+    "upgrade verification should probe the env-file mail ingest port"
 
   local prefix_clean="${TMP_WORK}/WolfBBSCase/InstallC"
   mkdir -p "${prefix_clean}/app"
@@ -271,7 +311,7 @@ WOLFBBS_MAILIN_PORT=8091
 EOF
   local prefix_clean_resolved
   prefix_clean_resolved="$(cd "${prefix_clean}" && pwd)"
-  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$out_file" \
+  run_installer_case "$installer_dir" "$fake_bin" "$docker_log" "$curl_log" "$nc_log" "$out_file" \
     --yes --uninstall --clean-uninstall --prefix "$prefix_clean"
   assert_contains "$out_file" "Removed ${prefix_clean_resolved}." \
     "clean uninstall should remove install directory"

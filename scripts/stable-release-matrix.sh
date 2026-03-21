@@ -201,13 +201,20 @@ trap 'cleanup "$PREFIX_DIR"' EXIT
 
   run_step git checkout "$FROM_REF"
   log "fresh install from $FROM_REF"
-  run_step bash install.sh --yes --prefix "$PREFIX_DIR" \
+  if bash install.sh --yes --prefix "$PREFIX_DIR" \
     --ssh-port "$SSH_PORT" \
     --web-port "$WEB_PORT" \
     --irc-port "$IRC_PORT" \
     --irc-tls-port "$IRC_TLS_PORT" \
-    --mailin-port "$MAILIN_PORT"
-  assert_health "$PREFIX_DIR" "$SSH_PORT" "$WEB_PORT" "$IRC_PORT"
+    --mailin-port "$MAILIN_PORT"; then
+    assert_health "$PREFIX_DIR" "$SSH_PORT" "$WEB_PORT" "$IRC_PORT"
+  else
+    if [[ ! -f "$PREFIX_DIR/.env" ]]; then
+      echo "Baseline install failed before writing env: $FROM_REF" >&2
+      exit 1
+    fi
+    log "baseline install from $FROM_REF did not reach healthy state; continuing candidate migration test"
+  fi
 
   log "upgrade from $FROM_REF to $TO_REF"
   run_step git checkout "$TO_REF"

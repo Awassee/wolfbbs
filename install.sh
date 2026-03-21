@@ -2487,25 +2487,52 @@ wait_for_port() {
 }
 
 verify_install() {
+  local runtime_ssh_port="$SSH_PORT"
+  local runtime_web_port="$WEB_PORT"
+  local runtime_irc_port="$IRC_PORT"
+  local runtime_mailin_port="$MAILIN_PORT"
+  local env_ssh=""
+  local env_web=""
+  local env_irc=""
+  local env_mailin=""
   if [[ "$DRY_RUN" == "true" ]]; then
     log "DRY-RUN: skip runtime checks."
     return
+  fi
+  resolve_runtime_context_if_available
+  if [[ -n "${ENV_FILE:-}" && -f "$ENV_FILE" ]]; then
+    env_ssh="$(read_env_value "WOLFBBS_SSH_PORT" "$ENV_FILE")"
+    env_web="$(read_env_value "WOLFBBS_WEB_PORT" "$ENV_FILE")"
+    env_irc="$(read_env_value "WOLFBBS_IRC_PORT" "$ENV_FILE")"
+    env_mailin="$(read_env_value "WOLFBBS_MAILIN_PORT" "$ENV_FILE")"
+    if [[ -n "$env_ssh" ]]; then
+      runtime_ssh_port="$env_ssh"
+    fi
+    if [[ -n "$env_web" ]]; then
+      runtime_web_port="$env_web"
+    fi
+    if [[ -n "$env_irc" ]]; then
+      runtime_irc_port="$env_irc"
+    fi
+    if [[ -n "$env_mailin" ]]; then
+      runtime_mailin_port="$env_mailin"
+    fi
   fi
   if ! command -v curl >/dev/null 2>&1; then
     echo "curl missing; cannot verify services."
     return 1
   fi
-  if ! curl -fsS "http://127.0.0.1:${WEB_PORT}/healthz" >/dev/null; then
+  if ! curl -fsS "http://127.0.0.1:${runtime_web_port}/healthz" >/dev/null; then
     echo "web service health check failed"
     return 1
   fi
-  if ! curl -fsS "http://127.0.0.1:${WEB_PORT}/readyz" >/dev/null; then
+  if ! curl -fsS "http://127.0.0.1:${runtime_web_port}/readyz" >/dev/null; then
     echo "web service readiness check failed"
     return 1
   fi
-  wait_for_port 127.0.0.1 "$SSH_PORT" "SSH BBS"
-  wait_for_port 127.0.0.1 "$IRC_PORT" "IRC"
-  wait_for_port 127.0.0.1 "$MAILIN_PORT" "Mail Ingest"
+  wait_for_port 127.0.0.1 "$runtime_ssh_port" "SSH BBS"
+  wait_for_port 127.0.0.1 "$runtime_irc_port" "IRC"
+  wait_for_port 127.0.0.1 "$runtime_mailin_port" "Mail Ingest"
 }
 
 status_view() {
@@ -2770,6 +2797,14 @@ doctor_report() {
   local local_compose=""
   local install_compose=""
   local install_env=""
+  local runtime_ssh_port="$SSH_PORT"
+  local runtime_web_port="$WEB_PORT"
+  local runtime_irc_port="$IRC_PORT"
+  local runtime_mailin_port="$MAILIN_PORT"
+  local env_ssh=""
+  local env_web=""
+  local env_irc=""
+  local env_mailin=""
   local blockers=()
   local warnings=()
   local docs_root=""
@@ -2848,6 +2883,22 @@ doctor_report() {
   install_env="${PREFIX}/.env"
   if [[ -f "$install_env" ]]; then
     doctor_ok "env file found: ${install_env}"
+    env_ssh="$(read_env_value "WOLFBBS_SSH_PORT" "$install_env")"
+    env_web="$(read_env_value "WOLFBBS_WEB_PORT" "$install_env")"
+    env_irc="$(read_env_value "WOLFBBS_IRC_PORT" "$install_env")"
+    env_mailin="$(read_env_value "WOLFBBS_MAILIN_PORT" "$install_env")"
+    if [[ -n "$env_ssh" ]]; then
+      runtime_ssh_port="$env_ssh"
+    fi
+    if [[ -n "$env_web" ]]; then
+      runtime_web_port="$env_web"
+    fi
+    if [[ -n "$env_irc" ]]; then
+      runtime_irc_port="$env_irc"
+    fi
+    if [[ -n "$env_mailin" ]]; then
+      runtime_mailin_port="$env_mailin"
+    fi
     local mode
     mode="$(stat -f '%Lp' "$install_env" 2>/dev/null || stat -c '%a' "$install_env" 2>/dev/null || true)"
     if [[ "$mode" == "600" ]]; then
@@ -2862,17 +2913,23 @@ doctor_report() {
   fi
 
   if command -v nc >/dev/null 2>&1; then
-    if nc -z 127.0.0.1 "$SSH_PORT" >/dev/null 2>&1; then
-      doctor_ok "ssh port ${SSH_PORT} is reachable"
+    if nc -z 127.0.0.1 "$runtime_ssh_port" >/dev/null 2>&1; then
+      doctor_ok "ssh port ${runtime_ssh_port} is reachable"
     else
-      doctor_warn "ssh port ${SSH_PORT} is not reachable"
-      warnings+=("SSH port ${SSH_PORT} is not reachable.")
+      doctor_warn "ssh port ${runtime_ssh_port} is not reachable"
+      warnings+=("SSH port ${runtime_ssh_port} is not reachable.")
     fi
-    if nc -z 127.0.0.1 "$IRC_PORT" >/dev/null 2>&1; then
-      doctor_ok "irc port ${IRC_PORT} is reachable"
+    if nc -z 127.0.0.1 "$runtime_irc_port" >/dev/null 2>&1; then
+      doctor_ok "irc port ${runtime_irc_port} is reachable"
     else
-      doctor_warn "irc port ${IRC_PORT} is not reachable"
-      warnings+=("IRC port ${IRC_PORT} is not reachable.")
+      doctor_warn "irc port ${runtime_irc_port} is not reachable"
+      warnings+=("IRC port ${runtime_irc_port} is not reachable.")
+    fi
+    if nc -z 127.0.0.1 "$runtime_mailin_port" >/dev/null 2>&1; then
+      doctor_ok "mail ingest port ${runtime_mailin_port} is reachable"
+    else
+      doctor_warn "mail ingest port ${runtime_mailin_port} is not reachable"
+      warnings+=("Mail ingest port ${runtime_mailin_port} is not reachable.")
     fi
   else
     doctor_warn "netcat (nc) not found; skipping port checks"
@@ -2880,11 +2937,11 @@ doctor_report() {
   fi
 
   if command -v curl >/dev/null 2>&1; then
-    if curl -fsS "http://127.0.0.1:${WEB_PORT}/healthz" >/dev/null 2>&1; then
-      doctor_ok "web health endpoint is reachable on port ${WEB_PORT}"
+    if curl -fsS "http://127.0.0.1:${runtime_web_port}/healthz" >/dev/null 2>&1; then
+      doctor_ok "web health endpoint is reachable on port ${runtime_web_port}"
     else
-      doctor_warn "web health endpoint not reachable on port ${WEB_PORT}"
-      warnings+=("Web health endpoint on port ${WEB_PORT} is not reachable.")
+      doctor_warn "web health endpoint not reachable on port ${runtime_web_port}"
+      warnings+=("Web health endpoint on port ${runtime_web_port} is not reachable.")
     fi
   fi
 
