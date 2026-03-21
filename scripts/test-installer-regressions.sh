@@ -210,6 +210,15 @@ EOF
   assert_contains "$mac_compose_runtime_out" "COMPOSE_RUNTIME_OK" \
     "macOS compose runtime should succeed once the plugin is ready"
 
+  local mac_buildx_runtime_out="${TMP_WORK}/mac-buildx-runtime.out"
+  bash -c "set -euo pipefail; source \"\$1\"; DRY_RUN=false; plugin_wire_count=0; is_macos() { return 0; }; ensure_brew() { :; }; docker_compose_plugin_ready() { return 0; }; docker_buildx_plugin_ready() { [[ -f \"${TMP_WORK}/buildx-ready\" ]]; }; ensure_macos_docker_cli_plugins() { plugin_wire_count=\$((plugin_wire_count + 1)); if [[ \$plugin_wire_count -ge 2 ]]; then : > \"${TMP_WORK}/buildx-ready\"; fi; echo PLUGINS_WIRED_\$plugin_wire_count; }; run() { printf 'RUN:%s\n' \"\$*\"; }; ensure_compose_runtime; echo BUILDX_RUNTIME_OK" _ "$installer_lib" >"$mac_buildx_runtime_out"
+  assert_contains "$mac_buildx_runtime_out" "Docker Compose is present but Buildx is missing; repairing compose runtime." \
+    "macOS compose runtime should repair buildx when compose exists but buildx is missing"
+  assert_contains "$mac_buildx_runtime_out" "RUN:brew install docker-compose docker-buildx" \
+    "macOS compose runtime should install buildx even if compose already exists"
+  assert_contains "$mac_buildx_runtime_out" "BUILDX_RUNTIME_OK" \
+    "macOS compose runtime should succeed once buildx is ready"
+
   local bundle_preferred_out="${TMP_WORK}/bundle-preferred.out"
   bash -c "set -euo pipefail; source \"\$1\"; REPO_URL=https://github.com/Awassee/wolfbbs.git; checkout_dir=\"${TMP_WORK}/managed-app\"; mkdir -p \"\$checkout_dir/.git\"; download_release_bundle() { echo RELEASE_BUNDLE_USED; return 0; }; has_working_git() { echo SHOULD_NOT_PULL >&2; return 0; }; run_retry() { echo GIT_PULL_USED; }; sync_managed_app_dir \"\$checkout_dir\"" _ "$installer_lib" >"$bundle_preferred_out" 2>&1
   assert_contains "$bundle_preferred_out" "RELEASE_BUNDLE_USED" \
@@ -230,6 +239,20 @@ EOF
     "installer should fail early instead of letting docker-compose hit a source-build platform error"
   assert_contains "$compose_guard_out" "rerun the installer so it can install and wire docker-compose + docker-buildx via Homebrew" \
     "installer should give a concrete macOS recovery message for legacy compose backends"
+
+  local compose_buildx_guard_out="${TMP_WORK}/compose-buildx-guard.out"
+  bash -c "set -euo pipefail; source \"\$1\"; DRY_RUN=false; WORK_DIR=\"${TMP_WORK}/source-buildx-app\"; compose_file=\"\$WORK_DIR/docker-compose.yml\"; mkdir -p \"\$WORK_DIR\"; printf '%s\n' 'FROM --platform=\$BUILDPLATFORM golang:1.26.1-alpine AS build' > \"\$WORK_DIR/Dockerfile\"; : > \"\$WORK_DIR/docker-compose.yml\"; compose_cmd() { echo docker compose; }; docker_buildx_plugin_ready() { return 1; }; is_macos() { return 0; }; docker_compose_up" _ "$installer_lib" >"$compose_buildx_guard_out" 2>&1 || true
+  assert_contains "$compose_buildx_guard_out" "Docker Compose is available, but the Buildx plugin is still missing." \
+    "installer should fail early when docker compose exists without buildx for a source build"
+  assert_contains "$compose_buildx_guard_out" "needs the modern 'docker compose' plugin with Buildx" \
+    "installer should explain the compose plus buildx requirement for source builds"
+
+  local adopt_gate_out="${TMP_WORK}/adopt-gate.out"
+  bash -c "set -euo pipefail; source \"\$1\"; SCRIPT_PATH=\"${TMP_WORK}/bootstrap-installer\"; mkdir -p \"\$SCRIPT_PATH\"; PREFIX=\"${TMP_WORK}/consumer-prefix\"; mkdir -p \"\$PREFIX/app\"; : > \"\$PREFIX/app/docker-compose.yml\"; if should_adopt_installed_compose; then echo DIRECT_INSTALL_ADOPTS; else echo DIRECT_INSTALL_REFRESHES; fi; STATUS=true; if should_adopt_installed_compose; then echo STATUS_ADOPTS; fi" _ "$installer_lib" >"$adopt_gate_out"
+  assert_contains "$adopt_gate_out" "DIRECT_INSTALL_REFRESHES" \
+    "consumer installs should refresh managed app files instead of reusing an existing managed compose file"
+  assert_contains "$adopt_gate_out" "STATUS_ADOPTS" \
+    "status and other action modes should still adopt the existing managed compose file"
 
   if [[ "$(uname -s)" == "Darwin" ]]; then
     local prefix_socket="${TMP_WORK}/WolfBBSCase/SocketInstall"
@@ -298,6 +321,39 @@ EOF
     "fresh install should show a guided port check stage"
   assert_contains "$out_file" "${prefix_fresh}/app/docker-compose.yml" \
     "fresh install dry-run should resolve managed app dir compose path"
+
+  local bootstrap_installer_dir="${TMP_WORK}/bootstrap-installer-case"
+  mkdir -p "$bootstrap_installer_dir"
+  cp "$INSTALL_SRC" "${bootstrap_installer_dir}/install.sh"
+  chmod +x "${bootstrap_installer_dir}/install.sh"
+  local prefix_stale="${TMP_WORK}/WolfBBSCase/StaleManaged"
+  mkdir -p "${prefix_stale}/app"
+  cat > "${prefix_stale}/app/docker-compose.yml" <<'EOF'
+services:
+  web:
+    build: .
+EOF
+  cat > "${prefix_stale}/app/Dockerfile" <<'EOF'
+FROM --platform=$BUILDPLATFORM golang:1.26.1-alpine AS build
+EOF
+  (
+    cd "$bootstrap_installer_dir"
+    PATH="${fake_bin}:${PATH}" \
+    HOME="${bootstrap_installer_dir}/home" \
+    WOLFBBS_SKIP_SPACE_CHECK=1 \
+    WOLFBBS_FAKE_DOCKER_LOG="$docker_log" \
+    WOLFBBS_FAKE_CURL_LOG="$curl_log" \
+    WOLFBBS_FAKE_NC_LOG="$nc_log" \
+    WOLFBBS_FAKE_COLIMA_LOG="$colima_log" \
+    bash ./install.sh --dry-run --yes --with-docker --repo Awassee/wolfbbs --prefix "$prefix_stale" \
+      --ssh-port "$test_ssh_port" \
+      --web-port "$test_web_port" \
+      --irc-port "$test_irc_port" \
+      --irc-tls-port "$test_irc_tls_port" \
+      --mailin-port "$test_mailin_port"
+  ) >"$out_file" 2>&1
+  assert_contains "$out_file" "DRY-RUN: would download the latest packaged release bundle to ${prefix_stale}/app" \
+    "bootstrap installs should refresh a stale managed app dir instead of reusing an older source checkout"
 
   local prefix_rapid="${TMP_WORK}/WolfBBSCase/InstallB"
   mkdir -p "${prefix_rapid}/app"

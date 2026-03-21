@@ -178,6 +178,24 @@ adopt_installed_compose_if_present() {
   return 0
 }
 
+running_from_local_checkout() {
+  find_compose_file_in_dir "$SCRIPT_PATH" >/dev/null 2>&1
+}
+
+is_direct_install_mode() {
+  [[ "$UNINSTALL" != "true" && "$UPGRADE" != "true" && "$RAPID_UPGRADE" != "true" && "$STATUS" != "true" && "$START" != "true" && "$STOP" != "true" && "$RESTART" != "true" && "$LOGS" != "true" && "$REPAIR" != "true" && "$DEPS_ONLY" != "true" ]]
+}
+
+should_adopt_installed_compose() {
+  if [[ "$UNINSTALL" == "true" || "$UPGRADE" == "true" || "$RAPID_UPGRADE" == "true" || "$STATUS" == "true" || "$START" == "true" || "$STOP" == "true" || "$RESTART" == "true" || "$LOGS" == "true" || "$REPAIR" == "true" ]]; then
+    return 0
+  fi
+  if running_from_local_checkout; then
+    return 0
+  fi
+  return 1
+}
+
 prompt_default() {
   local label="$1"
   local current_value="$2"
@@ -2118,6 +2136,15 @@ docker_compose_plugin_ready() {
   eval "$DOCKER_BIN compose version" >/dev/null 2>&1
 }
 
+docker_buildx_plugin_ready() {
+  command -v docker >/dev/null 2>&1 || return 1
+  eval "$DOCKER_BIN buildx version" >/dev/null 2>&1
+}
+
+docker_modern_compose_stack_ready() {
+  docker_compose_plugin_ready && docker_buildx_plugin_ready
+}
+
 source_build_requires_modern_compose() {
   local dir="${1:-$WORK_DIR}"
   local dockerfile="${dir}/Dockerfile"
@@ -2137,9 +2164,13 @@ ensure_supported_compose_backend() {
     echo "Docker Compose not found."
     exit 1
   fi
-  if [[ "$backend" == "docker-compose" ]] && source_build_requires_modern_compose "$dir"; then
+  if source_build_requires_modern_compose "$dir" && { [[ "$backend" == "docker-compose" ]] || ! docker_buildx_plugin_ready; }; then
     echo "This WolfBBS app checkout needs the modern 'docker compose' plugin with Buildx."
-    echo "The legacy 'docker-compose' binary cannot build this source checkout safely."
+    if [[ "$backend" == "docker-compose" ]]; then
+      echo "The legacy 'docker-compose' binary cannot build this source checkout safely."
+    else
+      echo "Docker Compose is available, but the Buildx plugin is still missing."
+    fi
     if is_macos; then
       echo "Fix: rerun the installer so it can install and wire docker-compose + docker-buildx via Homebrew."
     else
@@ -2395,10 +2426,14 @@ ensure_compose_runtime() {
   if is_macos; then
     ensure_brew
     ensure_macos_docker_cli_plugins
-    if docker_compose_plugin_ready; then
+    if docker_modern_compose_stack_ready; then
       return
     fi
-    log "Docker Compose not found; installing compose runtime."
+    if docker_compose_plugin_ready; then
+      log "Docker Compose is present but Buildx is missing; repairing compose runtime."
+    else
+      log "Docker Compose not found; installing compose runtime."
+    fi
     if [[ "$DRY_RUN" == "true" ]]; then
       log "DRY-RUN: would install Docker Compose runtime"
       log "DRY-RUN: would install docker-buildx and wire Docker CLI plugins"
@@ -2406,28 +2441,33 @@ ensure_compose_runtime() {
     fi
     run "brew install docker-compose docker-buildx"
     ensure_macos_docker_cli_plugins
-    if docker_compose_plugin_ready; then
+    if docker_modern_compose_stack_ready; then
       return
     fi
-    echo "Docker Compose plugin still unavailable after install attempt."
+    echo "Docker Compose/Buildx plugins are still unavailable after the install attempt."
     echo "Expected Docker CLI plugins in ~/.docker/cli-plugins or Homebrew's cli-plugins directory."
     exit 1
   else
-    if [[ -n "$(compose_cmd)" ]]; then
+    if docker_modern_compose_stack_ready; then
       return
     fi
-    log "Docker Compose not found; installing compose runtime."
+    if [[ -n "$(compose_cmd)" ]]; then
+      log "Docker Compose is present but Buildx is missing; repairing compose runtime."
+    else
+      log "Docker Compose not found; installing compose runtime."
+    fi
     if [[ "$DRY_RUN" == "true" ]]; then
       log "DRY-RUN: would install Docker Compose runtime"
+      log "DRY-RUN: would install Docker Buildx runtime"
       return
     fi
     case "$PKG_MGR" in
       apt)
         run_root_retry 3 3 "apt-get update"
-        run_root_retry 3 3 "apt-get install -y docker-compose-plugin"
+        run_root_retry 3 3 "apt-get install -y docker-buildx-plugin docker-compose-plugin"
         ;;
       dnf|yum)
-        run_root_retry 3 3 "${PKG_MGR} -y install docker-compose-plugin"
+        run_root_retry 3 3 "${PKG_MGR} -y install docker-buildx-plugin docker-compose-plugin"
         ;;
       pacman)
         run_root_retry 3 3 "pacman -Sy --noconfirm docker-compose"
@@ -2438,8 +2478,8 @@ ensure_compose_runtime() {
       ;;
     esac
   fi
-  if [[ -z "$(compose_cmd)" ]]; then
-    echo "Docker Compose still unavailable after install attempt."
+  if ! docker_modern_compose_stack_ready; then
+    echo "Docker Compose/Buildx runtime is still unavailable after the install attempt."
     exit 1
   fi
 }
@@ -4159,14 +4199,14 @@ main() {
   fi
 
   compose_file="$(find_compose_file || true)"
-  if [[ -z "$compose_file" ]]; then
+  if [[ -z "$compose_file" ]] && should_adopt_installed_compose; then
     adopt_installed_compose_if_present || true
   fi
   if [[ -n "$compose_file" ]]; then
     WORK_DIR="$(dirname "$compose_file")"
   fi
 
-  if [[ "$UNINSTALL" != "true" && "$UPGRADE" != "true" && "$RAPID_UPGRADE" != "true" && "$STATUS" != "true" && "$START" != "true" && "$STOP" != "true" && "$RESTART" != "true" && "$LOGS" != "true" && "$REPAIR" != "true" && "$DEPS_ONLY" != "true" ]]; then
+  if is_direct_install_mode; then
     if [[ -z "$compose_file" ]]; then
       ensure_compose_file
     fi
