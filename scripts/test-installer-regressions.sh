@@ -182,8 +182,8 @@ EOF
       "installer should normalize macOS docker socket mounts to /var/run/docker.sock"
     assert_not_contains "${prefix_socket}/.env" ".colima/docker.sock" \
       "installer should not persist host-side colima socket paths into runtime env"
-    rm -f "${installer_dir}/docker-compose.yml"
   fi
+  rm -f "${installer_dir}/docker-compose.yml"
 
   local prefix_uninstall="${TMP_WORK}/WolfBBSCase/InstallA"
   mkdir -p "${prefix_uninstall}/app"
