@@ -14,7 +14,7 @@ WolfBBS gives you classic BBS texture with a modern operator control plane and t
 
 Quick links:
 - [Install now](#quick-install-linux)
-- [Release v2.1.6 notes](docs/releases/v2.1.6.md)
+- [Release v2.1.7 notes](docs/releases/v2.1.7.md)
 - [Screenshot showcase](docs/SHOWCASE.md)
 - [Feature datasheet](docs/DATASHEET.md)
 - [First 30 minutes as sysop](docs/FIRST_30_MINUTES.md)
@@ -29,10 +29,10 @@ Quick links:
 
 ## Current Release Status
 
-WolfBBS is currently shipped as `v2.1.6` with:
+WolfBBS is currently shipped as `v2.1.7` with:
 
-- clean package generation via `scripts/package-dist.sh --clean --version v2.1.6`
-- checksum + manifest output per bundle under `dist/v2.1.6/`
+- clean package generation via `scripts/package-dist.sh --clean --version v2.1.7`
+- checksum + manifest output per bundle under `dist/v2.1.7/`
 - full acceptance validation (`go test`, verifier fast/smoke, automated manual acceptance)
 - one-command readiness validation via `scripts/feature-complete.sh`
 - a simplified web shell with grouped status/tools menus, compact legacy nav rails, and lower-noise dense pages
@@ -193,10 +193,10 @@ bash install.sh --yes
 
 The paste-and-go bootstrap path now aims for the same bundle-first experience. It should not need `git` for a normal install.
 
-Build clean `v2.1.6` distro bundles locally:
+Build clean `v2.1.7` distro bundles locally:
 
 ```bash
-scripts/package-dist.sh --clean --version v2.1.6 \
+scripts/package-dist.sh --clean --version v2.1.7 \
   --platform linux/amd64 --platform linux/arm64 \
   --platform darwin/amd64 --platform darwin/arm64
 ```
