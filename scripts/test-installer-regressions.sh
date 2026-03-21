@@ -161,27 +161,29 @@ EOF
   assert_not_contains "$slug_check" ".git" \
     "repo slug parsing should not leak .git into release bundle URLs"
 
-  local prefix_socket="${TMP_WORK}/WolfBBSCase/SocketInstall"
-  (
-    cd "$installer_dir"
-    PATH="${fake_bin}:${PATH}" \
-    HOME="${installer_dir}/home" \
-    DOCKER_HOST="unix://${installer_dir}/home/.colima/docker.sock" \
-    WOLFBBS_SKIP_SPACE_CHECK=1 \
-    WOLFBBS_FAKE_DOCKER_LOG="$docker_log" \
-    WOLFBBS_FAKE_COLIMA_LOG="$colima_log" \
-    bash ./install.sh --yes --prefix "$prefix_socket" \
-      --ssh-port "$test_ssh_port" \
-      --web-port "$test_web_port" \
-      --irc-port "$test_irc_port" \
-      --irc-tls-port "$test_irc_tls_port" \
-      --mailin-port "$test_mailin_port"
-  ) >"$out_file" 2>&1
-  assert_contains "${prefix_socket}/.env" "WOLFBBS_DOCKER_SOCKET='/var/run/docker.sock'" \
-    "installer should normalize macOS docker socket mounts to /var/run/docker.sock"
-  assert_not_contains "${prefix_socket}/.env" ".colima/docker.sock" \
-    "installer should not persist host-side colima socket paths into runtime env"
-  rm -f "${installer_dir}/docker-compose.yml"
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    local prefix_socket="${TMP_WORK}/WolfBBSCase/SocketInstall"
+    (
+      cd "$installer_dir"
+      PATH="${fake_bin}:${PATH}" \
+      HOME="${installer_dir}/home" \
+      DOCKER_HOST="unix://${installer_dir}/home/.colima/docker.sock" \
+      WOLFBBS_SKIP_SPACE_CHECK=1 \
+      WOLFBBS_FAKE_DOCKER_LOG="$docker_log" \
+      WOLFBBS_FAKE_COLIMA_LOG="$colima_log" \
+      bash ./install.sh --yes --prefix "$prefix_socket" \
+        --ssh-port "$test_ssh_port" \
+        --web-port "$test_web_port" \
+        --irc-port "$test_irc_port" \
+        --irc-tls-port "$test_irc_tls_port" \
+        --mailin-port "$test_mailin_port"
+    ) >"$out_file" 2>&1
+    assert_contains "${prefix_socket}/.env" "WOLFBBS_DOCKER_SOCKET='/var/run/docker.sock'" \
+      "installer should normalize macOS docker socket mounts to /var/run/docker.sock"
+    assert_not_contains "${prefix_socket}/.env" ".colima/docker.sock" \
+      "installer should not persist host-side colima socket paths into runtime env"
+    rm -f "${installer_dir}/docker-compose.yml"
+  fi
 
   local prefix_uninstall="${TMP_WORK}/WolfBBSCase/InstallA"
   mkdir -p "${prefix_uninstall}/app"
