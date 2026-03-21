@@ -76,6 +76,7 @@ WIZARD_MENU_ENABLE=""
 WIZARD_TERM_ENCODING=""
 USED_INSTALLER_CONFIG_FLAGS=false
 AUTO_OPEN_ADVANCED_INSTALL=false
+ROOT_WARNING_PRINTED=false
 
 init_log_file() {
   local candidate=""
@@ -198,6 +199,16 @@ toggle_bool_flag() {
     return
   fi
   printf '%s' "true"
+}
+
+announce_stage() {
+  local title="$1"
+  local detail="${2:-}"
+  echo
+  echo "==> ${title}"
+  if [[ -n "$detail" ]]; then
+    echo "    ${detail}"
+  fi
 }
 
 bool_word() {
@@ -666,6 +677,7 @@ write_launch_brief() {
   local scores_url="http://${host}:${WEB_PORT}/scores"
   local out_file=""
 
+  host="$(resolve_display_host "$host")"
   out_file="$(launch_brief_path)"
   docs_root="$(docs_root_path || true)"
 
@@ -911,6 +923,7 @@ print_first_login_wizard() {
       bbs_name="$env_name"
     fi
   fi
+  host="$(resolve_display_host "$host")"
   docs_root="${WORK_DIR}/docs"
   start_here_doc="${docs_root}/START_HERE.md"
   ops_doc="${docs_root}/OPERATIONS.md"
@@ -979,6 +992,7 @@ print_install_summary() {
       bbs_name="$env_name"
     fi
   fi
+  host="$(resolve_display_host "$host")"
   write_launch_brief "$host" "$bbs_name" "${BOOTSTRAP_ADMIN_HANDLE:-sysop}"
   echo "WolfBBS installation complete."
   echo "BBS: ${bbs_name}"
@@ -1477,12 +1491,12 @@ resolve_repo_url() {
 sync_managed_app_dir() {
   local checkout_dir="$1"
 
-  if [[ -d "$checkout_dir/.git" ]] && has_working_git; then
-    run_retry 3 3 "git -C '$checkout_dir' pull --ff-only"
+  if download_release_bundle "$REPO_URL" "$checkout_dir"; then
     return 0
   fi
 
-  if download_release_bundle "$REPO_URL" "$checkout_dir"; then
+  if [[ -d "$checkout_dir/.git" ]] && has_working_git; then
+    run_retry 3 3 "git -C '$checkout_dir' pull --ff-only"
     return 0
   fi
 
@@ -1628,8 +1642,63 @@ init_install_dir() {
 
 ensure_rootless_permissions() {
   if [[ "$(id -u)" -eq 0 ]]; then
+    if [[ "$ROOT_WARNING_PRINTED" == "true" ]]; then
+      return
+    fi
+    ROOT_WARNING_PRINTED=true
     echo "Warning: running as root. Running as a normal user is preferred."
   fi
+}
+
+is_local_host() {
+  local host
+  host="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+  case "$host" in
+    ""|localhost|127.0.0.1|::1|0.0.0.0)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+detect_primary_ip() {
+  local ip=""
+  if is_linux; then
+    if command -v ip >/dev/null 2>&1; then
+      ip="$(ip route get 1.1.1.1 2>/dev/null | awk '/src/ {for (i = 1; i <= NF; i++) if ($i == "src") {print $(i + 1); exit}}')"
+    fi
+    if [[ -z "$ip" ]] && command -v hostname >/dev/null 2>&1; then
+      ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    fi
+  elif is_macos; then
+    local iface=""
+    iface="$(route -n get default 2>/dev/null | awk '/interface:/{print $2; exit}')"
+    if [[ -n "$iface" ]] && command -v ipconfig >/dev/null 2>&1; then
+      ip="$(ipconfig getifaddr "$iface" 2>/dev/null || true)"
+    fi
+  fi
+  if [[ -n "$ip" ]] && ! is_local_host "$ip"; then
+    printf '%s' "$ip"
+  fi
+}
+
+resolve_display_host() {
+  local preferred="${1:-}"
+  local detected_ip=""
+  if [[ -n "$preferred" ]] && ! is_local_host "$preferred"; then
+    printf '%s' "$preferred"
+    return
+  fi
+  detected_ip="$(detect_primary_ip || true)"
+  if [[ -n "$detected_ip" ]]; then
+    printf '%s' "$detected_ip"
+    return
+  fi
+  if [[ -n "$preferred" ]]; then
+    printf '%s' "$preferred"
+    return
+  fi
+  printf '%s' "localhost"
 }
 
 random_secret() {
@@ -1699,50 +1768,152 @@ check_macos_prereqs() {
   if ! is_macos; then
     return
   fi
+  if command -v xcode-select >/dev/null 2>&1 && xcode-select -p >/dev/null 2>&1; then
+    return
+  fi
+  echo "macOS needs Apple's Command Line Tools before WolfBBS can finish setup."
   if ! command -v xcode-select >/dev/null 2>&1; then
-    echo "xcode-select is not available. Install Xcode Command Line Tools first:"
+    echo "Please install them with:"
+    echo "  xcode-select --install"
+    echo "Then rerun this installer."
+    exit 1
+  fi
+  if [[ "$NON_INTERACTIVE" == "true" ]]; then
+    echo "Run this first, then rerun the installer:"
     echo "  xcode-select --install"
     exit 1
   fi
-  if ! xcode-select -p >/dev/null 2>&1; then
-    echo "Xcode Command Line Tools are required on macOS."
-    echo "Run: xcode-select --install"
+  if ! confirm "Open the Command Line Tools installer now and continue automatically when it finishes?" Y; then
+    echo "Run this first, then rerun the installer:"
+    echo "  xcode-select --install"
     exit 1
   fi
+  echo "Opening Apple's Command Line Tools installer..."
+  xcode-select --install >/dev/null 2>&1 || true
+  echo "Finish the Apple installer window. I'll keep checking and continue automatically when it's ready."
+  local waited=0
+  local max_wait="${WOLFBBS_MACOS_CLT_WAIT_SECONDS:-600}"
+  while (( waited < max_wait )); do
+    if xcode-select -p >/dev/null 2>&1; then
+      echo "Command Line Tools are ready."
+      return
+    fi
+    sleep 5
+    waited=$((waited + 5))
+  done
+  echo "Still waiting on Command Line Tools."
+  echo "Finish the Apple installer, then rerun this command."
+  exit 1
+}
+
+port_in_use() {
+  local port="$1"
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltn | awk '{print $4}' | grep -q ":$port$"
+    return
+  fi
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -iTCP -sTCP:LISTEN -P -n | grep -qE "[:.]${port}[[:space:]]"
+    return
+  fi
+  if command -v nc >/dev/null 2>&1; then
+    nc -z 127.0.0.1 "$port" >/dev/null 2>&1
+    return
+  fi
+  return 1
+}
+
+port_label_for_var() {
+  case "$1" in
+    SSH_PORT) printf '%s' "SSH BBS" ;;
+    WEB_PORT) printf '%s' "Web UI" ;;
+    IRC_PORT) printf '%s' "IRC" ;;
+    IRC_TLS_PORT) printf '%s' "IRC TLS" ;;
+    MAILIN_PORT) printf '%s' "Mail Ingest" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+port_flag_for_var() {
+  case "$1" in
+    SSH_PORT) printf '%s' "--ssh-port" ;;
+    WEB_PORT) printf '%s' "--web-port" ;;
+    IRC_PORT) printf '%s' "--irc-port" ;;
+    IRC_TLS_PORT) printf '%s' "--irc-tls-port" ;;
+    MAILIN_PORT) printf '%s' "--mailin-port" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+port_reserved_in_installer() {
+  local candidate="$1"
+  local skip_var="${2:-}"
+  local var_name=""
+  local var_value=""
+  for var_name in SSH_PORT WEB_PORT IRC_PORT IRC_TLS_PORT MAILIN_PORT; do
+    if [[ "$var_name" == "$skip_var" ]]; then
+      continue
+    fi
+    var_value="$(eval "printf '%s' \"\${${var_name}}\"")"
+    if [[ "$var_value" == "$candidate" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+find_next_free_port() {
+  local current="$1"
+  local skip_var="${2:-}"
+  local candidate="$current"
+  while (( candidate < 65535 )); do
+    candidate=$((candidate + 1))
+    if port_reserved_in_installer "$candidate" "$skip_var"; then
+      continue
+    fi
+    if ! port_in_use "$candidate"; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  return 1
 }
 
 require_ports_free() {
-  local ports=("$@")
-  local port
-  for port in "${ports[@]}"; do
+  local port_vars=("$@")
+  local port_var=""
+  local port=""
+  local label=""
+  local next_port=""
+  local flag=""
+  for port_var in "${port_vars[@]}"; do
+    port="$(eval "printf '%s' \"\${${port_var}}\"")"
     if [[ "$DRY_RUN" == "true" ]]; then
-      log "DRY-RUN: would verify tcp port $port is free"
+      log "DRY-RUN: would verify tcp port ${port} is free for $(port_label_for_var "$port_var")"
       continue
     fi
-    local in_use=""
-    if command -v ss >/dev/null 2>&1; then
-      if ss -ltn | awk '{print $4}' | grep -q ":$port$"; then
-        in_use=1
-      fi
-    elif command -v lsof >/dev/null 2>&1; then
-      if lsof -iTCP -sTCP:LISTEN -P -n | grep -qE "[:.]${port}[[:space:]]"; then
-        in_use=1
-      fi
-    elif command -v nc >/dev/null 2>&1; then
-      if nc -z 127.0.0.1 "$port" >/dev/null 2>&1; then
-        in_use=1
-      fi
+    if ! port_in_use "$port"; then
+      continue
     fi
-    if [[ -n "$in_use" ]]; then
-      echo "Port $port is in use."
-      if [[ "$NON_INTERACTIVE" == "true" ]]; then
-        echo "Use --yes with different ports or stop the service on that port."
-        exit 1
+    label="$(port_label_for_var "$port_var")"
+    flag="$(port_flag_for_var "$port_var")"
+    next_port="$(find_next_free_port "$port" "$port_var" || true)"
+    echo "${label} port ${port} is already in use."
+    if [[ "$NON_INTERACTIVE" == "true" ]]; then
+      if [[ -n "$next_port" ]]; then
+        echo "Rerun with ${flag} ${next_port}, or stop the service using ${port}."
+      else
+        echo "Choose a free port with ${flag}, or stop the service using ${port}."
       fi
-      if ! confirm "Continue anyway?"; then
-        exit 1
-      fi
+      exit 1
     fi
+    if [[ -n "$next_port" ]] && confirm "Use ${next_port} for ${label} instead?" Y; then
+      eval "${port_var}=${next_port}"
+      echo "${label} will use ${next_port}."
+      continue
+    fi
+    echo "Stop the service using ${port}, or rerun with ${flag} <port>."
+    exit 1
   done
 }
 
@@ -1815,6 +1986,7 @@ ensure_brew() {
   if command -v brew >/dev/null 2>&1; then
     return
   fi
+  check_macos_prereqs
   if [[ "$INSTALL_BREW" != "true" ]]; then
     if [[ "$NON_INTERACTIVE" != "true" ]] && confirm "Homebrew not found. Install Homebrew now?"; then
       INSTALL_BREW=true
@@ -1925,9 +2097,68 @@ compose_cmd() {
   echo ""
 }
 
+docker_compose_plugin_ready() {
+  command -v docker >/dev/null 2>&1 || return 1
+  eval "$DOCKER_BIN compose version" >/dev/null 2>&1
+}
+
+brew_cli_plugin_path() {
+  local formula="$1"
+  local plugin_name="$2"
+  local formula_prefix=""
+  local brew_prefix=""
+
+  formula_prefix="$(brew --prefix "$formula" 2>/dev/null || true)"
+  if [[ -n "$formula_prefix" && -x "${formula_prefix}/lib/docker/cli-plugins/${plugin_name}" ]]; then
+    printf '%s' "${formula_prefix}/lib/docker/cli-plugins/${plugin_name}"
+    return 0
+  fi
+
+  brew_prefix="$(brew --prefix 2>/dev/null || true)"
+  if [[ -n "$brew_prefix" && -x "${brew_prefix}/lib/docker/cli-plugins/${plugin_name}" ]]; then
+    printf '%s' "${brew_prefix}/lib/docker/cli-plugins/${plugin_name}"
+    return 0
+  fi
+  return 1
+}
+
+ensure_macos_docker_cli_plugins() {
+  if ! is_macos; then
+    return
+  fi
+  if ! command -v brew >/dev/null 2>&1; then
+    return
+  fi
+
+  local plugin_dir="${HOME}/.docker/cli-plugins"
+  local compose_plugin=""
+  local buildx_plugin=""
+
+  compose_plugin="$(brew_cli_plugin_path docker-compose docker-compose || true)"
+  buildx_plugin="$(brew_cli_plugin_path docker-buildx docker-buildx || true)"
+
+  if [[ -z "$compose_plugin" && -z "$buildx_plugin" ]]; then
+    return
+  fi
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "DRY-RUN: would link Docker CLI plugins into ${plugin_dir}"
+    return
+  fi
+
+  mkdir -p "$plugin_dir"
+  if [[ -n "$compose_plugin" ]]; then
+    ln -sf "$compose_plugin" "${plugin_dir}/docker-compose"
+  fi
+  if [[ -n "$buildx_plugin" ]]; then
+    ln -sf "$buildx_plugin" "${plugin_dir}/docker-buildx"
+  fi
+}
+
 install_colima_stack() {
   ensure_brew
-  run_retry 3 3 "brew install docker docker-compose colima"
+  run_retry 3 3 "brew install docker docker-compose docker-buildx colima"
+  ensure_macos_docker_cli_plugins
   if [[ "$DRY_RUN" == "true" ]]; then
     log "DRY-RUN: would start Colima runtime"
     return
@@ -1940,7 +2171,7 @@ install_colima_stack() {
 show_macos_docker_manual_steps() {
   echo "Install Docker manually, then rerun the installer."
   echo "Recommended Colima path:"
-  echo "  brew install docker docker-compose colima"
+  echo "  brew install docker docker-compose docker-buildx colima"
   echo "  colima start"
   echo "Docker Desktop path:"
   echo "  brew install --cask docker"
@@ -2113,18 +2344,35 @@ ensure_docker_macos() {
 }
 
 ensure_compose_runtime() {
-  if [[ -n "$(compose_cmd)" ]]; then
-    return
-  fi
-  log "Docker Compose not found; installing compose runtime."
-  if [[ "$DRY_RUN" == "true" ]]; then
-    log "DRY-RUN: would install Docker Compose runtime"
-    return
-  fi
   if is_macos; then
     ensure_brew
-    run "brew install docker-compose"
+    ensure_macos_docker_cli_plugins
+    if docker_compose_plugin_ready; then
+      return
+    fi
+    log "Docker Compose not found; installing compose runtime."
+    if [[ "$DRY_RUN" == "true" ]]; then
+      log "DRY-RUN: would install Docker Compose runtime"
+      log "DRY-RUN: would install docker-buildx and wire Docker CLI plugins"
+      return
+    fi
+    run "brew install docker-compose docker-buildx"
+    ensure_macos_docker_cli_plugins
+    if docker_compose_plugin_ready; then
+      return
+    fi
+    echo "Docker Compose plugin still unavailable after install attempt."
+    echo "Expected Docker CLI plugins in ~/.docker/cli-plugins or Homebrew's cli-plugins directory."
+    exit 1
   else
+    if [[ -n "$(compose_cmd)" ]]; then
+      return
+    fi
+    log "Docker Compose not found; installing compose runtime."
+    if [[ "$DRY_RUN" == "true" ]]; then
+      log "DRY-RUN: would install Docker Compose runtime"
+      return
+    fi
     case "$PKG_MGR" in
       apt)
         run_root_retry 3 3 "apt-get update"
@@ -2139,7 +2387,7 @@ ensure_compose_runtime() {
       *)
         echo "Unsupported package manager for compose install."
         exit 1
-        ;;
+      ;;
     esac
   fi
   if [[ -z "$(compose_cmd)" ]]; then
@@ -2762,6 +3010,7 @@ status_view() {
   local snapshot=""
 
   docs_root="$(docs_root_path || true)"
+  status_host="$(resolve_display_host "$status_host")"
   write_launch_brief "$status_host" "$status_name" "${WOLFBBS_BOOTSTRAP_ADMIN_HANDLE:-sysop}"
 
   echo "BBS Name: ${status_name}"
@@ -2858,12 +3107,12 @@ status_view() {
     safety_warn=$((safety_warn + 1))
   fi
   if [[ -n "${env_mode:-}" ]] && [[ "$env_mode" == "600" ]]; then
-    echo "  PASS env permissions: ${env_mode}"
-    safety_lines+=("PASS env permissions: ${env_mode}")
+    echo "  PASS env permissions: ${env_mode} (private)"
+    safety_lines+=("PASS env permissions: ${env_mode} (private)")
     safety_pass=$((safety_pass + 1))
   else
-    echo "  WARN env permissions: ${env_mode:-unknown} (recommended 600)"
-    safety_lines+=("WARN env permissions: ${env_mode:-unknown} (recommended 600)")
+    echo "  WARN env permissions: ${env_mode:-unknown} (recommended 600; run: chmod 600 '${ENV_FILE}')"
+    safety_lines+=("WARN env permissions: ${env_mode:-unknown} (recommended 600; run: chmod 600 '${ENV_FILE}')")
     safety_warn=$((safety_warn + 1))
   fi
   if [[ -f "$compose_file" ]]; then
@@ -2889,9 +3138,8 @@ status_view() {
     safety_lines+=("PASS service snapshot present: $(status_snapshot_path)")
     safety_pass=$((safety_pass + 1))
   else
-    echo "  WARN service snapshot missing: $(status_snapshot_path)"
-    safety_lines+=("WARN service snapshot missing: $(status_snapshot_path)")
-    safety_warn=$((safety_warn + 1))
+    echo "  INFO service snapshot will be written now: $(status_snapshot_path)"
+    safety_lines+=("INFO service snapshot will be written now: $(status_snapshot_path)")
   fi
   local menu_backup_count=0
   if [[ -d "${WORK_DIR}/menus" ]]; then
@@ -3797,7 +4045,6 @@ main() {
   detect_arch
   set_default_prefix
   detect_package_manager
-  check_macos_prereqs
   init_log_file
   print_splash
   show_interactive_action_menu "$args_count"
@@ -3832,9 +4079,11 @@ main() {
 
   ensure_rootless_permissions
 
+  announce_stage "Checking installer dependencies" "Making sure WolfBBS has the local tools it needs."
   ensure_base_prereqs
 
   if [[ "$DEPS_ONLY" == "true" ]]; then
+    announce_stage "Preparing container runtime" "Installing or starting Docker when needed."
     ensure_docker
     echo "Dependencies are installed and docker runtime is ready."
     exit 0
@@ -4033,13 +4282,16 @@ main() {
     exit 1
   fi
 
+  announce_stage "Preparing container runtime" "Installing or starting Docker and Compose when needed."
   ensure_docker
   if [[ "$DRY_RUN" == "false" ]]; then
     require_cmd docker
     require_cmd nc
   fi
+  announce_stage "Checking network ports" "Making sure SSH, web, IRC, and mail ingest can start cleanly."
+  require_ports_free SSH_PORT WEB_PORT IRC_PORT IRC_TLS_PORT MAILIN_PORT
+  announce_stage "Preparing WolfBBS app files" "Resolving the compose stack and managed app directory."
   ensure_compose_file
-  require_ports_free "$SSH_PORT" "$WEB_PORT" "$IRC_PORT" "$MAILIN_PORT"
   init_install_dir
 
   if [[ "$DRY_RUN" == "true" ]]; then
@@ -4062,11 +4314,15 @@ main() {
     fi
   fi
 
+  announce_stage "Writing runtime configuration" "Saving ports, secrets, and the bootstrap SYSOP account."
   write_env_file
   seed_admin_check
+  announce_stage "Starting WolfBBS services" "Building images and bringing the board online."
   docker_compose_up
+  announce_stage "Checking service health" "Verifying web, SSH, IRC, and mail ingest are reachable."
   verify_install
 
+  announce_stage "Opening setup handoff" "Showing the first login steps and setup URLs."
   print_install_summary
 }
 

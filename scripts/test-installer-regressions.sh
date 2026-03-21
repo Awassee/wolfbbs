@@ -175,6 +175,48 @@ EOF
   assert_not_contains "$mac_choice_out" "Install Docker Desktop via Homebrew cask instead?" \
     "macOS docker setup should avoid chaining multiple yes/no prompts"
 
+  local root_warning_out="${TMP_WORK}/root-warning.out"
+  bash -c "set -euo pipefail; source \"\$1\"; id() { echo 0; }; ensure_rootless_permissions; ensure_rootless_permissions" _ "$installer_lib" >"$root_warning_out"
+  if [[ "$(grep -c 'Warning: running as root' "$root_warning_out")" -ne 1 ]]; then
+    fail "root warning should only print once per installer run"
+  fi
+
+  local mac_clt_out="${TMP_WORK}/mac-clt.out"
+  bash -c "set -euo pipefail; source \"\$1\"; NON_INTERACTIVE=false; is_macos() { return 0; }; confirm() { return 0; }; sleep() { :; }; macos_clt_state=missing; xcode-select() { if [[ \"\${1:-}\" == \"--install\" ]]; then macos_clt_state=ready; return 0; fi; if [[ \"\${1:-}\" == \"-p\" ]]; then [[ \"\$macos_clt_state\" == ready ]]; return \$?; fi; return 1; }; check_macos_prereqs; echo MACOS_CLT_STATE=\$macos_clt_state; echo CLT_READY" _ "$installer_lib" >"$mac_clt_out"
+  assert_contains "$mac_clt_out" "Opening Apple's Command Line Tools installer..." \
+    "macOS prereq check should launch the CLT installer when tools are missing"
+  assert_contains "$mac_clt_out" "Command Line Tools are ready." \
+    "macOS prereq check should continue automatically once CLT is ready"
+  assert_contains "$mac_clt_out" "MACOS_CLT_STATE=ready" \
+    "macOS prereq check should mark CLT as ready after the installer runs"
+  assert_contains "$mac_clt_out" "CLT_READY" \
+    "macOS prereq check should return successfully after CLT install"
+
+  local port_reassign_out="${TMP_WORK}/port-reassign.out"
+  bash -c "set -euo pipefail; source \"\$1\"; DRY_RUN=false; NON_INTERACTIVE=false; SSH_PORT=2222; WEB_PORT=8080; IRC_PORT=6667; IRC_TLS_PORT=6697; MAILIN_PORT=8091; confirm() { return 0; }; port_in_use() { [[ \"\$1\" == \"8080\" ]]; }; require_ports_free SSH_PORT WEB_PORT IRC_PORT IRC_TLS_PORT MAILIN_PORT; echo WEB_PORT=\$WEB_PORT" _ "$installer_lib" >"$port_reassign_out"
+  assert_contains "$port_reassign_out" "Web UI port 8080 is already in use." \
+    "installer should explain which service has a port conflict"
+  assert_contains "$port_reassign_out" "Web UI will use 8081." \
+    "installer should offer the next free port automatically"
+  assert_contains "$port_reassign_out" "WEB_PORT=8081" \
+    "installer should update the chosen port when the user accepts the suggestion"
+
+  local mac_compose_runtime_out="${TMP_WORK}/mac-compose-runtime.out"
+  bash -c "set -euo pipefail; source \"\$1\"; DRY_RUN=false; plugin_wire_count=0; is_macos() { return 0; }; ensure_brew() { :; }; docker_compose_plugin_ready() { [[ -f \"${TMP_WORK}/compose-ready\" ]]; }; ensure_macos_docker_cli_plugins() { plugin_wire_count=\$((plugin_wire_count + 1)); if [[ \$plugin_wire_count -ge 2 ]]; then : > \"${TMP_WORK}/compose-ready\"; fi; echo PLUGINS_WIRED_\$plugin_wire_count; }; run() { printf 'RUN:%s\n' \"\$*\"; }; ensure_compose_runtime; echo COMPOSE_RUNTIME_OK" _ "$installer_lib" >"$mac_compose_runtime_out"
+  assert_contains "$mac_compose_runtime_out" "RUN:brew install docker-compose docker-buildx" \
+    "macOS compose runtime should install both compose and buildx"
+  assert_contains "$mac_compose_runtime_out" "PLUGINS_WIRED_2" \
+    "macOS compose runtime should wire Docker CLI plugins after install"
+  assert_contains "$mac_compose_runtime_out" "COMPOSE_RUNTIME_OK" \
+    "macOS compose runtime should succeed once the plugin is ready"
+
+  local bundle_preferred_out="${TMP_WORK}/bundle-preferred.out"
+  bash -c "set -euo pipefail; source \"\$1\"; REPO_URL=https://github.com/Awassee/wolfbbs.git; checkout_dir=\"${TMP_WORK}/managed-app\"; mkdir -p \"\$checkout_dir/.git\"; download_release_bundle() { echo RELEASE_BUNDLE_USED; return 0; }; has_working_git() { echo SHOULD_NOT_PULL >&2; return 0; }; run_retry() { echo GIT_PULL_USED; }; sync_managed_app_dir \"\$checkout_dir\"" _ "$installer_lib" >"$bundle_preferred_out" 2>&1
+  assert_contains "$bundle_preferred_out" "RELEASE_BUNDLE_USED" \
+    "managed app sync should prefer the packaged release bundle over an old git checkout"
+  assert_not_contains "$bundle_preferred_out" "GIT_PULL_USED" \
+    "managed app sync should not pull a git checkout before trying the release bundle"
+
   if [[ "$(uname -s)" == "Darwin" ]]; then
     local prefix_socket="${TMP_WORK}/WolfBBSCase/SocketInstall"
     (
@@ -234,6 +276,12 @@ EOF
     "fresh install should prefer packaged release bundles when no local app files exist"
   assert_contains "$out_file" "DRY-RUN: would fall back to source archive or git only if no matching release bundle is available" \
     "fresh install should explain its fallback behavior"
+  assert_contains "$out_file" "==> Checking installer dependencies" \
+    "fresh install should show a guided dependency bootstrap stage"
+  assert_contains "$out_file" "==> Preparing container runtime" \
+    "fresh install should show a guided container runtime stage"
+  assert_contains "$out_file" "==> Checking network ports" \
+    "fresh install should show a guided port check stage"
   assert_contains "$out_file" "${prefix_fresh}/app/docker-compose.yml" \
     "fresh install dry-run should resolve managed app dir compose path"
 
@@ -299,6 +347,8 @@ EOF
     --yes --status --prefix "$prefix_rapid"
   assert_contains "$out_file" "WolfBBS install status: ${prefix_rapid}" \
     "status should render install summary"
+  assert_not_contains "$out_file" "WARN service snapshot missing" \
+    "status should not warn about a missing snapshot before it writes a fresh one"
   assert_contains "$docker_log" "compose -f ${prefix_rapid}/app/docker-compose.yml --env-file ${prefix_rapid}/.env ps" \
     "status should inspect compose ps with resolved env-file"
 
