@@ -1,4 +1,0 @@
-cec12304e62fdb6f58249c2b097a84eeabc8ba7d39900f4b56ef920e504846a4  wolfbbs_v2.0.3_linux_amd64.tar.gz
-614fe068d6d158279870e5a3c33bc800fdadada07b2e6aec59c2055e05cd681c  wolfbbs_v2.0.3_linux_arm64.tar.gz
-fd48b785962871062a7356565578616251a3633be9bfff086c342f3decb2ff1c  wolfbbs_v2.0.3_darwin_amd64.tar.gz
-76ad370acb2e206600b3b4aa4e935581810765afc2e1b07a254dba2a66fa1629  wolfbbs_v2.0.3_darwin_arm64.tar.gz
