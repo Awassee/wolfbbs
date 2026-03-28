@@ -33,6 +33,7 @@ func TestBuildSettingsMCIViewDefault(t *testing.T) {
 		t.Fatalf("expected controls, got %d", len(normalized.Controls))
 	}
 	foundOutputMode := false
+	foundPassword := false
 	for _, control := range normalized.Controls {
 		if control.ID == "output_mode" {
 			foundOutputMode = true
@@ -40,9 +41,15 @@ func TestBuildSettingsMCIViewDefault(t *testing.T) {
 				t.Fatalf("expected output mode label %q, got %+v", outputModePlain.Label(), control)
 			}
 		}
+		if control.ID == "password" {
+			foundPassword = true
+		}
 	}
 	if !foundOutputMode {
 		t.Fatal("expected output mode control")
+	}
+	if !foundPassword {
+		t.Fatal("expected password control")
 	}
 }
 

@@ -261,8 +261,10 @@ const modernUIScriptTag = `
   }
 
   const navRows = Array.from(document.querySelectorAll("p")).filter((p) => p.querySelectorAll("a").length >= 3 && p.textContent.includes("|"));
-  navRows.forEach((row) => {
+  navRows.forEach((row, index) => {
     row.classList.add("wolfbbs-nav-row");
+    row.dataset.wolfbbsNavLevel = index === 0 ? "primary" : "secondary";
+    row.dataset.wolfbbsNavCount = String(row.querySelectorAll("a[href]").length);
     row.querySelectorAll("a[href]").forEach((anchor) => {
       const href = anchor.getAttribute("href");
       if (isCurrentNav(href)) {
@@ -278,14 +280,15 @@ const modernUIScriptTag = `
         label: (anchor.textContent || "").replace(/\s+/g, " ").trim(),
         active: anchor.classList.contains("wolfbbs-nav-active")
       })).filter((item) => item.href && item.label);
-      if (items.length <= 8) {
+      const maxVisible = row.dataset.wolfbbsNavLevel === "secondary" ? 3 : 5;
+      if (items.length <= maxVisible + 1) {
         row.dataset.wolfbbsNavCompact = "1";
         return;
       }
       const keep = [];
       const seen = new Set();
       items.forEach((item, index) => {
-        const mustKeep = index < 5 || item.active;
+        const mustKeep = index < maxVisible || item.active;
         if (!mustKeep) return;
         const key = item.href + "::" + item.label;
         if (seen.has(key)) return;
@@ -376,6 +379,27 @@ const modernUIScriptTag = `
   document.body.setAttribute("data-route-profile", currentRouteProfile.dense ? "dense" : "standard");
   if (currentRouteProfile.visualRegression) {
     document.body.setAttribute("data-visual-regression", "1");
+  }
+
+  function routeMatchesPrefix(pathname, prefixes) {
+    return (prefixes || []).some((prefix) => pathname === prefix || pathname.indexOf(prefix + "/") === 0);
+  }
+
+  function shouldMountPrimerSurface(pathname) {
+    return routeMatchesPrefix(normalizePath(pathname || currentRoute || "/"), [
+      "/start",
+      "/help",
+      "/connect",
+      "/tour"
+    ]);
+  }
+
+  function shouldMountRouteScaffolding(pathname) {
+    return routeMatchesPrefix(normalizePath(pathname || currentRoute || "/"), [
+      "/start",
+      "/help",
+      "/connect"
+    ]);
   }
 
   function routeLabel(kind) {
@@ -1309,7 +1333,21 @@ const modernUIScriptTag = `
       panel.appendChild(button);
       return button;
     }
-    const statusPanel = buildMenu("Status", "Connection, session health, and focus mode.");
+    function mountMenuGroup(panel, title) {
+      const group = document.createElement("section");
+      group.className = "wolfbbs-pref-menu-group";
+      if (title) {
+        const heading = document.createElement("strong");
+        heading.className = "wolfbbs-pref-menu-group-title";
+        heading.textContent = title;
+        group.appendChild(heading);
+      }
+      panel.appendChild(group);
+      return group;
+    }
+    const morePanel = buildMenu("More", "Display, session, and route tools live here when you need them.");
+    const helpPanel = buildMenu("Help", "Guides, shortcuts, and reporting.");
+    const statusPanel = mountMenuGroup(morePanel, "Session");
     const statusGrid = document.createElement("div");
     statusGrid.className = "wolfbbs-status-grid";
     statusPanel.appendChild(statusGrid);
@@ -1318,10 +1356,9 @@ const modernUIScriptTag = `
     mountTelemetryChip(statusGrid);
     mountSessionDurationChip(statusGrid);
     mountSessionTrailChip(statusGrid);
-    const viewPanel = buildMenu("View", "Theme, layout, motion, and reading comfort.");
-    const routePanel = buildMenu("Route", "Save, pin, and share where you are.");
-    const toolsPanel = buildMenu("Tools", "Notes, diagnostics, reminders, and operator utilities.");
-    const helpPanel = buildMenu("Help", "Guides, shortcuts, and bug capture.");
+    const viewPanel = mountMenuGroup(morePanel, "Display");
+    const routePanel = mountMenuGroup(morePanel, "This page");
+    const toolsPanel = mountMenuGroup(morePanel, "Utilities");
 
     const profileKey = "wolfbbs:ui:profile:v1";
     let profileMode = String(readJSON(profileKey, "balanced") || "balanced");
@@ -2270,7 +2307,7 @@ const modernUIScriptTag = `
     };
     renderActionDock();
   }
-  mountActionDock();
+  // The floating action dock created too much competing chrome for normal routes.
 
   const goalCoachRegistry = {
     "/start": [
@@ -3973,7 +4010,7 @@ const modernUIScriptTag = `
     const routeActions = actionsForRoute(currentRoute).slice(0, currentRouteProfile.dense ? 2 : 3);
 
     // 1-4: route compass, context path, route actions, and surface metrics.
-    if (!document.querySelector(".wolfbbs-ux20-compass")) {
+    if (shouldMountRouteScaffolding(currentRoute) && !document.querySelector(".wolfbbs-ux20-compass")) {
       const compass = document.createElement("section");
       compass.className = "wolfbbs-ux20-compass";
       const left = document.createElement("div");
@@ -4020,7 +4057,7 @@ const modernUIScriptTag = `
     }
 
     // 5-6: end-of-page next-step guide with route actions and trail.
-    if (main && !main.querySelector(".wolfbbs-ux20-next") && !currentRouteProfile.dense) {
+    if (shouldMountRouteScaffolding(currentRoute) && main && !main.querySelector(".wolfbbs-ux20-next") && !currentRouteProfile.dense) {
       const next = document.createElement("section");
       next.className = "wolfbbs-ux20-next";
       const titleNode = document.createElement("strong");
@@ -4092,81 +4129,58 @@ const modernUIScriptTag = `
       }
     }
 
-    // 10-12: form completion meter, required markers, and quick reset helper.
-    Array.from(document.querySelectorAll("form")).forEach((form) => {
-      if (form.closest("table")) return;
-      const fields = Array.from(form.querySelectorAll("input[name], textarea[name], select[name]")).filter((field) => {
-        const type = (field.getAttribute("type") || "").toLowerCase();
-        if (type === "hidden" || type === "submit" || type === "button" || type === "file" || type === "password") return false;
-        return !field.disabled;
-      });
-      if (fields.length < 3) return;
-      let requiredFields = fields.filter((field) => field.hasAttribute("required"));
-      if (!requiredFields.length) {
-        requiredFields = fields.filter((field) => {
-          const tag = field.tagName.toLowerCase();
+    // 10-12: form scaffolding belongs only on primer routes, not dense product screens.
+    if (shouldMountRouteScaffolding(currentRoute)) {
+      Array.from(document.querySelectorAll("form")).forEach((form) => {
+        if (form.closest("table")) return;
+        const fields = Array.from(form.querySelectorAll("input[name], textarea[name], select[name]")).filter((field) => {
           const type = (field.getAttribute("type") || "").toLowerCase();
-          return tag === "textarea" || tag === "select" || ["text", "email", "url", "search", "number", "tel"].includes(type || "text");
-        }).slice(0, Math.min(4, fields.length));
-      }
-      if (!requiredFields.length) return;
-      requiredFields.forEach((field) => {
-        const label = field.closest("label") || (field.id ? form.querySelector('label[for="' + field.id + '"]') : null);
-        if (!label || label.querySelector(".wolfbbs-ux20-required")) return;
-        const marker = document.createElement("span");
-        marker.className = "wolfbbs-ux20-required";
-        marker.textContent = "*";
-        label.appendChild(marker);
-      });
-      if (form.dataset.wolfbbsUx20Meter !== "1") {
-        form.dataset.wolfbbsUx20Meter = "1";
-        const meterRow = document.createElement("div");
-        meterRow.className = "wolfbbs-ux20-form-meter";
-        const text = document.createElement("span");
-        const meter = document.createElement("div");
-        meter.className = "wolfbbs-ux20-meter";
-        const fill = document.createElement("b");
-        meter.appendChild(fill);
-        meterRow.appendChild(text);
-        meterRow.appendChild(meter);
-        form.insertBefore(meterRow, form.firstChild);
-        const sync = () => {
-          const done = requiredFields.filter((field) => {
-            if (field.type === "checkbox" || field.type === "radio") return field.checked;
-            return String(field.value || "").trim().length > 0;
-          }).length;
-          const pct = Math.round((done / requiredFields.length) * 100);
-          text.textContent = "Required completion " + done + "/" + requiredFields.length;
-          fill.style.width = pct + "%";
-        };
-        requiredFields.forEach((field) => field.addEventListener("input", sync));
-        requiredFields.forEach((field) => field.addEventListener("change", sync));
-        sync();
-      }
-      if (fields.length >= 4 && !form.querySelector('[data-ux20-reset="1"]')) {
-        const reset = document.createElement("button");
-        reset.type = "button";
-        reset.className = "wolfbbs-form-secondary";
-        reset.setAttribute("data-ux20-reset", "1");
-        reset.textContent = "Reset fields";
-        reset.addEventListener("click", () => {
-          fields.forEach((field) => {
-            if (field.type === "checkbox" || field.type === "radio") {
-              field.checked = false;
-            } else if (field.tagName.toLowerCase() === "select") {
-              field.selectedIndex = 0;
-            } else {
-              field.value = "";
-            }
-            field.dispatchEvent(new Event("input", { bubbles: true }));
-            field.dispatchEvent(new Event("change", { bubbles: true }));
-          });
-          trackTelemetry("ux20:form-reset");
-          showToast("Form fields reset", "ok");
+          if (type === "hidden" || type === "submit" || type === "button" || type === "file" || type === "password") return false;
+          return !field.disabled;
         });
-        form.appendChild(reset);
-      }
-    });
+        if (fields.length < 3) return;
+        let requiredFields = fields.filter((field) => field.hasAttribute("required"));
+        if (!requiredFields.length) {
+          requiredFields = fields.filter((field) => {
+            const tag = field.tagName.toLowerCase();
+            const type = (field.getAttribute("type") || "").toLowerCase();
+            return tag === "textarea" || tag === "select" || ["text", "email", "url", "search", "number", "tel"].includes(type || "text");
+          }).slice(0, Math.min(4, fields.length));
+        }
+        if (!requiredFields.length) return;
+        requiredFields.forEach((field) => {
+          const label = field.closest("label") || (field.id ? form.querySelector('label[for="' + field.id + '"]') : null);
+          if (!label || label.querySelector(".wolfbbs-ux20-required")) return;
+          const marker = document.createElement("span");
+          marker.className = "wolfbbs-ux20-required";
+          marker.textContent = "*";
+          label.appendChild(marker);
+        });
+        if (fields.length >= 4 && !form.querySelector('[data-ux20-reset="1"]')) {
+          const reset = document.createElement("button");
+          reset.type = "button";
+          reset.className = "wolfbbs-form-secondary";
+          reset.setAttribute("data-ux20-reset", "1");
+          reset.textContent = "Reset fields";
+          reset.addEventListener("click", () => {
+            fields.forEach((field) => {
+              if (field.type === "checkbox" || field.type === "radio") {
+                field.checked = false;
+              } else if (field.tagName.toLowerCase() === "select") {
+                field.selectedIndex = 0;
+              } else {
+                field.value = "";
+              }
+              field.dispatchEvent(new Event("input", { bubbles: true }));
+              field.dispatchEvent(new Event("change", { bubbles: true }));
+            });
+            trackTelemetry("ux20:form-reset");
+            showToast("Form fields reset", "ok");
+          });
+          form.appendChild(reset);
+        }
+      });
+    }
 
     // 13: double-submit guard to prevent duplicate posts.
     if (document.body.dataset.wolfbbsUx20SubmitGuard !== "1") {
@@ -4318,7 +4332,9 @@ const modernUIScriptTag = `
   mountKPIDeltas();
   mountSectionToggles();
   mountGoalCoach();
-  mountRouteScorecard();
+  if (shouldMountRouteScaffolding(currentRoute)) {
+    mountRouteScorecard();
+  }
   enhanceEmptyStates();
   mountQuickNotesWorkspace();
   mountUXDiagnosticsButton();
@@ -5327,7 +5343,7 @@ const modernUIScriptTag = `
   }, true);
 
   const primer = primerForPath(location.pathname);
-  if (primer) {
+  if (primer && shouldMountPrimerSurface(location.pathname)) {
     const panel = document.createElement("section");
     panel.className = "wolfbbs-guide-strip";
     const main = document.createElement("div");
@@ -5424,173 +5440,34 @@ const modernUIScriptTag = `
       return true;
     })
     .slice(0, 8);
-  const sectionPinsStorageKey = sectionPinsKeyPrefix + currentRoute;
-  const sectionDoneStorageKey = sectionDoneKeyPrefix + currentRoute;
-  const sectionPins = Object.assign({}, readJSON(sectionPinsStorageKey, {}));
-  const sectionDone = Object.assign({}, readJSON(sectionDoneStorageKey, {}));
-  function readingMinutesForHeading(heading) {
-    const section = heading.closest("section") || heading.closest("article") || heading.parentElement;
-    const text = section ? (section.textContent || "") : (heading.textContent || "");
-    const words = text.trim() ? text.trim().split(/\s+/).length : 0;
-    return Math.max(1, Math.round(words / 180));
-  }
-  function applySectionDoneVisual(heading, done) {
-    heading.classList.toggle("wolfbbs-section-done", Boolean(done));
-  }
   sectionHeadings.forEach((heading, idx) => {
     if (!heading.id) heading.id = "wolfbbs-section-" + idx;
     if (!heading.dataset.navLabel) heading.dataset.navLabel = headingBaseLabel(heading);
-    if (heading.querySelector(".wolfbbs-heading-link")) return;
-    const link = document.createElement("a");
-    link.href = "#" + heading.id;
-    link.className = "wolfbbs-heading-link";
-    link.textContent = "Link";
-    link.addEventListener("click", (event) => {
-      event.preventDefault();
-      const hashURL = location.origin + location.pathname + location.search + "#" + heading.id;
-      copyText(hashURL).then(() => {
-        showToast("Section link copied", "ok");
-      }).catch(() => {
-        showToast("Could not copy section link", "error");
-      });
-      location.hash = heading.id;
-    });
-    heading.appendChild(link);
-    const pinButton = document.createElement("button");
-    pinButton.type = "button";
-    pinButton.className = "wolfbbs-section-pin-button";
-    function syncPinLabel() {
-      pinButton.textContent = sectionPins[heading.id] ? "Unpin" : "Pin";
-    }
-    pinButton.addEventListener("click", () => {
-      if (sectionPins[heading.id]) {
-        delete sectionPins[heading.id];
-      } else {
-        sectionPins[heading.id] = heading.dataset.navLabel || headingBaseLabel(heading);
-      }
-      writeJSON(sectionPinsStorageKey, sectionPins);
-      syncPinLabel();
-      if (typeof window.wolfbbsRenderSectionPins === "function") window.wolfbbsRenderSectionPins();
-      trackTelemetry("sections:pin-toggle");
-    });
-    syncPinLabel();
-    heading.appendChild(pinButton);
-    const doneButton = document.createElement("button");
-    doneButton.type = "button";
-    doneButton.className = "wolfbbs-section-done-toggle";
-    function syncDoneLabel() {
-      const done = Boolean(sectionDone[heading.id]);
-      doneButton.setAttribute("data-done", done ? "true" : "false");
-      doneButton.textContent = done ? "Done" : "Mark done";
-      applySectionDoneVisual(heading, done);
-    }
-    doneButton.addEventListener("click", () => {
-      sectionDone[heading.id] = !Boolean(sectionDone[heading.id]);
-      writeJSON(sectionDoneStorageKey, sectionDone);
-      syncDoneLabel();
-      trackTelemetry("sections:done-toggle");
-    });
-    syncDoneLabel();
-    heading.appendChild(doneButton);
   });
-  if (sectionHeadings.length >= 2) {
-    const pinRail = document.createElement("div");
-    pinRail.className = "wolfbbs-section-pin-rail";
-    function renderSectionPins() {
-      pinRail.innerHTML = "";
-      const pinIDs = Object.keys(sectionPins).filter((id) => sectionPins[id]);
-      if (!pinIDs.length) {
-        pinRail.hidden = true;
-        return;
-      }
-      pinRail.hidden = false;
-      pinIDs.forEach((id) => {
-        const heading = document.getElementById(id);
-        if (!heading) return;
-        const link = document.createElement("a");
-        link.href = "#" + id;
-        link.textContent = sectionPins[id];
-        pinRail.appendChild(link);
-      });
-    }
-    window.wolfbbsRenderSectionPins = renderSectionPins;
-    renderSectionPins();
-    const nav = document.createElement("div");
-    nav.className = "wolfbbs-section-nav";
-    const progress = document.createElement("span");
-    progress.className = "wolfbbs-section-progress";
-    progress.textContent = "Sections 0/" + sectionHeadings.length;
-    nav.appendChild(progress);
-    const toolsMenu = document.createElement("details");
-    toolsMenu.className = "wolfbbs-section-nav-tools";
-    const toolsSummary = document.createElement("summary");
-    toolsSummary.textContent = "Tools";
-    const toolsPanel = document.createElement("div");
-    toolsPanel.className = "wolfbbs-section-nav-tools-panel";
-    toolsMenu.appendChild(toolsSummary);
-    toolsMenu.appendChild(toolsPanel);
-    nav.appendChild(toolsMenu);
-    nav.wolfbbsToolsPanel = toolsPanel;
-    const collapseAll = document.createElement("button");
-    collapseAll.type = "button";
-    collapseAll.className = "wolfbbs-section-toggle";
-    collapseAll.textContent = "Collapse all";
-    collapseAll.addEventListener("click", () => {
-      Array.from(document.querySelectorAll(".wolfbbs-section-collapsible")).forEach((section) => {
-        section.classList.add("is-collapsed");
-        const toggle = section.querySelector(".wolfbbs-section-toggle");
-        if (toggle) toggle.textContent = "Expand";
-      });
-      trackTelemetry("sections:collapse-all");
-    });
-    toolsPanel.appendChild(collapseAll);
-    const expandAll = document.createElement("button");
-    expandAll.type = "button";
-    expandAll.className = "wolfbbs-section-toggle";
-    expandAll.textContent = "Expand all";
-    expandAll.addEventListener("click", () => {
-      Array.from(document.querySelectorAll(".wolfbbs-section-collapsible")).forEach((section) => {
-        section.classList.remove("is-collapsed");
-        const toggle = section.querySelector(".wolfbbs-section-toggle");
-        if (toggle) toggle.textContent = "Collapse";
-      });
-      trackTelemetry("sections:expand-all");
-    });
-    toolsPanel.appendChild(expandAll);
-    const copyAllLinks = document.createElement("button");
-    copyAllLinks.type = "button";
-    copyAllLinks.className = "wolfbbs-section-toggle";
-    copyAllLinks.textContent = "Copy all links";
-    copyAllLinks.addEventListener("click", () => {
-      const lines = sectionHeadings.map((heading) => location.origin + location.pathname + location.search + "#" + heading.id);
-      copyText(lines.join("\n")).then(() => {
-        showToast("Section links copied", "ok");
-      }).catch(() => {
-        showToast("Could not copy section links", "error");
-      });
-      trackTelemetry("sections:copy-all");
-    });
-    toolsPanel.appendChild(copyAllLinks);
+  const legacyNavLinkCount = document.querySelectorAll("p.wolfbbs-nav-row a").length;
+  const showSectionNav = sectionHeadings.length >= 3 && legacyNavLinkCount < 4 && navRows.length <= 1;
+  if (showSectionNav) {
+    const nav = document.createElement("nav");
+    nav.className = "wolfbbs-section-nav wolfbbs-section-nav-minimal";
+    const label = document.createElement("span");
+    label.className = "wolfbbs-section-nav-label";
+    label.textContent = "Jump to";
+    nav.appendChild(label);
     const linkMap = new Map();
-    const seenSection = new Set();
     sectionHeadings.forEach((heading, idx) => {
       if (!heading.id) heading.id = "wolfbbs-section-" + idx;
       const link = document.createElement("a");
       link.href = "#" + heading.id;
-      const label = heading.dataset.navLabel || headingBaseLabel(heading);
-      link.textContent = label;
-      link.title = label + " • about " + readingMinutesForHeading(heading) + " min";
+      link.textContent = heading.dataset.navLabel || headingBaseLabel(heading);
       nav.appendChild(link);
       linkMap.set(heading.id, link);
     });
     const shellMain = document.querySelector("main.wolfbbs-main");
     if (shellMain && shellMain.parentNode) {
-      shellMain.parentNode.insertBefore(pinRail, shellMain);
       shellMain.parentNode.insertBefore(nav, shellMain);
     } else {
       const h1 = document.querySelector("h1");
       if (h1 && h1.parentNode) {
-        h1.parentNode.insertBefore(pinRail, h1.nextSibling ? h1.nextSibling.nextSibling : null);
         h1.parentNode.insertBefore(nav, h1.nextSibling ? h1.nextSibling.nextSibling : null);
       }
     }
@@ -5599,14 +5476,10 @@ const modernUIScriptTag = `
       const observer = new IntersectionObserver((entries) => {
         entries.forEach((entry) => {
           const link = linkMap.get(entry.target.id);
-          if (!link) return;
-          if (entry.isIntersecting) {
-            seenSection.add(entry.target.id);
-            progress.textContent = "Sections " + seenSection.size + "/" + sectionHeadings.length;
-            nav.querySelectorAll("a").forEach((item) => item.classList.remove("wolfbbs-nav-active"));
-            link.classList.add("wolfbbs-nav-active");
-            if (typeof nav.wolfbbsCompactSync === "function") nav.wolfbbsCompactSync();
-          }
+          if (!link || !entry.isIntersecting) return;
+          nav.querySelectorAll("a").forEach((item) => item.classList.remove("wolfbbs-nav-active"));
+          link.classList.add("wolfbbs-nav-active");
+          if (typeof nav.wolfbbsCompactSync === "function") nav.wolfbbsCompactSync();
         });
       }, { rootMargin: "-38% 0px -52% 0px", threshold: 0.05 });
       sectionHeadings.forEach((heading) => observer.observe(heading));
@@ -6656,7 +6529,7 @@ const modernUIScriptTag = `
   }
 
   function enhanceFormsRound3() {
-    Array.from(document.querySelectorAll("form")).forEach((form, index) => {
+    Array.from(document.querySelectorAll("form")).forEach((form) => {
       if (form.dataset.wolfbbsRound3Form === "1") return;
       form.dataset.wolfbbsRound3Form = "1";
       if (form.closest("table")) return;
@@ -6665,30 +6538,10 @@ const modernUIScriptTag = `
         return !(type === "hidden" || type === "password" || type === "file" || type === "submit" || type === "button");
       });
       if (!fields.length) return;
-      const required = fields.filter((field) => field.hasAttribute("required"));
-      if (required.length && !form.querySelector(".wolfbbs-form-progress")) {
-        const row = document.createElement("div");
-        row.className = "wolfbbs-form-progress";
-        const meter = document.createElement("meter");
-        meter.min = 0;
-        meter.max = required.length;
-        const label = document.createElement("span");
-        row.appendChild(meter);
-        row.appendChild(label);
-        form.insertBefore(row, form.firstChild);
-        function syncRequired() {
-          const done = required.filter((field) => {
-            if ((field.getAttribute("type") || "").toLowerCase() === "checkbox") return field.checked;
-            return String(field.value || "").trim() !== "";
-          }).length;
-          meter.value = done;
-          label.textContent = "Required fields " + done + "/" + required.length;
-        }
-        required.forEach((field) => {
-          field.addEventListener("input", syncRequired);
-          field.addEventListener("change", syncRequired);
-        });
-        syncRequired();
+      const utilityForm = form.classList.contains("wolfbbs-inline-form")
+        || (!form.querySelector("textarea") && fields.length <= 4 && form.querySelectorAll('button, input[type="submit"], input[type="button"]').length <= 2);
+      if (utilityForm) {
+        form.classList.add("wolfbbs-utility-form");
       }
       const baseline = JSON.stringify(captureReplayPayload(form));
       function syncDirtyState() {
@@ -6708,12 +6561,6 @@ const modernUIScriptTag = `
         dirtyForms.delete(form);
         refreshDirtyTitle();
       });
-      if (!form.querySelector(".wolfbbs-form-id")) {
-        const badge = document.createElement("small");
-        badge.className = "wolfbbs-form-id";
-        badge.textContent = "Form slot #" + (index + 1);
-        form.appendChild(badge);
-      }
     });
   }
 
@@ -6844,8 +6691,15 @@ const modernUIScriptTag = `
   const paletteButton = document.createElement("button");
   paletteButton.id = "wolfbbsCommandButton";
   paletteButton.type = "button";
-  paletteButton.textContent = "Open Omnibar";
-  document.body.appendChild(paletteButton);
+  paletteButton.textContent = "Search";
+  const headerControls = document.querySelector(".wolfbbs-pref-controls");
+  if (headerControls) {
+    paletteButton.className = "wolfbbs-header-command";
+    const firstMenu = headerControls.querySelector(".wolfbbs-pref-menu");
+    headerControls.insertBefore(paletteButton, firstMenu || null);
+  } else {
+    document.body.appendChild(paletteButton);
+  }
 
   const paletteInput = overlay.querySelector("#wolfbbsPaletteInput");
   const paletteList = overlay.querySelector("#wolfbbsPaletteList");

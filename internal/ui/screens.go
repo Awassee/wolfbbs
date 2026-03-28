@@ -612,6 +612,58 @@ func RenderPostEditor(width int, subject string) string {
 	return renderPanel(width, "Post Editor", lines, FgGreen) + "\r\n"
 }
 
+func RenderMailCompose(width int, title, recipient, subject, urgency, seedName, note string) string {
+	recipient = strings.TrimSpace(recipient)
+	if recipient == "" {
+		recipient = "(choose a caller handle or external email)"
+	}
+	subject = strings.TrimSpace(subject)
+	if subject == "" {
+		subject = "(write a subject)"
+	}
+	urgency = strings.TrimSpace(urgency)
+	if urgency == "" {
+		urgency = "normal"
+	}
+	lines := []string{
+		sectionLabel("Compose Desk"),
+		"Mail is a step-by-step desk here: recipient, subject, urgency, then body.",
+	}
+	if trimmed := strings.TrimSpace(seedName); trimmed != "" {
+		lines = append(lines, "Loaded reply kit: "+trimmed)
+	}
+	if trimmed := strings.TrimSpace(note); trimmed != "" {
+		lines = append(lines, trimmed)
+	}
+	lines = append(lines,
+		"",
+		"To: "+recipient,
+		"Subject: "+subject,
+		"Urgency: "+strings.ToUpper(urgency),
+		"",
+		"Recipient help: type ?name-fragment at the To prompt to look up handles.",
+		"Body editor: each line opens with Body>. Use /preview, /del, /help, and . to send.",
+	)
+	return renderPanel(width, title, lines, FgGreen) + "\r\n"
+}
+
+func RenderMailReader(width int, subject string, meta []string, body string) string {
+	lines := []string{
+		sectionLabel("Mail Header"),
+		"Subject: " + strings.TrimSpace(subject),
+	}
+	lines = append(lines, meta...)
+	lines = append(lines, "", sectionLabel("Message"))
+	bodyLines := strings.Split(strings.ReplaceAll(strings.TrimSpace(body), "\r\n", "\n"), "\n")
+	if len(bodyLines) == 0 || (len(bodyLines) == 1 && strings.TrimSpace(bodyLines[0]) == "") {
+		lines = append(lines, "(empty)")
+	} else {
+		lines = append(lines, bodyLines...)
+	}
+	lines = append(lines, "", "Reader hotkeys: [P] Reply  [D] Delete  [Q] Back")
+	return renderPanel(width, "Private Mail Reader", lines, FgCyan) + "\r\n"
+}
+
 func RenderGatewayMenu(width int) string {
 	lines := []string{
 		sectionLabel("Internet Tools"),
@@ -632,7 +684,7 @@ func RenderMailOverview(width int, inboxRows []string, outboxRows []string) stri
 		sectionLabel("Mail Command Bar"),
 	}
 	lines = append(lines, commandStripLines(width, []string{"[C] Write mail", "[T] Saved replies", "[R] Read", "Re[P]ly", "[D] Delete", "[H] Find people", "[Q] Return", "[?] Help"})...)
-	lines = append(lines, "Write personal notes, reuse saved replies, or look up a caller by handle.", "")
+	lines = append(lines, "Write personal notes, reuse saved replies, or look up a caller by handle.", "Press one hotkey now. Read/Reply/Delete will ask for a message number next.", "")
 	lines = append(lines, sectionLabel("Inbox:"))
 	if len(inboxRows) == 0 {
 		lines = append(lines, "  (empty)")
@@ -646,7 +698,7 @@ func RenderMailOverview(width int, inboxRows []string, outboxRows []string) stri
 	} else {
 		lines = append(lines, outboxRows...)
 	}
-	lines = append(lines, "", "Commands: (C)ompose, (T)emplates, (R)ead, Re(P)ly, (D)elete, (H)andles, (Q)uit, (?)help", "Selection:")
+	lines = append(lines, "", "Hotkeys: (C)ompose, (T)emplates, (R)ead, Re(P)ly, (D)elete, (H)andles, (Q)uit, (?)help", "Press a hotkey:")
 	return renderPanel(width, "Private Mail", lines, FgCyan) + "\r\n"
 }
 
@@ -821,6 +873,8 @@ func RenderMailHelp(width int) string {
 	lines := []string{
 		"Private Mail Commands",
 		"",
+		"Hotkeys act immediately; Enter is only needed after numbered prompts.",
+		"",
 		"C  Compose message",
 		"T  Saved replies",
 		"R  Read message by ID",
@@ -833,7 +887,8 @@ func RenderMailHelp(width int) string {
 		"- Recipient can be local handle or external email",
 		"- Saved replies preload reusable subject/body patterns",
 		"- Type ?prefix in recipient prompt to search handles",
-		"- Body entry ends with single period on its own line",
+		"- Body entry shows a Body> prompt for each line",
+		"- Finish by typing a single period on its own line",
 		"",
 		"Reader details:",
 		"- Inbox mail is marked read when opened",
@@ -847,13 +902,19 @@ func RenderChatHelp(width int) string {
 	lines := []string{
 		"Live Chat Commands",
 		"",
-		"1-9 switch visible room slots",
-		"S   Send message",
-		"J   Join/open another room",
-		"L   Leave current room",
-		"O   Show online roster",
-		"R/Enter refresh current room",
-		"Q/Esc return to Main Menu",
+		"Type a message and press Enter to send it to the current room.",
+		"",
+		"/join #room     join or open a room and switch to it",
+		"/switch 2       move to a visible room slot or /switch #room",
+		"/list           show the visible room windows",
+		"/names          show who is in the current room",
+		"/whois nick     show node and idle details for one name",
+		"/part           leave the current room",
+		"/refresh        redraw the client",
+		"/help           open this help screen",
+		"/quit           return to Main Menu",
+		"",
+		"Legacy shortcuts still work: 1-9, J, L, N, O, R, Q, ?",
 		"",
 		"Notes:",
 		"- Default room is #lobby and it stays available as a safe fallback",
@@ -864,39 +925,157 @@ func RenderChatHelp(width int) string {
 	return renderHelpPanel(width, "Help: Live Chat", lines)
 }
 
-func RenderChatDesk(width int, current, topic string, joinedCount, onlineCount int, locked bool, slotRows []string, transcriptRows []string) string {
+func RenderChatDesk(width int, nick, current, topic string, joinedCount, onlineCount int, locked bool, notice string, channelRows, transcriptRows, rosterRows []string) string {
 	lockState := "open"
 	if locked {
 		lockState = "locked"
+	}
+	nick = strings.TrimSpace(nick)
+	if nick == "" {
+		nick = "caller"
 	}
 	topic = strings.TrimSpace(topic)
 	if topic == "" {
 		topic = "Shared live room for web, SSH, and IRC callers."
 	}
 	lines := []string{
-		sectionLabel("Chat Command Bar"),
+		"IRC-style chat desk with room windows, live buffer, and user list.",
 	}
-	lines = append(lines, commandStripLines(width, []string{"[1-9] Switch room", "[S] Send", "[J] Join/open", "[L] Leave current", "[O] Online roster", "[R] Refresh", "[?] Help", "[Q] Return"})...)
 	lines = append(lines,
 		"",
-		fmt.Sprintf("Current room: %s   Open rooms: %d   Online here: %d   Mode: %s", current, joinedCount, onlineCount, lockState),
-		"Room guide: "+topic,
-		"",
-		sectionLabel("Open Rooms"),
+		fmt.Sprintf("Nick: %s   Channel: %s   Joined: %d   Here: %d   Mode: %s", nick, current, joinedCount, onlineCount, lockState),
+		"Topic: "+topic,
 	)
-	if len(slotRows) == 0 {
-		lines = append(lines, "No rooms available yet.")
-	} else {
-		lines = append(lines, slotRows...)
+	if trimmed := strings.TrimSpace(notice); trimmed != "" {
+		lines = append(lines, "Status: "+trimmed)
 	}
-	lines = append(lines, "", sectionLabel("Transcript"))
-	if len(transcriptRows) == 0 {
-		lines = append(lines, "No messages yet.")
+	if normalizeScreenWidth(width) >= 72 {
+		lines = append(lines, "")
+		lines = append(lines, renderChatColumns(width, channelRows, transcriptRows, rosterRows)...)
 	} else {
-		lines = append(lines, transcriptRows...)
+		lines = append(lines, "", sectionLabel("Windows"))
+		if len(channelRows) == 0 {
+			lines = append(lines, "No rooms available yet.")
+		} else {
+			lines = append(lines, channelRows...)
+		}
+		lines = append(lines, "", sectionLabel("Buffer"))
+		if len(transcriptRows) == 0 {
+			lines = append(lines, "No messages yet.")
+		} else {
+			lines = append(lines, transcriptRows...)
+		}
+		lines = append(lines, "", sectionLabel("Users"))
+		if len(rosterRows) == 0 {
+			lines = append(lines, "(nobody listed yet)")
+		} else {
+			lines = append(lines, rosterRows...)
+		}
 	}
-	lines = append(lines, "", "Use J to open another room without losing the ones you already joined.")
-	return renderPanel(width, "Live Chat", lines, FgCyan) + "\r\n"
+	prompt := nick + "@" + current + ">"
+	if locked {
+		prompt = nick + "@" + current + " (read-only)>"
+	}
+	lines = append(lines, "", "Prompt: "+prompt, "Commands: /join #room  /switch 2  /list  /names  /whois nick  /topic  /part  /refresh  /help  /quit")
+	return renderPanel(width, "Live Chat Client", lines, FgCyan) + "\r\n"
+}
+
+func renderChatColumns(width int, channelRows, transcriptRows, rosterRows []string) []string {
+	innerWidth := normalizeScreenWidth(width) - 2
+	channelWidth := 22
+	rosterWidth := 18
+	if innerWidth < 66 {
+		channelWidth = 18
+		rosterWidth = 14
+	}
+	transcriptWidth := innerWidth - channelWidth - rosterWidth - 4
+	if transcriptWidth < 18 {
+		transcriptWidth = 18
+		channelWidth = ircMax(16, innerWidth-transcriptWidth-rosterWidth-4)
+	}
+	lines := []string{
+		padOrTrim("Windows", channelWidth, " ") + "  " + padOrTrim("Buffer", transcriptWidth, " ") + "  " + padOrTrim("Users", rosterWidth, " "),
+		padOrTrim(strings.Repeat("-", channelWidth), channelWidth, " ") + "  " + padOrTrim(strings.Repeat("-", transcriptWidth), transcriptWidth, " ") + "  " + padOrTrim(strings.Repeat("-", rosterWidth), rosterWidth, " "),
+	}
+	maxRows := ircMax(len(channelRows), ircMax(len(transcriptRows), len(rosterRows)))
+	if maxRows == 0 {
+		maxRows = 1
+	}
+	for i := 0; i < maxRows; i++ {
+		left := ""
+		if i < len(channelRows) {
+			left = trimANSIVisible(channelRows[i], channelWidth)
+		}
+		center := ""
+		if i < len(transcriptRows) {
+			center = trimANSIVisible(transcriptRows[i], transcriptWidth)
+		}
+		right := ""
+		if i < len(rosterRows) {
+			right = trimANSIVisible(rosterRows[i], rosterWidth)
+		}
+		lines = append(lines, padOrTrim(left, channelWidth, " ")+"  "+padOrTrim(center, transcriptWidth, " ")+"  "+padOrTrim(right, rosterWidth, " "))
+	}
+	return lines
+}
+
+func ircMax(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func RenderSettingsDesk(width int, handle, theme, outputMode string, ansiEnabled, pagingEnabled, timeFormat24h, hasTwoFactor bool) string {
+	lines := []string{
+		"Choose what this call should feel like, then save the parts you want to keep for next time.",
+		"",
+		sectionLabel("Quick Choices"),
+	}
+	lines = append(lines, commandStripLines(width, []string{"[W] Change password", "[S] Save my choices", "[Q] Back", "[?] Help"})...)
+	lines = append(lines,
+		"Handle: "+strings.TrimSpace(handle),
+		"Two-step sign-in: "+settingsState(hasTwoFactor, "enabled", "not enabled"),
+		"",
+		sectionLabel("Look + Feel"),
+	)
+	lines = append(lines, commandStripLines(width, []string{"[T] Theme", "[A] Color + ANSI", "[U] Output mode"})...)
+	lines = append(lines,
+		"Theme right now: "+strings.TrimSpace(theme),
+		"Color + ANSI: "+settingsState(ansiEnabled, "on", "off"),
+		"Output mode for this call: "+strings.TrimSpace(outputMode),
+		"",
+		sectionLabel("Reading Comfort"),
+	)
+	lines = append(lines, commandStripLines(width, []string{"[P] Long-screen pause", "[C] 24-hour clock"})...)
+	lines = append(lines,
+		"Pause on long screens: "+settingsState(pagingEnabled, "on", "off"),
+		"Clock style: "+settingsState(timeFormat24h, "24-hour", "12-hour"),
+		"",
+		sectionLabel("Account Safety"),
+	)
+	lines = append(lines, commandStripLines(width, []string{"[W] Change password"})...)
+	lines = append(lines,
+		"Password changes happen here in terminal.",
+		"Use Plain text safe mode if the screen ever looks scrambled or frozen.",
+		"",
+		sectionLabel("Personal Tools"),
+	)
+	lines = append(lines, commandStripLines(width, []string{"[B] Bookmarks", "[O] Circles", "[X] Profile export", "[E] Attention export"})...)
+	lines = append(lines,
+		"Bookmarks keep favorite places handy. Circles keep favorite people grouped.",
+		"Exports write a clean copy of your profile or attention data for offline use.",
+		"",
+		"Changes preview live on this screen. Save when you want to keep them for your next call.",
+	)
+	return renderPanel(width, "My Settings", lines, FgCyan) + "\r\n"
+}
+
+func settingsState(enabled bool, onLabel, offLabel string) string {
+	if enabled {
+		return onLabel
+	}
+	return offLabel
 }
 
 func RenderSettingsHelp(width int) string {
@@ -908,6 +1087,7 @@ func RenderSettingsHelp(width int) string {
 		"U  cycle output mode for this session",
 		"P  toggle pager on/off",
 		"C  toggle 24-hour clock",
+		"W  change your password",
 		"B  open bookmarks manager",
 		"O  open caller circles manager",
 		"X  profile export JSON (/profile/export parity)",
@@ -917,8 +1097,69 @@ func RenderSettingsHelp(width int) string {
 		"",
 		"Theme + ANSI settings apply on next redraw immediately.",
 		"Use Plain text safe mode if your terminal feels glitchy or frozen.",
+		"Output mode changes this call only until you save and reconnect.",
 	}
 	return renderHelpPanel(width, "Help: Settings", lines)
+}
+
+func RenderCallerPulseDesk(width int, handle string, nextRows, weekRows, seasonRows, supportRows []string) string {
+	lines := []string{
+		"Caller Pulse is your one-screen check-in: catch up, protect your streak, and see which community loops are active.",
+		"",
+		"Caller: " + strings.TrimSpace(handle),
+		"",
+		sectionLabel("Do This Next"),
+	}
+	if len(nextRows) == 0 {
+		lines = append(lines, "Nothing urgent is waiting. Keep your rhythm going.")
+	} else {
+		lines = append(lines, nextRows...)
+	}
+	lines = append(lines, "", sectionLabel("This Week"))
+	if len(weekRows) == 0 {
+		lines = append(lines, "No weekly activity to show yet.")
+	} else {
+		lines = append(lines, weekRows...)
+	}
+	lines = append(lines, "", sectionLabel("Season + Events"))
+	if len(seasonRows) == 0 {
+		lines = append(lines, "No missions, challenges, or events are active right now.")
+	} else {
+		lines = append(lines, seasonRows...)
+	}
+	lines = append(lines, "", sectionLabel("Support + Delivery"))
+	if len(supportRows) == 0 {
+		lines = append(lines, "No extra support settings are configured yet.")
+	} else {
+		lines = append(lines, supportRows...)
+	}
+	lines = append(lines, "")
+	lines = append(lines, commandStripLines(width, []string{"[R] Full report", "[D] Digest plan", "[Q] Back"})...)
+	lines = append(lines, "Press Enter to return, or use one of the highlighted letters.")
+	return renderPanel(width, "Caller Pulse", lines, FgCyan) + "\r\n"
+}
+
+func RenderOfflineCenterDesk(width int, owner string, boardCount int, boardRows []string) string {
+	lines := []string{
+		"Take a reading packet with you, work through it offline, then bring mail replies back on your next call.",
+		"",
+		fmt.Sprintf("Packet owner: %s", strings.TrimSpace(owner)),
+		fmt.Sprintf("Boards ready: %d", boardCount),
+		"",
+		sectionLabel("Packet Preview"),
+	}
+	if len(boardRows) == 0 {
+		lines = append(lines, "No watched or digest boards are ready yet. Follow more boards or build up new traffic first.")
+	} else {
+		lines = append(lines, boardRows...)
+	}
+	lines = append(lines, "", sectionLabel("What You Can Do"))
+	lines = append(lines, commandStripLines(width, []string{"[J] Save full packet (JSON)", "[T] Save reading packet (text)", "[I] Import mail replies", "[Q] Back"})...)
+	lines = append(lines,
+		"JSON keeps the packet structured for tools. Text is the easier reading copy.",
+		"Import mail replies after you write them offline and bring the JSON payload back.",
+	)
+	return renderPanel(width, "Offline Center", lines, FgCyan) + "\r\n"
 }
 
 func RenderReconnectNotice(width int, area string, disconnectedAt time.Time, duration time.Duration, time24h bool) string {

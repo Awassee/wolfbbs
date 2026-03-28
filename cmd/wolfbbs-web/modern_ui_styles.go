@@ -403,7 +403,19 @@ hr{
   align-items:flex-end;
   gap:10px;
 }
+.wolfbbs-utility-form{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:flex-end;
+  gap:10px;
+  padding:11px 12px;
+  border-radius:12px;
+  background:linear-gradient(180deg,rgba(255,255,255,.94),rgba(246,250,255,.92));
+}
 .wolfbbs-inline-form label{
+  margin:0;
+}
+.wolfbbs-utility-form label{
   margin:0;
 }
 .wolfbbs-section-nav,.wolfbbs-recent-rail{
@@ -1544,6 +1556,22 @@ body > p:has(> a) a.wolfbbs-nav-active{
   color:#f8fbff;
   box-shadow:0 12px 24px rgba(10,74,152,.3);
 }
+p.wolfbbs-nav-row[data-wolfbbs-nav-level="secondary"],body > p:has(> a)[data-wolfbbs-nav-level="secondary"]{
+  padding:7px 0 2px;
+  background:transparent;
+  border:0;
+  box-shadow:none;
+  backdrop-filter:none;
+}
+p.wolfbbs-nav-row[data-wolfbbs-nav-level="secondary"]::before,body > p:has(> a)[data-wolfbbs-nav-level="secondary"]::before{
+  display:none;
+}
+p.wolfbbs-nav-row[data-wolfbbs-nav-level="secondary"] a,body > p:has(> a)[data-wolfbbs-nav-level="secondary"] a{
+  min-height:28px;
+  padding:4px 11px;
+  background:rgba(247,251,255,.88);
+  box-shadow:none;
+}
 p.wolfbbs-nav-row a.wolfbbs-nav-active:hover,
 body > p:has(> a) a.wolfbbs-nav-active:hover{
   filter:brightness(1.03);
@@ -2030,6 +2058,17 @@ body > p:has(> a) a.wolfbbs-nav-active{
   overflow:auto hidden;
   white-space:nowrap;
 }
+.wolfbbs-section-nav-minimal{
+  gap:7px;
+  padding:9px 12px;
+}
+.wolfbbs-section-nav-label{
+  color:#5b7390;
+  font-size:.74rem;
+  font-weight:800;
+  letter-spacing:.06em;
+  text-transform:uppercase;
+}
 .wolfbbs-section-nav a{
   background:#f7fbff;
 }
@@ -2291,9 +2330,9 @@ body[data-density="compact"] td{
   flex-wrap:wrap;
   align-items:flex-start;
   justify-content:flex-end;
-  gap:8px;
+  gap:6px;
   margin-left:auto;
-  max-width:min(100%,52rem);
+  max-width:min(100%,38rem);
 }
 .wolfbbs-status-grid{
   display:flex;
@@ -2345,12 +2384,51 @@ body[data-density="compact"] td{
   z-index:54;
   display:grid;
   gap:8px;
-  width:min(320px,calc(100vw - 2rem));
+  width:min(360px,calc(100vw - 2rem));
+  max-height:min(72vh,640px);
+  overflow:auto;
   padding:11px;
   border:1px solid #c8d7ea;
   border-radius:18px;
   background:#fcfeff;
   box-shadow:0 24px 44px rgba(9,41,81,.18);
+}
+.wolfbbs-pref-menu-group{
+  display:grid;
+  gap:8px;
+  padding-top:4px;
+}
+.wolfbbs-pref-menu-group + .wolfbbs-pref-menu-group{
+  margin-top:4px;
+  padding-top:10px;
+  border-top:1px solid rgba(198,214,232,.7);
+}
+.wolfbbs-pref-menu-group-title{
+  color:#5d7693;
+  font-size:.72rem;
+  font-weight:800;
+  letter-spacing:.06em;
+  text-transform:uppercase;
+}
+.wolfbbs-header-command{
+  position:static !important;
+  left:auto !important;
+  right:auto !important;
+  bottom:auto !important;
+  z-index:auto !important;
+  min-height:26px !important;
+  padding:4px 10px !important;
+  border-radius:999px !important;
+  border:1px solid #c6d6e8 !important;
+  background:#f7fbff !important;
+  color:#1f4a78 !important;
+  box-shadow:none !important;
+  backdrop-filter:none !important;
+  font-size:.78rem !important;
+  font-weight:760 !important;
+}
+.wolfbbs-header-command:hover{
+  background:#eaf2fb !important;
 }
 .wolfbbs-help-copy{
   margin:0;
@@ -4669,7 +4747,7 @@ main.wolfbbs-main h3 > .wolfbbs-section-done-toggle{
 #mod form{
   background:linear-gradient(180deg,rgba(22,30,47,.78),rgba(8,12,22,.9));
 }
-#wolfbbsCommandButton{
+#wolfbbsCommandButton:not(.wolfbbs-header-command){
   left:auto;
   right:24px;
   bottom:20px;
@@ -4684,6 +4762,19 @@ main.wolfbbs-main h3 > .wolfbbs-section-done-toggle{
   color:#ffffff;
   box-shadow:0 30px 72px rgba(7,18,40,.5), inset 0 1px 0 rgba(255,255,255,.24);
   backdrop-filter:blur(18px);
+}
+#wolfbbsCommandButton.wolfbbs-header-command{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:auto !important;
+}
+@media (max-width: 900px){
+  #wolfbbsCommandButton.wolfbbs-header-command{
+    left:auto !important;
+    right:auto !important;
+    bottom:auto !important;
+  }
 }
 #wolfbbsPaletteOverlay{
   padding:30px 16px;

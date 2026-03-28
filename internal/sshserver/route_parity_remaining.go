@@ -615,23 +615,13 @@ func (s *Server) runOfflineCenter(sess gssh.Session, reader *bufio.Reader, termW
 	}
 	for {
 		packet := s.buildOfflineBoardPacket(user, 8, 10)
-		lines := []string{
-			"Offline packet parity for /offline",
-			fmt.Sprintf("Packet owner: %s", profileNormalizeHandleKey(user.Handle)),
-			fmt.Sprintf("Boards in packet: %d", len(packet.Boards)),
-			"",
+		boardRows := make([]string, 0, len(packet.Boards))
+		for _, board := range packet.Boards {
+			boardRows = append(boardRows, fmt.Sprintf("- %s (%d messages)", clampForTTY(board.Name, renderWidth-22), len(board.MessageRows)))
 		}
-		if len(packet.Boards) == 0 {
-			lines = append(lines, "No watched or digest boards are ready for an offline packet yet.")
-		} else {
-			for _, board := range packet.Boards {
-				lines = append(lines, fmt.Sprintf("- %s (%d messages)", clampForTTY(board.Name, renderWidth-22), len(board.MessageRows)))
-			}
-		}
-		lines = append(lines, "", "Commands: J export JSON  T export text  I import mail replies  Q return")
 		writeClear(sess, ansiEnabled)
 		renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "Offline Center", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
-		renderFrame(sess, termWidth, renderWidth, ui.DrawBox(renderWidth, len(lines)+2, "Offline", lines, ui.CP437Box, ui.FgCyan, ui.BgBlack), ansiEnabled, encoding)
+		renderFrame(sess, termWidth, renderWidth, ui.RenderOfflineCenterDesk(renderWidth, profileNormalizeHandleKey(user.Handle), len(packet.Boards), boardRows), ansiEnabled, encoding)
 		_, _ = io.WriteString(sess, "Selection: ")
 		key, err := readKey(reader)
 		if err != nil {
@@ -765,7 +755,7 @@ func (s *Server) runHandleSuggestions(sess gssh.Session, reader *bufio.Reader, t
 	touch()
 }
 
-func (s *Server) promptRecipient(sess gssh.Session, reader *bufio.Reader, termWidth, renderWidth int, handle string, th ui.Theme, ansiEnabled bool, encoding string, time24h bool, nodeLabel string, touch func()) (string, error) {
+func (s *Server) promptRecipient(sess gssh.Session, reader *bufio.Reader, termWidth, renderWidth int, handle string, th ui.Theme, ansiEnabled bool, encoding string, time24h bool, nodeLabel string, touch func(), redraw func()) (string, error) {
 	if touch == nil {
 		touch = func() {}
 	}
@@ -779,6 +769,9 @@ func (s *Server) promptRecipient(sess gssh.Session, reader *bufio.Reader, termWi
 		to = strings.TrimSpace(to)
 		if strings.HasPrefix(to, "?") {
 			s.runHandleSuggestions(sess, reader, termWidth, renderWidth, handle, strings.TrimSpace(strings.TrimPrefix(to, "?")), th, ansiEnabled, encoding, time24h, nodeLabel, touch)
+			if redraw != nil {
+				redraw()
+			}
 			continue
 		}
 		return to, nil

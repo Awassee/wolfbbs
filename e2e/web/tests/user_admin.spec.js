@@ -197,7 +197,7 @@ test("user web journey supports keyboard navigation and status/config visibility
 
   await page.goto("/boards");
   await expect(page.locator("h1")).toContainText("Message Boards");
-  await expect(page.locator("#wolfbbsCommandButton")).toContainText(/Open Omnibar/i);
+  await expect(page.locator("#wolfbbsCommandButton")).toContainText(/Search/i);
   await page.locator("#wolfbbsCommandButton").click();
   await expect(page.locator("#wolfbbsPaletteOverlay")).toHaveClass(/active/);
   await expect(page.locator("#wolfbbsOmnibarLabel")).toContainText(/Omnibar/i);

@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	gssh "github.com/gliderlabs/ssh"
@@ -179,6 +180,7 @@ func (s *Server) handleSession(sess gssh.Session) {
 	_ = h
 
 	reader := bufio.NewReader(sess)
+	defer unregisterLineInput(reader)
 	doorRegistry := doors.NewRegistry()
 	doorRegistry.SetRepository(s.doors)
 	if triviaBinary := strings.TrimSpace(os.Getenv("WOLFBBS_TRIVIA_BINARY")); triviaBinary != "" {
@@ -306,9 +308,11 @@ func (s *Server) handleSession(sess gssh.Session) {
 		termWidth, renderWidth, termProfile = currentSessionLayout(sess)
 		if currentAccount == nil {
 			sessionANSI, sessionEncoding = resolveSessionOutput(termProfile, true, sessionOutputMode)
+			registerLineInput(reader, sess, sessionANSI)
 			return
 		}
 		sessionANSI, sessionEncoding = resolveSessionOutput(termProfile, currentAccount.ANSIEnabled, sessionOutputMode)
+		registerLineInput(reader, sess, sessionANSI)
 	}
 	runtimeCfg, cfgErr := config.CachedRuntime()
 	if cfgErr != nil {
@@ -403,7 +407,9 @@ func (s *Server) handleSession(sess gssh.Session) {
 				continue
 			}
 			io.WriteString(sess, "Password: ")
+			restoreLineMask := setLineInputMask(reader, true)
 			pass, err := readLine(reader, 64)
+			restoreLineMask()
 			if err != nil {
 				return
 			}
@@ -450,7 +456,9 @@ func (s *Server) handleSession(sess gssh.Session) {
 			secondFactor := ""
 			if user != nil && user.TOTPSecret != "" && !created {
 				io.WriteString(sess, "\r\nTwo-factor code: ")
+				restoreLineMask = setLineInputMask(reader, true)
 				secondFactor, err = readLine(reader, 16)
+				restoreLineMask()
 				if err != nil {
 					return
 				}
@@ -1640,21 +1648,34 @@ func (s *Server) handleSession(sess gssh.Session) {
 func renderFrame(out io.Writer, termWidth, contentWidth int, frame string, ansiEnabled bool, encoding string) {
 	frame = ui.ApplyOutputProfile(frame, ansiEnabled, encoding)
 	frame = strings.ReplaceAll(frame, "\r\n", "\n")
+	hadTrailingNewline := strings.HasSuffix(frame, "\n")
 	frame = strings.TrimSuffix(frame, "\n")
+	if frame == "" {
+		if hadTrailingNewline {
+			_, _ = io.WriteString(out, "\r\n")
+		}
+		return
+	}
+	writeRendered := func(rendered string) {
+		if hadTrailingNewline {
+			rendered += "\r\n"
+		}
+		_, _ = io.WriteString(out, rendered)
+	}
 	if termWidth <= contentWidth {
-		io.WriteString(out, frame)
+		writeRendered(strings.ReplaceAll(frame, "\n", "\r\n"))
 		return
 	}
 	padding := (termWidth - contentWidth) / 2
 	if padding <= 0 {
-		io.WriteString(out, frame)
+		writeRendered(strings.ReplaceAll(frame, "\n", "\r\n"))
 		return
 	}
 	lines := strings.Split(frame, "\n")
 	for i, line := range lines {
 		lines[i] = strings.Repeat(" ", padding) + line
 	}
-	_, _ = io.WriteString(out, strings.Join(lines, "\r\n"))
+	writeRendered(strings.Join(lines, "\r\n"))
 }
 
 func showHelpPanel(sess gssh.Session, reader *bufio.Reader, termWidth, renderWidth int, area, user, nodeLabel string, th ui.Theme, time24h bool, ansiEnabled bool, encoding string, panel string, touch func()) {
@@ -1751,12 +1772,125 @@ func pagerWriteSession(sess gssh.Session, reader *bufio.Reader, text string) {
 	pagerWriteWithPageSize(sess, reader, text, pagerPageSizeForHeight(profile.Height))
 }
 
+type lineInputState struct {
+	out       io.Writer
+	ansi      bool
+	maskInput bool
+}
+
+var lineInputRegistry sync.Map
+
+func registerLineInput(reader *bufio.Reader, out io.Writer, ansi bool) {
+	if reader == nil || out == nil {
+		return
+	}
+	lineInputRegistry.Store(reader, &lineInputState{out: out, ansi: ansi})
+}
+
+func unregisterLineInput(reader *bufio.Reader) {
+	if reader == nil {
+		return
+	}
+	lineInputRegistry.Delete(reader)
+}
+
+func setLineInputMask(reader *bufio.Reader, masked bool) func() {
+	if reader == nil {
+		return func() {}
+	}
+	value, ok := lineInputRegistry.Load(reader)
+	if !ok {
+		return func() {}
+	}
+	state, ok := value.(*lineInputState)
+	if !ok || state == nil {
+		return func() {}
+	}
+	prev := state.maskInput
+	state.maskInput = masked
+	return func() {
+		state.maskInput = prev
+	}
+}
+
+func activeLineInputState(reader *bufio.Reader) (*lineInputState, bool) {
+	if reader == nil {
+		return nil, false
+	}
+	value, ok := lineInputRegistry.Load(reader)
+	if !ok {
+		return nil, false
+	}
+	state, ok := value.(*lineInputState)
+	return state, ok && state != nil && state.out != nil
+}
+
+func redrawLineInput(state *lineInputState, text string, cursor int) {
+	if state == nil || state.out == nil || !state.ansi {
+		return
+	}
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor > len(text) {
+		cursor = len(text)
+	}
+	_, _ = io.WriteString(state.out, "\x1b[u\x1b[K")
+	_, _ = io.WriteString(state.out, text)
+	_, _ = io.WriteString(state.out, "\x1b[K")
+	if back := len(text) - cursor; back > 0 {
+		_, _ = io.WriteString(state.out, fmt.Sprintf("\x1b[%dD", back))
+	}
+}
+
+func updateLineInputDisplay(state *lineInputState, before, after string, beforeCursor, afterCursor int) {
+	if state == nil || state.out == nil {
+		return
+	}
+	if state.ansi {
+		redrawLineInput(state, after, afterCursor)
+		return
+	}
+	switch {
+	case len(after) == len(before)+1 && beforeCursor == len(before) && afterCursor == len(after) && strings.HasPrefix(after, before):
+		_, _ = io.WriteString(state.out, after[len(after)-1:])
+	case len(after) == len(before)-1 && beforeCursor == len(before) && afterCursor == len(after) && strings.HasPrefix(before, after):
+		_, _ = io.WriteString(state.out, "\b \b")
+	}
+}
+
+func consumePendingLineEnding(reader *bufio.Reader) {
+	if reader == nil {
+		return
+	}
+	for reader.Buffered() > 0 {
+		next, err := reader.Peek(1)
+		if err != nil || len(next) == 0 {
+			return
+		}
+		if next[0] != '\r' && next[0] != '\n' {
+			return
+		}
+		_, _ = reader.ReadByte()
+	}
+}
+
 func readLine(reader *bufio.Reader, max int) (string, error) {
 	if max <= 0 {
 		max = 80
 	}
 	buf := make([]byte, 0, max)
 	cursor := 0
+	lineState, hasLineState := activeLineInputState(reader)
+	if hasLineState && lineState.ansi {
+		_, _ = io.WriteString(lineState.out, "\x1b[s")
+	}
+	displayText := func() string {
+		if !hasLineState || !lineState.maskInput {
+			return string(buf)
+		}
+		return strings.Repeat("*", len(buf))
+	}
 	readBufferedByte := func() (byte, bool) {
 		if reader.Buffered() == 0 {
 			return 0, false
@@ -1773,12 +1907,28 @@ func readLine(reader *bufio.Reader, max int) (string, error) {
 			return "", err
 		}
 		if ch == '\r' || ch == '\n' {
+			if ch == '\r' {
+				if next, err := reader.Peek(1); err == nil && len(next) > 0 && next[0] == '\n' {
+					_, _ = reader.ReadByte()
+				}
+			}
+			if hasLineState {
+				if lineState.ansi {
+					redrawLineInput(lineState, displayText(), cursor)
+				}
+				_, _ = io.WriteString(lineState.out, "\r\n")
+			}
 			return string(buf), nil
 		}
 		if ch == 0x7f || ch == 0x08 {
 			if cursor > 0 && len(buf) > 0 {
+				before := displayText()
+				beforeCursor := cursor
 				buf = append(buf[:cursor-1], buf[cursor:]...)
 				cursor--
+				if hasLineState {
+					updateLineInputDisplay(lineState, before, displayText(), beforeCursor, cursor)
+				}
 			}
 			continue
 		}
@@ -1794,20 +1944,45 @@ func readLine(reader *bufio.Reader, max int) (string, error) {
 			switch next2 {
 			case 'C':
 				if cursor < len(buf) {
+					before := displayText()
+					beforeCursor := cursor
 					cursor++
+					if hasLineState {
+						updateLineInputDisplay(lineState, before, displayText(), beforeCursor, cursor)
+					}
 				}
 			case 'D':
 				if cursor > 0 {
+					before := displayText()
+					beforeCursor := cursor
 					cursor--
+					if hasLineState {
+						updateLineInputDisplay(lineState, before, displayText(), beforeCursor, cursor)
+					}
 				}
 			case 'H':
+				before := displayText()
+				beforeCursor := cursor
 				cursor = 0
+				if hasLineState {
+					updateLineInputDisplay(lineState, before, displayText(), beforeCursor, cursor)
+				}
 			case 'F':
+				before := displayText()
+				beforeCursor := cursor
 				cursor = len(buf)
+				if hasLineState {
+					updateLineInputDisplay(lineState, before, displayText(), beforeCursor, cursor)
+				}
 			case '3':
 				tail, ok := readBufferedByte()
 				if ok && tail == '~' && cursor < len(buf) {
+					before := displayText()
+					beforeCursor := cursor
 					buf = append(buf[:cursor], buf[cursor+1:]...)
+					if hasLineState {
+						updateLineInputDisplay(lineState, before, displayText(), beforeCursor, cursor)
+					}
 				}
 			case '1':
 				mid, ok := readBufferedByte()
@@ -1815,7 +1990,12 @@ func readLine(reader *bufio.Reader, max int) (string, error) {
 					continue
 				}
 				if mid == '~' {
+					before := displayText()
+					beforeCursor := cursor
 					cursor = 0
+					if hasLineState {
+						updateLineInputDisplay(lineState, before, displayText(), beforeCursor, cursor)
+					}
 					continue
 				}
 				tail, ok := readBufferedByte()
@@ -1829,10 +2009,18 @@ func readLine(reader *bufio.Reader, max int) (string, error) {
 					if tail == '6' {
 						cursor = len(buf)
 					}
+					if hasLineState {
+						updateLineInputDisplay(lineState, displayText(), displayText(), cursor, cursor)
+					}
 				}
 			case '4':
 				if tail, ok := readBufferedByte(); ok && tail == '~' {
+					before := displayText()
+					beforeCursor := cursor
 					cursor = len(buf)
+					if hasLineState {
+						updateLineInputDisplay(lineState, before, displayText(), beforeCursor, cursor)
+					}
 				}
 			}
 			continue
@@ -1840,15 +2028,23 @@ func readLine(reader *bufio.Reader, max int) (string, error) {
 		if ch < 32 || ch > 126 || len(buf) >= max {
 			continue
 		}
+		before := displayText()
+		beforeCursor := cursor
 		if cursor == len(buf) {
 			buf = append(buf, ch)
 			cursor = len(buf)
+			if hasLineState {
+				updateLineInputDisplay(lineState, before, displayText(), beforeCursor, cursor)
+			}
 			continue
 		}
 		buf = append(buf, 0)
 		copy(buf[cursor+1:], buf[cursor:])
 		buf[cursor] = ch
 		cursor++
+		if hasLineState {
+			updateLineInputDisplay(lineState, before, displayText(), beforeCursor, cursor)
+		}
 	}
 }
 
@@ -2590,6 +2786,7 @@ func (s *Server) runChat(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 	channel := "#lobby"
 	s.chatSvc.JoinChannel(handle, channel)
 	joinedBySession := map[string]bool{channel: true}
+	statusNotice := "Connected to the live relay. Type to chat, or use /join, /switch, /list, /names, /whois, /part, /help, or /quit."
 	defer func() {
 		for joined := range joinedBySession {
 			s.chatSvc.LeaveChannel(handle, joined)
@@ -2620,97 +2817,158 @@ func (s *Server) runChat(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 				break
 			}
 		}
-		renderFrame(sess, termWidth, renderWidth, ui.RenderChatDesk(renderWidth, channel, currentTopic, joinedCount, len(online), locked, slotRows, chatTTYTranscriptRows(renderWidth, history, time24h)), ansiEnabled, encoding)
-		io.WriteString(sess, "Selection: ")
-		key, err := readKey(reader)
+		rosterRows := chatTTYRosterRows(18, online, handle)
+		renderFrame(sess, termWidth, renderWidth, ui.RenderChatDesk(renderWidth, handle, channel, currentTopic, joinedCount, len(online), locked, statusNotice, slotRows, chatTTYTranscriptRows(renderWidth, history, time24h), rosterRows), ansiEnabled, encoding)
+		prompt := handle + "@" + channel + "> "
+		if locked && !s.chatLockBypass(handle) {
+			prompt = handle + "@" + channel + " (read-only)> "
+		}
+		io.WriteString(sess, prompt)
+		raw, err := readLine(reader, 512)
 		if err != nil {
 			return
 		}
 		touch()
-		switch key {
-		case "Q", "ESC":
-			return
-		case "R", "ENTER":
+		input := strings.TrimSpace(raw)
+		if input == "" {
+			statusNotice = "Buffer refreshed."
 			continue
-		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-			slot := int(key[0] - '1')
-			if slot >= 0 && slot < len(slotSummaries) {
-				next := slotSummaries[slot].Name
-				if next != "" {
-					channel = next
-					s.chatSvc.JoinChannel(handle, channel)
-					joinedBySession[channel] = true
+		}
+		upper := strings.ToUpper(input)
+		switch {
+		case strings.HasPrefix(input, "/"):
+			fields := strings.Fields(strings.TrimSpace(strings.TrimPrefix(input, "/")))
+			if len(fields) == 0 {
+				statusNotice = "Use /help for chat commands."
+				continue
+			}
+			cmd := strings.ToLower(fields[0])
+			arg := ""
+			if len(fields) > 1 {
+				arg = strings.TrimSpace(strings.Join(fields[1:], " "))
+			}
+			switch cmd {
+			case "quit", "exit":
+				return
+			case "help":
+				showHelpPanel(sess, reader, termWidth, renderWidth, s.siteName()+" Help", handle, nodeLabel, th, time24h, ansiEnabled, encoding, ui.RenderChatHelp(renderWidth), touch)
+				statusNotice = "Help closed. You're back in the live buffer."
+			case "refresh", "redraw":
+				statusNotice = "Buffer refreshed."
+			case "join", "j":
+				if arg == "" {
+					statusNotice = "Usage: /join #room"
+					continue
 				}
+				next := chat.NormalizeChannel(arg)
+				channel = next
+				s.chatSvc.JoinChannel(handle, channel)
+				joinedBySession[channel] = true
+				statusNotice = "Joined " + channel
+			case "switch", "sw", "window":
+				if arg == "" {
+					statusNotice = "Usage: /switch 2 or /switch #room"
+					continue
+				}
+				next := chatTTYResolveSwitchTarget(arg, slotSummaries)
+				if next == "" {
+					statusNotice = "Could not find that room."
+					continue
+				}
+				channel = next
+				s.chatSvc.JoinChannel(handle, channel)
+				joinedBySession[channel] = true
+				statusNotice = "Switched to " + channel
+			case "list", "windows":
+				statusNotice = chatTTYWindowNotice(slotSummaries)
+			case "names", "who", "roster":
+				statusNotice = chatTTYRosterNotice(online, handle)
+			case "whois":
+				if arg == "" {
+					statusNotice = "Usage: /whois nick"
+					continue
+				}
+				statusNotice = chatTTYWhoisNotice(online, arg)
+			case "topic":
+				statusNotice = currentTopic
+			case "part", "leave":
+				if channel == "#lobby" && len(joinedBySession) <= 1 {
+					statusNotice = "Stay in #lobby or join another room first."
+					continue
+				}
+				leaving := channel
+				s.chatSvc.LeaveChannel(handle, channel)
+				delete(joinedBySession, channel)
+				summaries = s.chatTTYSummaries(handle, channel)
+				channel = firstJoinedChatFallback(summaries, channel)
+				s.chatSvc.JoinChannel(handle, channel)
+				joinedBySession[channel] = true
+				statusNotice = "Left " + leaving + " and switched to " + channel
+			default:
+				statusNotice = "Unknown command. Try /help."
 			}
-		case "?":
+		case upper == "Q":
+			return
+		case upper == "R":
+			statusNotice = "Buffer refreshed."
+		case upper == "?":
 			showHelpPanel(sess, reader, termWidth, renderWidth, s.siteName()+" Help", handle, nodeLabel, th, time24h, ansiEnabled, encoding, ui.RenderChatHelp(renderWidth), touch)
-		case "O":
-			io.WriteString(sess, "\r\nOnline users:\r\n")
-			if len(online) == 0 {
-				io.WriteString(sess, "  none\r\n")
-			}
-			for _, p := range online {
-				io.WriteString(sess, fmt.Sprintf("  %-14s idle:%4ds  area:%s\r\n", clampForTTY(p.Nick, 14), p.IdleSec, p.Area))
-			}
-			io.WriteString(sess, "Press any key.")
-			_, _ = readKey(reader)
-			touch()
-		case "J":
+			statusNotice = "Help closed. You're back in the live buffer."
+		case upper == "N":
+			statusNotice = chatTTYWindowNotice(slotSummaries)
+		case upper == "O":
+			statusNotice = chatTTYRosterNotice(online, handle)
+		case upper == "J":
 			io.WriteString(sess, "\r\nOpen or join room (#lobby for the main lobby): ")
-			raw, err := readLine(reader, 32)
+			joinRaw, err := readLine(reader, 32)
 			if err != nil {
 				return
 			}
 			touch()
-			next := chat.NormalizeChannel(strings.TrimSpace(raw))
+			next := chat.NormalizeChannel(strings.TrimSpace(joinRaw))
 			if next == "" {
 				next = "#lobby"
 			}
 			channel = next
 			s.chatSvc.JoinChannel(handle, channel)
 			joinedBySession[channel] = true
-		case "L":
+			statusNotice = "Joined " + channel
+		case upper == "L":
 			if channel == "#lobby" && len(joinedBySession) <= 1 {
-				io.WriteString(sess, "\r\nStay in #lobby or join another channel first. Press any key.")
-				_, _ = readKey(reader)
-				touch()
+				statusNotice = "Stay in #lobby or join another room first."
 				continue
 			}
+			leaving := channel
 			s.chatSvc.LeaveChannel(handle, channel)
 			delete(joinedBySession, channel)
 			summaries = s.chatTTYSummaries(handle, channel)
 			channel = firstJoinedChatFallback(summaries, channel)
 			s.chatSvc.JoinChannel(handle, channel)
 			joinedBySession[channel] = true
-		case "S":
-			io.WriteString(sess, "\r\nMessage: ")
-			body, err := readLine(reader, 512)
-			if err != nil {
-				return
+			statusNotice = "Left " + leaving + " and switched to " + channel
+		case len(input) == 1 && input[0] >= '1' && input[0] <= '9':
+			slot := int(input[0] - '1')
+			if slot >= 0 && slot < len(slotSummaries) {
+				next := slotSummaries[slot].Name
+				if next != "" {
+					channel = next
+					s.chatSvc.JoinChannel(handle, channel)
+					joinedBySession[channel] = true
+					statusNotice = "Switched to " + channel
+					continue
+				}
 			}
-			touch()
-			body = strings.TrimSpace(body)
-			if body == "" {
-				io.WriteString(sess, "\r\nEmpty message. Press any key.")
-				_, _ = readKey(reader)
-				touch()
-				continue
-			}
-			if locked && !s.chatLockBypass(handle) {
-				io.WriteString(sess, "\r\nChannel is locked for moderator/sysop posting only.\r\nPress any key.")
-				_, _ = readKey(reader)
-				touch()
-				continue
-			}
-			if _, err := s.chatSvc.Post(handle, channel, body); err != nil {
-				io.WriteString(sess, "\r\nSend blocked: "+err.Error()+"\r\nPress any key.")
-				_, _ = readKey(reader)
-				touch()
-			}
+			statusNotice = "That room slot is not available."
 		default:
-			io.WriteString(sess, "\r\nUnknown key. Press any key.")
-			_, _ = readKey(reader)
-			touch()
+			if locked && !s.chatLockBypass(handle) {
+				statusNotice = "Channel is locked for moderator/sysop posting only."
+				continue
+			}
+			if _, err := s.chatSvc.Post(handle, channel, input); err != nil {
+				statusNotice = "Send blocked: " + err.Error()
+				continue
+			}
+			statusNotice = "Sent to " + channel
 		}
 	}
 }
@@ -3205,19 +3463,22 @@ func (s *Server) runMail(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 			outboxRows = append(outboxRows, formatMailOutboxRow(renderWidth, row.ID, row.Subject, target))
 		}
 		renderFrame(sess, termWidth, renderWidth, ui.RenderMailOverview(renderWidth, inboxRows, outboxRows)+"\r\n", ansiEnabled, encoding)
-		io.WriteString(sess, "> ")
-		choice, err := readLine(reader, 24)
+		io.WriteString(sess, "Hotkey: ")
+		choice, err := readKey(reader)
 		if err != nil {
 			return
 		}
 		touch()
+		consumePendingLineEnding(reader)
 		switch strings.ToUpper(strings.TrimSpace(choice)) {
-		case "Q":
+		case "Q", "ESC":
 			return
+		case "ENTER":
+			continue
 		case "?":
 			showHelpPanel(sess, reader, termWidth, renderWidth, s.siteName()+" Help", handle, nodeLabel, th, time24h, ansiEnabled, encoding, ui.RenderMailHelp(renderWidth), touch)
 		case "H":
-			io.WriteString(sess, "\r\nHandle search (?blank for all): ")
+			io.WriteString(sess, "\r\nFind handle (leave blank to list everyone): ")
 			query, err := readLine(reader, 64)
 			if err != nil {
 				return
@@ -3245,7 +3506,7 @@ func (s *Server) runMail(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 				}
 			}
 		case "P":
-			io.WriteString(sess, "Reply to Mail ID: ")
+			io.WriteString(sess, "\r\nReply to message number: ")
 			rawID, err := readLine(reader, 16)
 			if err != nil {
 				return
@@ -3270,80 +3531,11 @@ func (s *Server) runMail(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 				touch()
 				continue
 			}
-			var toUserID int64
-			var externalTo *string
-			if row.ToUserID == currentUser.ID {
-				toUserID = row.FromUserID
-			} else {
-				toUserID = row.ToUserID
-				if row.ExternalTo != nil {
-					trimmed := strings.TrimSpace(*row.ExternalTo)
-					if trimmed != "" {
-						externalTo = &trimmed
-					}
-				}
-			}
-			if toUserID <= 0 && externalTo == nil {
-				io.WriteString(sess, "\r\nCould not determine reply target. Press any key.")
-				_, _ = readKey(reader)
-				touch()
-				continue
-			}
-			subject := strings.TrimSpace(row.Subject)
-			if subject == "" {
-				subject = "Re: (no subject)"
-			} else if !strings.HasPrefix(strings.ToLower(subject), "re:") {
-				subject = "Re: " + subject
-			}
-			writeClear(sess, ansiEnabled)
-			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName()+" Mail Reply", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
-			renderFrame(sess, termWidth, renderWidth, ui.RenderPostEditor(renderWidth, subject)+"\r\n", ansiEnabled, encoding)
-			io.WriteString(sess, "Subject ["+subject+"]: ")
-			inputSubject, err := readLine(reader, 120)
-			if err != nil {
+			if err := s.replyToMailFlow(sess, reader, termWidth, renderWidth, handle, currentUser, row, th, ansiEnabled, encoding, time24h, nodeLabel, touch); err != nil {
 				return
 			}
-			touch()
-			inputSubject = strings.TrimSpace(inputSubject)
-			if inputSubject != "" {
-				subject = inputSubject
-			}
-			io.WriteString(sess, "\r\nEnter reply body, end with '.' on a line by itself.\r\n")
-			replyBody, err := readMessageBody(sess, reader, 80, 4096)
-			if err != nil {
-				return
-			}
-			touch()
-			replyBody = strings.TrimSpace(replyBody)
-			if replyBody == "" {
-				io.WriteString(sess, "\r\nReply body is required. Press any key.")
-				_, _ = readKey(reader)
-				touch()
-				continue
-			}
-			replyBody = strings.TrimSpace(replyBody + "\n\n" + quoteMessage(row.Body))
-			reply := &domain.PrivateMail{
-				FromUserID: currentUser.ID,
-				ToUserID:   toUserID,
-				ExternalTo: externalTo,
-				Subject:    subject,
-				Body:       replyBody,
-			}
-			if err := s.mail.CreateMail(reply); err != nil {
-				io.WriteString(sess, "\r\nCould not send reply: "+err.Error()+"\r\nPress any key.")
-				_, _ = readKey(reader)
-				touch()
-				continue
-			}
-			s.publishEvent("mail.reply", map[string]string{
-				"user": handle,
-				"id":   strconv.FormatInt(reply.ID, 10),
-			})
-			io.WriteString(sess, "\r\nReply sent. Press any key.")
-			_, _ = readKey(reader)
-			touch()
 		case "R":
-			io.WriteString(sess, "Mail ID: ")
+			io.WriteString(sess, "\r\nRead message number: ")
 			rawID, err := readLine(reader, 16)
 			if err != nil {
 				return
@@ -3373,89 +3565,31 @@ func (s *Server) runMail(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 			}
 			writeClear(sess, ansiEnabled)
 			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "Private Mail", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
-			io.WriteString(sess, "Subject: "+row.Subject+"\r\n")
-			io.WriteString(sess, "Sent: "+row.CreatedAt.Format("2006-01-02 15:04:05")+"\r\n")
-			if row.ExternalTo != nil {
-				io.WriteString(sess, "External To: "+*row.ExternalTo+"\r\n")
+			meta := []string{
+				fmt.Sprintf("Message ID: %d", row.ID),
+				"Sent: " + row.CreatedAt.Format("2006-01-02 15:04:05"),
 			}
-			io.WriteString(sess, "\r\n"+row.Body+"\r\n")
-			io.WriteString(sess, "\r\nReader commands: (P) reply  (D) delete  (Q) back")
+			if row.ToUserID == currentUser.ID {
+				meta = append(meta, "Box: Inbox")
+			} else {
+				meta = append(meta, "Box: Outbox")
+			}
+			if row.ExternalTo != nil {
+				meta = append(meta, "External To: "+*row.ExternalTo)
+			}
+			renderFrame(sess, termWidth, renderWidth, ui.RenderMailReader(renderWidth, row.Subject, meta, row.Body), ansiEnabled, encoding)
+			io.WriteString(sess, "Hotkey: ")
 			key, keyErr := readKey(reader)
 			if keyErr != nil {
 				return
 			}
 			touch()
+			consumePendingLineEnding(reader)
 			switch strings.ToUpper(strings.TrimSpace(key)) {
 			case "P":
-				replySubject := strings.TrimSpace(row.Subject)
-				if replySubject == "" {
-					replySubject = "Re: (no subject)"
-				} else if !strings.HasPrefix(strings.ToLower(replySubject), "re:") {
-					replySubject = "Re: " + replySubject
-				}
-				var toUserID int64
-				var externalTo *string
-				if row.ToUserID == currentUser.ID {
-					toUserID = row.FromUserID
-				} else {
-					toUserID = row.ToUserID
-					if row.ExternalTo != nil {
-						trimmed := strings.TrimSpace(*row.ExternalTo)
-						if trimmed != "" {
-							externalTo = &trimmed
-						}
-					}
-				}
-				if toUserID <= 0 && externalTo == nil {
-					io.WriteString(sess, "\r\nCould not determine reply target. Press any key.")
-					_, _ = readKey(reader)
-					touch()
-					continue
-				}
-				io.WriteString(sess, "\r\nSubject ["+replySubject+"]: ")
-				override, err := readLine(reader, 120)
-				if err != nil {
+				if err := s.replyToMailFlow(sess, reader, termWidth, renderWidth, handle, currentUser, row, th, ansiEnabled, encoding, time24h, nodeLabel, touch); err != nil {
 					return
 				}
-				touch()
-				override = strings.TrimSpace(override)
-				if override != "" {
-					replySubject = override
-				}
-				io.WriteString(sess, "\r\nEnter reply body, end with '.' on a line by itself.\r\n")
-				replyBody, err := readMessageBody(sess, reader, 80, 4096)
-				if err != nil {
-					return
-				}
-				touch()
-				replyBody = strings.TrimSpace(replyBody)
-				if replyBody == "" {
-					io.WriteString(sess, "\r\nReply body is required. Press any key.")
-					_, _ = readKey(reader)
-					touch()
-					continue
-				}
-				replyBody = strings.TrimSpace(replyBody + "\n\n" + quoteMessage(row.Body))
-				reply := &domain.PrivateMail{
-					FromUserID: currentUser.ID,
-					ToUserID:   toUserID,
-					ExternalTo: externalTo,
-					Subject:    replySubject,
-					Body:       replyBody,
-				}
-				if err := s.mail.CreateMail(reply); err != nil {
-					io.WriteString(sess, "\r\nCould not send reply: "+err.Error()+"\r\nPress any key.")
-					_, _ = readKey(reader)
-					touch()
-					continue
-				}
-				s.publishEvent("mail.reply", map[string]string{
-					"user": handle,
-					"id":   strconv.FormatInt(reply.ID, 10),
-				})
-				io.WriteString(sess, "\r\nReply sent. Press any key.")
-				_, _ = readKey(reader)
-				touch()
 			case "D":
 				if err := s.mail.DeleteMail(row.ID); err != nil {
 					io.WriteString(sess, "\r\nCould not delete mail: "+err.Error()+"\r\nPress any key.")
@@ -3474,7 +3608,7 @@ func (s *Server) runMail(sess gssh.Session, reader *bufio.Reader, termWidth, ren
 				// Return to mail menu.
 			}
 		case "D":
-			io.WriteString(sess, "Delete Mail ID: ")
+			io.WriteString(sess, "\r\nDelete message number: ")
 			rawID, err := readLine(reader, 16)
 			if err != nil {
 				return
@@ -4372,13 +4506,6 @@ func (s *Server) runSettingsMCI(sess gssh.Session, reader *bufio.Reader, termWid
 			selectedTheme = 0
 		}
 		user.Theme = themes[selectedTheme]
-		view, err := mci.Normalize(s.buildSettingsMCIView(user, themes, selectedTheme, mode))
-		if err != nil {
-			return user, err
-		}
-		lines := mci.RenderLines(view)
-		lines = append(lines, "")
-		lines = append(lines, "Selection:")
 		_, _, profile := currentSessionLayout(sess)
 		currentANSI, currentEncoding := resolveSessionOutput(profile, user.ANSIEnabled, mode)
 		if !currentANSI {
@@ -4387,7 +4514,7 @@ func (s *Server) runSettingsMCI(sess gssh.Session, reader *bufio.Reader, termWid
 		previewTheme := ui.ThemeByName(user.Theme)
 		writeClear(sess, currentANSI)
 		renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName()+" Settings", user.Handle, time.Now(), nodeLabel, previewTheme, user.TimeFormat24h)+"\r\n", currentANSI, currentEncoding)
-		renderFrame(sess, termWidth, renderWidth, ui.DrawBox(renderWidth, len(lines)+2, "My Settings", lines, ui.CP437Box, previewTheme.BodyFg, ui.BgBlack), currentANSI, currentEncoding)
+		renderFrame(sess, termWidth, renderWidth, ui.RenderSettingsDesk(renderWidth, user.Handle, user.Theme, mode.Label(), user.ANSIEnabled, user.PagingEnabled, user.TimeFormat24h, strings.TrimSpace(user.TOTPSecret) != ""), currentANSI, currentEncoding)
 		io.WriteString(sess, "Selection: ")
 		key, err := readKey(reader)
 		if err != nil {
@@ -4410,6 +4537,17 @@ func (s *Server) runSettingsMCI(sess gssh.Session, reader *bufio.Reader, termWid
 			user.PagingEnabled = !user.PagingEnabled
 		case "C":
 			user.TimeFormat24h = !user.TimeFormat24h
+		case "W":
+			changed, err := s.runPasswordChangeFlow(sess, reader, termWidth, renderWidth, user, previewTheme, currentANSI, currentEncoding, user.TimeFormat24h, nodeLabel, touch)
+			if err != nil {
+				return user, err
+			}
+			if changed {
+				if latest, err := s.auth.GetUser(user.Handle); err == nil && latest != nil {
+					user = latest
+					selectedTheme = themeIndex(themes, user.Theme)
+				}
+			}
 		case "B":
 			s.runBookmarkCenter(sess, reader, termWidth, renderWidth, user.Handle, previewTheme, currentANSI, currentEncoding, user.TimeFormat24h, nodeLabel, touch)
 		case "O":
@@ -4443,11 +4581,105 @@ func (s *Server) runSettingsMCI(sess gssh.Session, reader *bufio.Reader, termWid
 	}
 }
 
+func (s *Server) runPasswordChangeFlow(sess gssh.Session, reader *bufio.Reader, termWidth, renderWidth int, user *domain.User, th ui.Theme, ansiEnabled bool, encoding string, time24h bool, nodeLabel string, touch func()) (bool, error) {
+	if touch == nil {
+		touch = func() {}
+	}
+	if s == nil || s.auth == nil || user == nil {
+		return false, errors.New("password change is unavailable")
+	}
+	writeClear(sess, ansiEnabled)
+	renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName()+" Password", user.Handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
+	lines := []string{
+		"Change Password",
+		"",
+		"Verify your current password before choosing a new one.",
+		"Leave the current-password field blank if you want to cancel.",
+		"New passwords must be at least 8 characters.",
+	}
+	if strings.TrimSpace(user.TOTPSecret) != "" {
+		lines = append(lines, "Two-step sign-in is enabled, so you will also be asked for a current code.")
+	}
+	renderFrame(sess, termWidth, renderWidth, ui.DrawBox(renderWidth, len(lines)+2, "Account Security", lines, ui.CP437Box, th.AccentFg, ui.BgBlack), ansiEnabled, encoding)
+	io.WriteString(sess, "Current password (blank cancels): ")
+	restoreMask := setLineInputMask(reader, true)
+	currentPassword, err := readLine(reader, 128)
+	restoreMask()
+	if err != nil {
+		return false, err
+	}
+	touch()
+	currentPassword = strings.TrimSpace(currentPassword)
+	if currentPassword == "" {
+		return false, nil
+	}
+	if _, err := s.auth.Login(user.Handle, currentPassword); err != nil {
+		io.WriteString(sess, "\r\nCurrent password was not accepted. Press any key.")
+		_, _ = readKey(reader)
+		touch()
+		return false, nil
+	}
+	if strings.TrimSpace(user.TOTPSecret) != "" {
+		io.WriteString(sess, "\r\nCurrent 2FA or recovery code: ")
+		code, err := readLine(reader, 64)
+		if err != nil {
+			return false, err
+		}
+		touch()
+		if err := s.auth.VerifySecondFactorForUser(user, code); err != nil {
+			io.WriteString(sess, "\r\nThat code was not accepted. Press any key.")
+			_, _ = readKey(reader)
+			touch()
+			return false, nil
+		}
+	}
+	io.WriteString(sess, "\r\nNew password: ")
+	restoreMask = setLineInputMask(reader, true)
+	newPassword, err := readLine(reader, 128)
+	restoreMask()
+	if err != nil {
+		return false, err
+	}
+	touch()
+	newPassword = strings.TrimSpace(newPassword)
+	if newPassword == "" {
+		io.WriteString(sess, "\r\nPassword change cancelled. Press any key.")
+		_, _ = readKey(reader)
+		touch()
+		return false, nil
+	}
+	io.WriteString(sess, "Confirm new password: ")
+	restoreMask = setLineInputMask(reader, true)
+	confirmPassword, err := readLine(reader, 128)
+	restoreMask()
+	if err != nil {
+		return false, err
+	}
+	touch()
+	confirmPassword = strings.TrimSpace(confirmPassword)
+	if newPassword != confirmPassword {
+		io.WriteString(sess, "\r\nThe new passwords did not match. Press any key.")
+		_, _ = readKey(reader)
+		touch()
+		return false, nil
+	}
+	if err := s.auth.SetPassword(user.Handle, newPassword); err != nil {
+		io.WriteString(sess, "\r\nCould not change password: "+err.Error()+"\r\nPress any key.")
+		_, _ = readKey(reader)
+		touch()
+		return false, nil
+	}
+	io.WriteString(sess, "\r\nPassword changed. Press any key.")
+	_, _ = readKey(reader)
+	touch()
+	return true, nil
+}
+
 func (s *Server) buildSettingsMCIView(user *domain.User, themes []string, selectedTheme int, mode outputModeOverride) mci.View {
 	base := mci.View{
 		ID:     "settings",
 		Title:  "My Settings",
-		Footer: "T theme, A color, U output mode, P paging, C clock, B bookmarks, O circles, X profile export, E attention export, S save, Q back",
+		Footer: "T theme, A color, U output mode, P paging, C clock, W password, B bookmarks, O circles, X profile export, E attention export, S save, Q back",
 		Controls: []mci.Control{
 			{Type: mci.ControlLabel, ID: "header", Label: s.siteName() + " personal settings"},
 			{Type: mci.ControlInput, ID: "theme", Label: "Theme", Value: user.Theme},
@@ -4455,6 +4687,7 @@ func (s *Server) buildSettingsMCIView(user *domain.User, themes []string, select
 			{Type: mci.ControlInput, ID: "output_mode", Label: "Output mode", Value: mode.Label()},
 			{Type: mci.ControlToggle, ID: "paging", Label: "Pause on long screens", Value: boolText(user.PagingEnabled)},
 			{Type: mci.ControlToggle, ID: "clock", Label: "24-hour clock", Value: boolText(user.TimeFormat24h)},
+			{Type: mci.ControlButton, ID: "password", Label: "Change Password"},
 			{Type: mci.ControlLightbar, ID: "theme_list", Label: "Theme list", Options: themes, Selected: selectedTheme},
 			{Type: mci.ControlButton, ID: "save", Label: "Save My Settings"},
 		},
@@ -4495,6 +4728,7 @@ func (s *Server) buildSettingsMCIView(user *domain.User, themes []string, select
 	setControl(mci.Control{Type: mci.ControlInput, ID: "output_mode", Label: "Output mode", Value: mode.Label()})
 	setControl(mci.Control{Type: mci.ControlToggle, ID: "paging", Label: "Paging enabled", Value: boolText(user.PagingEnabled)})
 	setControl(mci.Control{Type: mci.ControlToggle, ID: "clock", Label: "24-hour clock", Value: boolText(user.TimeFormat24h)})
+	setControl(mci.Control{Type: mci.ControlButton, ID: "password", Label: "Change Password"})
 	setControl(mci.Control{Type: mci.ControlLightbar, ID: "theme_list", Label: "Themes", Options: themes, Selected: selectedTheme})
 	setControl(mci.Control{Type: mci.ControlButton, ID: "save", Label: "Save Preferences"})
 	return view
@@ -4609,6 +4843,9 @@ func readMessageBody(out io.Writer, reader *bufio.Reader, maxLines, maxChars int
 	var lines []string
 	total := 0
 	for i := 0; i < maxLines; i++ {
+		if out != nil {
+			_, _ = io.WriteString(out, "Body> ")
+		}
 		line, err := readLine(reader, 512)
 		if err != nil {
 			return "", err
@@ -4640,9 +4877,6 @@ func readMessageBody(out io.Writer, reader *bufio.Reader, maxLines, maxChars int
 				_, _ = io.WriteString(out, "\r\n--- draft preview ---\r\n"+preview+"\r\n--- end preview ---\r\n")
 			}
 			continue
-		}
-		if trimmed == "" && len(lines) > 0 {
-			break
 		}
 		total += len(line)
 		if total > maxChars {

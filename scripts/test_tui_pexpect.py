@@ -14,6 +14,7 @@ Covers:
 from __future__ import annotations
 
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -291,8 +292,19 @@ def type_with_backspace(child: pexpect.spawn, value: str, extra_char: str = "x")
     child.sendline("")
 
 
+def send_chat_line(child: pexpect.spawn, value: str) -> None:
+    child.send(value + "\r\n")
+
+
 def expect_main_menu_ready(child: pexpect.spawn) -> None:
     child.expect("Enter selection:")
+
+
+def expect_chat_prompt(child: pexpect.spawn, channel: str | None = None, timeout: int = 25) -> None:
+    if channel:
+        child.expect(rf"\r\n[A-Za-z0-9_-]+@{re.escape(channel)}(?: \(read-only\))?> ", timeout=timeout)
+        return
+    child.expect(r"\r\n[A-Za-z0-9_-]+@#[A-Za-z0-9_-]+(?: \(read-only\))?> ", timeout=timeout)
 
 
 def expect_after_optional_pager(child: pexpect.spawn, pattern: str, timeout: int = 25) -> None:
@@ -353,7 +365,7 @@ def run_regular_user_smoke(child: pexpect.spawn) -> None:
 
     child.send("C")
     child.expect("Live Chat")
-    child.send("Q")
+    child.send("/quit\r\n")
     child.expect("Enter selection:")
 
     child.send("G")
@@ -434,7 +446,7 @@ def run_regular_user_deep(child: pexpect.spawn) -> None:
     child.expect("draft preview")
     child.sendline("/del")
     child.expect("Removed last line.")
-    child.sendline("/help")
+    send_chat_line(child, "/help")
     child.expect("Compose helpers")
     for i in range(1, 26):
         child.sendline(f"line {i:02d} " + ("x" * 36))
@@ -468,12 +480,12 @@ def run_regular_user_deep(child: pexpect.spawn) -> None:
 
     # Mail: compose, input correction, compose helper commands, and delete.
     child.send("P")
-    child.expect_exact("Commands: (C)ompose")
-    child.sendline("?")
+    child.expect_exact("Hotkeys: (C)ompose")
+    child.send("?")
     child.expect("Private Mail Commands")
     child.send("x")
-    child.expect_exact("Commands: (C)ompose")
-    child.sendline("T")
+    child.expect_exact("Hotkeys: (C)ompose")
+    child.send("T")
     child.expect("Saved Reply Kits")
     child.expect("Command:")
     child.sendline("N")
@@ -498,16 +510,18 @@ def run_regular_user_deep(child: pexpect.spawn) -> None:
     child.expect("Urgency")
     child.sendline("")
     child.expect("Loaded kit body")
+    child.expect("Body> ")
     child.sendline(".")
     child.expect("Mail sent.")
-    child.expect_exact("Commands: (C)ompose")
-    child.sendline("C")
+    child.expect_exact("Hotkeys: (C)ompose")
+    child.send("C")
     child.expect("To handle or external email:")
     type_with_backspace(child, "e2eadmin")
     child.expect("Subject:")
     type_with_backspace(child, "Mail UX Check")
     child.expect("Urgency")
     child.sendline("")
+    child.expect("Body> ")
     child.sendline("draft mail line")
     child.sendline("/preview")
     child.expect("draft preview")
@@ -515,18 +529,18 @@ def run_regular_user_deep(child: pexpect.spawn) -> None:
     child.expect("Removed last line.")
     child.sendline("final mail body")
     child.sendline(".")
-    child.expect_exact("Commands: (C)ompose")
-    child.sendline("R")
-    child.expect("Mail ID:")
+    child.expect_exact("Hotkeys: (C)ompose")
+    child.send("R")
+    child.expect("Read message number:")
     child.sendline("1")
-    idx = child.expect_exact(["Reader commands: (P) reply  (D) delete  (Q) back", "Mail not found. Press any key."])
+    idx = child.expect_exact(["Reader hotkeys: [P] Reply  [D] Delete  [Q] Back", "Mail not found. Press any key."])
     if idx != 0:
         raise RuntimeError("mail reader did not open expected message ID")
     child.send("D")
     child.expect("Mail deleted. Press any key.")
     child.send("x")
-    child.expect_exact("Commands: (C)ompose")
-    child.sendline("Q")
+    child.expect_exact("Hotkeys: (C)ompose")
+    child.send("Q")
     child.expect("Enter selection:")
 
     # Files: help/search/indexed queue surface/download queue surface.
@@ -600,48 +614,6 @@ def run_regular_user_deep(child: pexpect.spawn) -> None:
     child.sendline("Q")
     child.expect("Selection:")
     child.sendline("Q")
-    child.expect("Enter selection:")
-
-    # Chat: multi-channel deck, roster, slot switching, leave fallback, send, refresh.
-    child.send("C")
-    child.expect("Live Chat")
-    child.expect("Current room: #lobby")
-    child.expect("Open Rooms")
-    child.send("?")
-    child.expect("Live Chat Commands")
-    child.send("x")
-    child.expect("Selection:")
-    child.send("O")
-    child.expect("Online users:")
-    child.expect("e2eadmin")
-    child.expect("Press any key.")
-    child.send("x")
-    child.expect("Selection:")
-    child.send("J")
-    child.expect("Open or join room")
-    child.sendline("#ux")
-    child.expect("Current room: #ux")
-    child.expect("#ux")
-    child.expect("Selection:")
-    child.send("2")
-    child.expect("Current room: #lobby")
-    child.expect("Selection:")
-    child.send("J")
-    child.expect("Open or join room")
-    child.sendline("#art")
-    child.expect("Current room: #art")
-    child.expect("#art")
-    child.expect("Selection:")
-    child.send("S")
-    child.expect("Message:")
-    type_with_backspace(child, "hello art channel")
-    child.expect("Selection:")
-    child.send("L")
-    child.expect("Current room:")
-    child.expect("Selection:")
-    child.send("R")
-    child.expect("Selection:")
-    child.send("Q")
     child.expect("Enter selection:")
 
     # Gateway: URL validation and compose validation.
@@ -777,6 +749,10 @@ def run_regular_user_deep(child: pexpect.spawn) -> None:
     expect_after_optional_pager(child, "Save JSON export to offline path")
     child.sendline("N")
     child.expect("Selection:")
+    child.send("W")
+    child.expect("Current password \\(blank cancels\\):")
+    child.sendline("")
+    child.expect("Selection:")
     child.send("A")
     child.expect("My Settings")
     child.send("P")
@@ -865,6 +841,38 @@ def run_reconnect_notice_flow(port: int) -> None:
         complete_login(child, "e2eadmin", "password123", create_if_missing=False)
         child.send("C")
         child.expect("Live Chat")
+    finally:
+        child.close(force=True)
+
+
+def run_chat_client_flow(port: int, *, term_name: str, cols: int, rows: int) -> None:
+    child = spawn_ssh(port, term_name=term_name, cols=cols, rows=rows)
+    try:
+        complete_login(child, "e2eadmin", "password123", create_if_missing=False)
+        child.send("C")
+        child.expect("Live Chat Client")
+        child.expect("Channel: #lobby")
+        child.expect("Prompt: e2eadmin@#lobby>")
+        expect_chat_prompt(child, "#lobby")
+        send_chat_line(child, "/help")
+        child.expect("Live Chat Commands")
+        child.send("x")
+        expect_chat_prompt(child, "#lobby")
+        send_chat_line(child, "/list")
+        child.expect("Windows:")
+        child.expect("#lobby")
+        expect_chat_prompt(child, "#lobby")
+        send_chat_line(child, "/names")
+        child.expect("Names:")
+        child.expect("e2eadmin")
+        expect_chat_prompt(child, "#lobby")
+        send_chat_line(child, "/whois e2eadmin")
+        child.expect("Whois e2eadmin:")
+        expect_chat_prompt(child, "#lobby")
+        child.send("/quit\r\n")
+        child.expect("Enter selection:")
+        child.send("Q")
+        child.expect(pexpect.EOF)
     finally:
         child.close(force=True)
 
@@ -970,6 +978,7 @@ def main() -> int:
 
         proc = start_bbs_server(db_path, second_port, log_path, files_root)
         run_regular_user_flow(second_port, term_name="xterm-256color", cols=100, rows=30, create_if_missing=False, deep=True)
+        run_chat_client_flow(second_port, term_name="xterm-256color", cols=100, rows=30)
         run_reconnect_notice_flow(second_port)
         stop_process(proc)
         proc = None

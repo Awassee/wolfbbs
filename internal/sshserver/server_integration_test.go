@@ -13,6 +13,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 	"wolfbbs/internal/auth"
+	"wolfbbs/internal/chat"
 	"wolfbbs/internal/domain"
 	"wolfbbs/internal/repository"
 	"wolfbbs/internal/sshserver"
@@ -45,6 +46,7 @@ func TestSSHLoginFlow(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := sshserver.New("127.0.0.1:0", logger, authSvc)
+	srv.SetChatService(chat.NewServiceForTest())
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -119,6 +121,225 @@ func TestSSHLoginFlow(t *testing.T) {
 	_, _ = stdin.Write([]byte("x"))
 	waitFor("Enter selection:")
 	_, _ = stdin.Write([]byte("Q\n"))
+
+	_ = session.Wait()
+	<-done
+}
+
+func TestSSHSettingsPasswordChangeFlow(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	_, err := authSvc.Register("changer", "password123")
+	if err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := sshserver.New("127.0.0.1:0", logger, authSvc)
+	srv.SetChatService(chat.NewServiceForTest())
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() { _ = srv.Serve(ln) }()
+	defer srv.Shutdown(context.Background())
+
+	cfg := &ssh.ClientConfig{
+		User:            "ignored",
+		Auth:            []ssh.AuthMethod{ssh.Password("ignored")},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         5 * time.Second,
+	}
+	client, err := ssh.Dial("tcp", ln.Addr().String(), cfg)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client.Close()
+
+	session, err := client.NewSession()
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	defer session.Close()
+
+	if err := session.RequestPty("xterm", 25, 80, ssh.TerminalModes{ssh.ECHO: 1}); err != nil {
+		t.Fatalf("request pty: %v", err)
+	}
+
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		t.Fatalf("stdin pipe: %v", err)
+	}
+	if err := session.Shell(); err != nil {
+		t.Fatalf("shell: %v", err)
+	}
+
+	var out safeBuffer
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = io.Copy(&out, stdout)
+	}()
+
+	waitFor := func(substr string) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			time.Sleep(25 * time.Millisecond)
+			if strings.Contains(out.String(), substr) {
+				return
+			}
+		}
+		t.Fatalf("timed out waiting for %q in output: %q", substr, out.String())
+	}
+
+	waitFor("Press any key to continue")
+	_, _ = stdin.Write([]byte("x"))
+	waitFor("Handle:")
+	_, _ = stdin.Write([]byte("changer\n"))
+	waitFor("Password:")
+	_, _ = stdin.Write([]byte("password123\n"))
+	waitFor("Any key to return.")
+	_, _ = stdin.Write([]byte("x"))
+	waitFor("Enter selection:")
+	_, _ = stdin.Write([]byte("S"))
+	waitFor("My Settings")
+	waitFor("Selection:")
+	_, _ = stdin.Write([]byte("W"))
+	waitFor("Current password (blank cancels):")
+	_, _ = stdin.Write([]byte("password123\n"))
+	waitFor("New password:")
+	_, _ = stdin.Write([]byte("newpassword123\n"))
+	waitFor("Confirm new password:")
+	_, _ = stdin.Write([]byte("newpassword123\n"))
+	waitFor("Password changed. Press any key.")
+	_, _ = stdin.Write([]byte("x"))
+	waitFor("Selection:")
+	_, _ = stdin.Write([]byte("Q"))
+	waitFor("Enter selection:")
+	_, _ = stdin.Write([]byte("Q"))
+
+	_ = session.Wait()
+	<-done
+
+	if _, err := authSvc.Login("changer", "password123"); err == nil {
+		t.Fatal("expected old password to stop working")
+	}
+	if _, err := authSvc.Login("changer", "newpassword123"); err != nil {
+		t.Fatalf("expected new password to work: %v", err)
+	}
+}
+
+func TestSSHChatIRCStyleFlowReturnsToMainMenu(t *testing.T) {
+	userRepo := repository.NewInMemoryUserRepository()
+	authSvc := auth.NewService(userRepo)
+	_, err := authSvc.Register("chatter", "password123")
+	if err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := sshserver.New("127.0.0.1:0", logger, authSvc)
+	srv.SetChatService(chat.NewServiceForTest())
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() { _ = srv.Serve(ln) }()
+	defer srv.Shutdown(context.Background())
+
+	cfg := &ssh.ClientConfig{
+		User:            "ignored",
+		Auth:            []ssh.AuthMethod{ssh.Password("ignored")},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         5 * time.Second,
+	}
+	client, err := ssh.Dial("tcp", ln.Addr().String(), cfg)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client.Close()
+
+	session, err := client.NewSession()
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	defer session.Close()
+
+	if err := session.RequestPty("xterm", 25, 80, ssh.TerminalModes{ssh.ECHO: 1}); err != nil {
+		t.Fatalf("request pty: %v", err)
+	}
+
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		t.Fatalf("stdin pipe: %v", err)
+	}
+	if err := session.Shell(); err != nil {
+		t.Fatalf("shell: %v", err)
+	}
+
+	var out safeBuffer
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = io.Copy(&out, stdout)
+	}()
+
+	waitFor := func(substr string) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			time.Sleep(25 * time.Millisecond)
+			if strings.Contains(out.String(), substr) {
+				return
+			}
+		}
+		t.Fatalf("timed out waiting for %q in output: %q", substr, out.String())
+	}
+
+	waitFor("Press any key to continue")
+	_, _ = stdin.Write([]byte("x"))
+	waitFor("Handle:")
+	_, _ = stdin.Write([]byte("chatter\n"))
+	waitFor("Password:")
+	_, _ = stdin.Write([]byte("password123\n"))
+	waitFor("Any key to return.")
+	_, _ = stdin.Write([]byte("x"))
+	waitFor("Enter selection:")
+	_, _ = stdin.Write([]byte("C"))
+	waitFor("Live Chat Client")
+	waitFor("Prompt: chatter@#lobby>")
+	_, _ = stdin.Write([]byte("/list\r\n"))
+	waitFor("Windows:")
+	_, _ = stdin.Write([]byte("/names\r\n"))
+	waitFor("Names: chatter (you)")
+	_, _ = stdin.Write([]byte("/join #ux\r\n"))
+	waitFor("Channel: #ux")
+	_, _ = stdin.Write([]byte("/switch #lobby\r\n"))
+	waitFor("Channel: #lobby")
+	_, _ = stdin.Write([]byte("/join #art\r\n"))
+	waitFor("Channel: #art")
+	_, _ = stdin.Write([]byte("hello art channel\r\n"))
+	waitFor("Sent to #art")
+	_, _ = stdin.Write([]byte("/part\r\n"))
+	waitFor("Channel: #lobby")
+	_, _ = stdin.Write([]byte("/refresh\r\n"))
+	waitFor("Buffer refreshed.")
+	_, _ = stdin.Write([]byte("/quit\r\n"))
+	waitFor("Enter selection:")
+	_, _ = stdin.Write([]byte("Q"))
 
 	_ = session.Wait()
 	<-done
@@ -358,41 +579,43 @@ func TestSSHMailReplyDeleteFlow(t *testing.T) {
 	_, _ = stdin.Write([]byte("x"))
 	waitFor("Enter selection:")
 	_, _ = stdin.Write([]byte("P"))
-	waitFor("Commands: (C)ompose")
+	waitFor("Hotkeys: (C)ompose")
 
-	_, _ = stdin.Write([]byte("C\n"))
+	_, _ = stdin.Write([]byte("C"))
 	waitFor("To handle or external email:")
 	_, _ = stdin.Write([]byte("bob\n"))
 	waitFor("Subject:")
 	_, _ = stdin.Write([]byte("hello bob\n"))
 	waitFor("Urgency [normal]:")
 	_, _ = stdin.Write([]byte("\n"))
+	waitFor("Body> ")
 	_, _ = stdin.Write([]byte("local mail from alice\n.\n"))
-	waitFor("Commands: (C)ompose")
+	waitFor("Hotkeys: (C)ompose")
 
-	_, _ = stdin.Write([]byte("R\n"))
-	waitFor("Mail ID:")
+	_, _ = stdin.Write([]byte("R"))
+	waitFor("Read message number:")
 	_, _ = stdin.Write([]byte("1\n"))
-	waitFor("Reader commands: (P) reply  (D) delete  (Q) back")
+	waitFor("Reader hotkeys: [P] Reply  [D] Delete  [Q] Back")
 	_, _ = stdin.Write([]byte("P"))
 	waitFor("Subject [Re:")
 	_, _ = stdin.Write([]byte("\n"))
 	waitFor("Enter reply body")
+	waitFor("Body> ")
 	_, _ = stdin.Write([]byte("acknowledged\n.\n"))
 	waitFor("Reply sent. Press any key.")
 	_, _ = stdin.Write([]byte("x"))
-	waitFor("Commands: (C)ompose")
+	waitFor("Hotkeys: (C)ompose")
 
-	_, _ = stdin.Write([]byte("R\n"))
-	waitFor("Mail ID:")
+	_, _ = stdin.Write([]byte("R"))
+	waitFor("Read message number:")
 	_, _ = stdin.Write([]byte("1\n"))
-	waitFor("Reader commands: (P) reply  (D) delete  (Q) back")
+	waitFor("Reader hotkeys: [P] Reply  [D] Delete  [Q] Back")
 	_, _ = stdin.Write([]byte("D"))
 	waitFor("Mail deleted. Press any key.")
 	_, _ = stdin.Write([]byte("x"))
-	waitFor("Commands: (C)ompose")
+	waitFor("Hotkeys: (C)ompose")
 
-	_, _ = stdin.Write([]byte("Q\n"))
+	_, _ = stdin.Write([]byte("Q"))
 	waitFor("Enter selection:")
 	_, _ = stdin.Write([]byte("Q"))
 

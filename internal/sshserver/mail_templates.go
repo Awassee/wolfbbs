@@ -21,52 +21,64 @@ func (s *Server) composeMailFlow(sess gssh.Session, reader *bufio.Reader, termWi
 	if touch == nil {
 		touch = func() {}
 	}
-	writeClear(sess, ansiEnabled)
-	renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName()+" Mail Compose", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
 	seedSubject := ""
 	seedBody := ""
 	seedUrgency := "normal"
+	seedName := ""
 	if seed != nil {
+		seedName = strings.TrimSpace(seed.Name)
 		seedSubject = strings.TrimSpace(seed.Subject)
 		seedBody = strings.TrimSpace(seed.Body)
 		if seed.Urgency != "" {
 			seedUrgency = normalizeMailUrgencySSH(seed.Urgency)
 		}
-		renderFrame(sess, termWidth, renderWidth, ui.RenderPostEditor(renderWidth, seedSubject)+"\r\n", ansiEnabled, encoding)
-		_, _ = io.WriteString(sess, "Loaded reply kit: "+seed.Name+"\r\n")
-	} else {
-		renderFrame(sess, termWidth, renderWidth, ui.RenderPostEditor(renderWidth, "")+"\r\n", ansiEnabled, encoding)
 	}
-	to, err := s.promptRecipient(sess, reader, termWidth, renderWidth, handle, th, ansiEnabled, encoding, time24h, nodeLabel, touch)
+	to := ""
+	subject := seedSubject
+	urgency := seedUrgency
+	drawCompose := func(note string) {
+		writeClear(sess, ansiEnabled)
+		renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName()+" Mail Compose", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
+		renderFrame(sess, termWidth, renderWidth, ui.RenderMailCompose(renderWidth, "Private Mail Compose", to, subject, urgency, seedName, note), ansiEnabled, encoding)
+	}
+	drawCompose("")
+	toValue, err := s.promptRecipient(sess, reader, termWidth, renderWidth, handle, th, ansiEnabled, encoding, time24h, nodeLabel, touch, func() {
+		drawCompose("")
+	})
 	if err != nil {
 		return err
 	}
-	to = strings.TrimSpace(to)
+	to = strings.TrimSpace(toValue)
+	drawCompose("")
 	if seedSubject != "" {
 		_, _ = io.WriteString(sess, "Subject ["+seedSubject+"]: ")
 	} else {
 		_, _ = io.WriteString(sess, "Subject: ")
 	}
-	subject, err := readLine(reader, 120)
+	inputSubject, err := readLine(reader, 120)
 	if err != nil {
 		return err
 	}
 	touch()
-	subject = strings.TrimSpace(subject)
-	if subject == "" {
-		subject = seedSubject
+	inputSubject = strings.TrimSpace(inputSubject)
+	if inputSubject != "" {
+		subject = inputSubject
 	}
+	drawCompose("")
 	_, _ = io.WriteString(sess, "Urgency ["+seedUrgency+"]: ")
-	urgency, err := readLine(reader, 16)
+	inputUrgency, err := readLine(reader, 16)
 	if err != nil {
 		return err
 	}
 	touch()
-	urgency = normalizeMailUrgencySSH(defaultIfBlankSSH(strings.TrimSpace(urgency), seedUrgency))
+	urgency = normalizeMailUrgencySSH(defaultIfBlankSSH(strings.TrimSpace(inputUrgency), seedUrgency))
+	bodyNote := "Type your message below. Your text stays visible as you type."
 	bodyPrompt := "Enter body, end with '.' on a line by itself."
 	if seedBody != "" {
 		bodyPrompt = "Loaded kit body. Add or edit lines, use /preview to inspect, '.' to send."
+		bodyNote = "Reply kit text is preloaded. Add or trim lines before you send."
 	}
+	drawCompose(bodyNote)
 	_, _ = io.WriteString(sess, "\r\n"+bodyPrompt+"\r\n")
 	body, err := readMessageBodySeeded(sess, reader, 80, 4096, seedBody)
 	if err != nil {
@@ -113,6 +125,96 @@ func (s *Server) composeMailFlow(sess gssh.Session, reader *bufio.Reader, termWi
 	}
 	s.publishEvent("mail.sent", map[string]string{"user": handle, "to": to})
 	_, _ = io.WriteString(sess, "\r\nMail sent.\r\n")
+	return nil
+}
+
+func (s *Server) replyToMailFlow(sess gssh.Session, reader *bufio.Reader, termWidth, renderWidth int, handle string, currentUser *domain.User, source *domain.PrivateMail, th ui.Theme, ansiEnabled bool, encoding string, time24h bool, nodeLabel string, touch func()) error {
+	if currentUser == nil || source == nil {
+		return fmt.Errorf("missing reply context")
+	}
+	if touch == nil {
+		touch = func() {}
+	}
+	subject := strings.TrimSpace(source.Subject)
+	if subject == "" {
+		subject = "Re: (no subject)"
+	} else if !strings.HasPrefix(strings.ToLower(subject), "re:") {
+		subject = "Re: " + subject
+	}
+	var toUserID int64
+	var externalTo *string
+	if source.ToUserID == currentUser.ID {
+		toUserID = source.FromUserID
+	} else {
+		toUserID = source.ToUserID
+		if source.ExternalTo != nil {
+			trimmed := strings.TrimSpace(*source.ExternalTo)
+			if trimmed != "" {
+				externalTo = &trimmed
+			}
+		}
+	}
+	if toUserID <= 0 && externalTo == nil {
+		_, _ = io.WriteString(sess, "\r\nCould not determine reply target. Press any key.")
+		_, _ = readKey(reader)
+		touch()
+		return nil
+	}
+	targetLabel := "local caller"
+	if externalTo != nil {
+		targetLabel = *externalTo
+	}
+	writeReplyDesk := func(note string) {
+		writeClear(sess, ansiEnabled)
+		renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, s.siteName()+" Mail Reply", handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
+		renderFrame(sess, termWidth, renderWidth, ui.RenderMailCompose(renderWidth, "Private Mail Reply", targetLabel, subject, "normal", "", note), ansiEnabled, encoding)
+	}
+	writeReplyDesk("Your reply is added above a quoted copy of the original message.")
+	_, _ = io.WriteString(sess, "Subject ["+subject+"]: ")
+	override, err := readLine(reader, 120)
+	if err != nil {
+		return err
+	}
+	touch()
+	override = strings.TrimSpace(override)
+	if override != "" {
+		subject = override
+	}
+	writeReplyDesk("Type your reply below. The quoted original will be attached when you send.")
+	_, _ = io.WriteString(sess, "\r\nEnter reply body, end with '.' on a line by itself.\r\n")
+	replyBody, err := readMessageBody(sess, reader, 80, 4096)
+	if err != nil {
+		return err
+	}
+	touch()
+	replyBody = strings.TrimSpace(replyBody)
+	if replyBody == "" {
+		_, _ = io.WriteString(sess, "\r\nReply body is required. Press any key.")
+		_, _ = readKey(reader)
+		touch()
+		return nil
+	}
+	replyBody = strings.TrimSpace(replyBody + "\n\n" + quoteMessage(source.Body))
+	reply := &domain.PrivateMail{
+		FromUserID: currentUser.ID,
+		ToUserID:   toUserID,
+		ExternalTo: externalTo,
+		Subject:    subject,
+		Body:       replyBody,
+	}
+	if err := s.mail.CreateMail(reply); err != nil {
+		_, _ = io.WriteString(sess, "\r\nCould not send reply: "+err.Error()+"\r\nPress any key.")
+		_, _ = readKey(reader)
+		touch()
+		return nil
+	}
+	s.publishEvent("mail.reply", map[string]string{
+		"user": handle,
+		"id":   strconv.FormatInt(reply.ID, 10),
+	})
+	_, _ = io.WriteString(sess, "\r\nReply sent. Press any key.")
+	_, _ = readKey(reader)
+	touch()
 	return nil
 }
 
@@ -297,6 +399,9 @@ func readMessageBodySeeded(out io.Writer, reader *bufio.Reader, maxLines, maxCha
 		total += len(line)
 	}
 	for i := 0; i < maxLines; i++ {
+		if out != nil {
+			_, _ = io.WriteString(out, "Body> ")
+		}
 		line, err := readLine(reader, 512)
 		if err != nil {
 			return "", err

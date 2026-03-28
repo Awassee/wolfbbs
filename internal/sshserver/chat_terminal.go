@@ -3,6 +3,7 @@ package sshserver
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -139,31 +140,30 @@ func chatTTYSlotRows(width int, summaries []ttyChatChannelSummary, time24h bool)
 	visible := make([]ttyChatChannelSummary, 0, limit)
 	rows := make([]string, 0, limit)
 	for idx, row := range summaries[:limit] {
-		stateParts := make([]string, 0, 4)
-		if row.Current {
-			stateParts = append(stateParts, "current")
-		} else if row.Joined {
-			stateParts = append(stateParts, "joined")
-		} else {
-			stateParts = append(stateParts, "watch")
+		marker := "-"
+		switch {
+		case row.Current:
+			marker = "*"
+		case row.Joined:
+			marker = "+"
+		}
+		state := ttyChatActivityLabel(row.LastMessageAt, time24h)
+		if row.OnlineCount > 0 {
+			state = fmt.Sprintf("%d here", row.OnlineCount)
 		}
 		if row.Locked {
-			stateParts = append(stateParts, "locked")
-		}
-		if row.OnlineCount > 0 {
-			stateParts = append(stateParts, fmt.Sprintf("%d live", row.OnlineCount))
-		} else {
-			stateParts = append(stateParts, ttyChatActivityLabel(row.LastMessageAt, time24h))
+			state += " !"
 		}
 		preview := defaultIfBlank(row.LastPreview, "no recent traffic")
 		if row.LastMessageFrom != "" {
 			preview = row.LastMessageFrom + ": " + preview
 		}
-		rows = append(rows, fmt.Sprintf("%d) %-12s %-20s %s",
+		rows = append(rows, fmt.Sprintf("%d  %s %-12s %-8s %s",
 			idx+1,
+			marker,
 			clampForTTY(row.Name, 12),
-			clampForTTY(strings.Join(stateParts, " | "), 20),
-			clampForTTY(preview, maxTTYInt(16, width-38)),
+			clampForTTY(state, 8),
+			clampForTTY(preview, maxTTYInt(16, width-30)),
 		))
 		visible = append(visible, row)
 	}
@@ -177,13 +177,124 @@ func chatTTYTranscriptRows(width int, history []chat.Message, time24h bool) []st
 	rows := make([]string, 0, len(history))
 	bodyWidth := maxInt(12, width-24)
 	for _, msg := range history {
-		rows = append(rows, fmt.Sprintf("%-7s %-10s %s",
+		nick := defaultIfBlank(msg.From, "system")
+		prefix := fmt.Sprintf("<%s>", clampForTTY(nick, 10))
+		if strings.EqualFold(strings.TrimSpace(nick), "system") {
+			prefix = "-!-"
+		}
+		rows = append(rows, fmt.Sprintf("[%s] %-12s %s",
 			formatClock(msg.CreatedAt.Local(), time24h),
-			clampForTTY(defaultIfBlank(msg.From, "system"), 10),
+			prefix,
 			clampForTTY(strings.TrimSpace(msg.Body), bodyWidth),
 		))
 	}
 	return rows
+}
+
+func chatTTYRosterRows(width int, online []chat.Presence, handle string) []string {
+	if len(online) == 0 {
+		return nil
+	}
+	sort.Slice(online, func(i, j int) bool {
+		return strings.ToLower(strings.TrimSpace(online[i].Nick)) < strings.ToLower(strings.TrimSpace(online[j].Nick))
+	})
+	rows := make([]string, 0, len(online))
+	nameWidth := maxInt(8, width-16)
+	for _, row := range online {
+		prefix := " "
+		if strings.EqualFold(strings.TrimSpace(row.Nick), strings.TrimSpace(handle)) {
+			prefix = "*"
+		}
+		idle := "now"
+		if row.IdleSec > 0 {
+			if row.IdleSec >= 60 {
+				idle = fmt.Sprintf("%dm", row.IdleSec/60)
+			} else {
+				idle = fmt.Sprintf("%ds", row.IdleSec)
+			}
+		}
+		rows = append(rows, fmt.Sprintf("%s %-*s %4s", prefix, nameWidth, clampForTTY(row.Nick, nameWidth), idle))
+	}
+	return rows
+}
+
+func chatTTYRosterNotice(online []chat.Presence, handle string) string {
+	if len(online) == 0 {
+		return "Nobody is in this room yet."
+	}
+	names := make([]string, 0, len(online))
+	for _, row := range online {
+		name := strings.TrimSpace(row.Nick)
+		if name == "" {
+			continue
+		}
+		if strings.EqualFold(name, handle) {
+			name += " (you)"
+		}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		return "Nobody is in this room yet."
+	}
+	sort.Slice(names, func(i, j int) bool { return strings.ToLower(names[i]) < strings.ToLower(names[j]) })
+	return "Names: " + strings.Join(names, ", ")
+}
+
+func chatTTYWindowNotice(visible []ttyChatChannelSummary) string {
+	if len(visible) == 0 {
+		return "No room windows are visible yet."
+	}
+	parts := make([]string, 0, len(visible))
+	for idx, row := range visible {
+		marker := "-"
+		switch {
+		case row.Current:
+			marker = "*"
+		case row.Joined:
+			marker = "+"
+		}
+		parts = append(parts, fmt.Sprintf("%d:%s%s", idx+1, row.Name, marker))
+	}
+	return "Windows: " + strings.Join(parts, "  ")
+}
+
+func chatTTYWhoisNotice(online []chat.Presence, target string) string {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return "Usage: /whois nick"
+	}
+	for _, row := range online {
+		if !strings.EqualFold(strings.TrimSpace(row.Nick), target) {
+			continue
+		}
+		idle := "active now"
+		if row.IdleSec > 0 {
+			if row.IdleSec >= 60 {
+				idle = fmt.Sprintf("idle %dm", row.IdleSec/60)
+			} else {
+				idle = fmt.Sprintf("idle %ds", row.IdleSec)
+			}
+		}
+		node := defaultIfBlank(strings.TrimSpace(row.Node), "unknown node")
+		area := defaultIfBlank(strings.TrimSpace(row.Area), "live chat")
+		return fmt.Sprintf("Whois %s: %s on %s, %s, online since %s", row.Nick, area, node, idle, formatClock(row.LoginAt.Local(), true))
+	}
+	return "Whois could not find " + target + " in this room."
+}
+
+func chatTTYResolveSwitchTarget(raw string, visible []ttyChatChannelSummary) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if slot, err := strconv.Atoi(raw); err == nil {
+		slot--
+		if slot >= 0 && slot < len(visible) {
+			return visible[slot].Name
+		}
+		return ""
+	}
+	return chat.NormalizeChannel(raw)
 }
 
 func firstJoinedChatFallback(summaries []ttyChatChannelSummary, current string) string {

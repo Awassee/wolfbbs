@@ -2781,7 +2781,7 @@ func TestModernUIBootstrapIncludesRoundThreeNextTenUXHooks(t *testing.T) {
 		"wolfbbs-spotlight-hit",
 		"Last visited this route",
 		"Handoff markdown copied",
-		"Sections 0/",
+		"Jump to",
 	} {
 		if !strings.Contains(modernUIBootstrap, needle) {
 			t.Fatalf("expected modern UI bootstrap to include %q", needle)

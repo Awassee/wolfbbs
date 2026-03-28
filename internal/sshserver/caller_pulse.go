@@ -395,20 +395,113 @@ func (s *Server) runCallerPulse(sess gssh.Session, reader *bufio.Reader, termWid
 	report.WriteString(fmt.Sprintf("- 30-day engagement >= 25 actions: %s\n", reached(board30+chat30+door30 >= 25)))
 	report.WriteString(fmt.Sprintf("- Time-lane recommendation: %s\n", timeLaneGuidance(time.Now(), streakCurrent, board7+chat7+door7)))
 
-	writeClear(sess, ansiEnabled)
-	renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "Caller Pulse", user.Handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
-	pagerWriteSession(sess, reader, strings.TrimSpace(report.String()))
-	io.WriteString(sess, "\r\nCaller Pulse command [D=Digest prefs, Enter=Return]: ")
-	cmd, err := readLine(reader, 80)
-	if err != nil {
-		return
+	nextRows := pulsePreviewRows(actions, 3)
+	weekRows := []string{
+		fmt.Sprintf("Unread mail: %d   Boards to catch up on: %d", unreadMail, unreadBoards),
+		fmt.Sprintf("Current streak: %d day(s)   Longest: %d day(s)   Active days (14d): %d/14", streakCurrent, streakLongest, active14),
+		fmt.Sprintf("This week so far: boards %d, chat %d, doors %d", board7, chat7, door7),
 	}
-	touch()
-	if strings.EqualFold(strings.TrimSpace(cmd), "d") {
-		s.runPulseDigestPreferencesEditor(sess, reader, termWidth, renderWidth, user.Handle, th, ansiEnabled, encoding, time24h, nodeLabel, touch)
-		return
+	seasonRows := []string{
+		pulseMissionSummaryRow(pendingMissionCount, len(activeMissions)),
+		pulseEventSummaryRow(upcomingEvents, time24h),
+		pulseChallengeSummaryRow(hasChallenge, challenge, myChallengeScore),
 	}
-	adminPause(sess, reader, touch, "")
+	if len(upcomingTournaments) > 0 {
+		seasonRows = append(seasonRows, fmt.Sprintf("Tournament slots ahead: %d", len(upcomingTournaments)))
+	}
+	supportRows := []string{
+		pulseMentorSummaryRow(hasMentor, mentor),
+		fmt.Sprintf("Digest cap: %d items per issue", digestBaseMax),
+		pulseDigestWeekdaySummary(digestWeekday, digestBaseMax),
+	}
+
+	for {
+		termWidth, renderWidth, _ = currentSessionLayout(sess)
+		writeClear(sess, ansiEnabled)
+		renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "Caller Pulse", user.Handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
+		renderFrame(sess, termWidth, renderWidth, ui.RenderCallerPulseDesk(renderWidth, user.Handle, nextRows, weekRows, seasonRows, supportRows), ansiEnabled, encoding)
+		io.WriteString(sess, "Selection: ")
+		key, err := readKey(reader)
+		if err != nil {
+			return
+		}
+		touch()
+		switch key {
+		case "Q", "ESC", "ENTER":
+			return
+		case "R":
+			writeClear(sess, ansiEnabled)
+			renderFrame(sess, termWidth, renderWidth, ui.RenderTopBarWithClock(renderWidth, "Caller Pulse", user.Handle, time.Now(), nodeLabel, th, time24h)+"\r\n", ansiEnabled, encoding)
+			pagerWriteSession(sess, reader, strings.TrimSpace(report.String()))
+		case "D":
+			s.runPulseDigestPreferencesEditor(sess, reader, termWidth, renderWidth, user.Handle, th, ansiEnabled, encoding, time24h, nodeLabel, touch)
+			digestBaseMax = s.loadPulseDigestMaxItems(user.Handle)
+			digestWeekday = s.loadPulseWeekdayDigestPrefs(user.Handle, digestBaseMax)
+			supportRows = []string{
+				pulseMentorSummaryRow(hasMentor, mentor),
+				fmt.Sprintf("Digest cap: %d items per issue", digestBaseMax),
+				pulseDigestWeekdaySummary(digestWeekday, digestBaseMax),
+			}
+		default:
+			adminPause(sess, reader, touch, "Use R for the full report, D for digest plan, or Q to return.")
+		}
+	}
+}
+
+func pulsePreviewRows(rows []string, limit int) []string {
+	if limit <= 0 || len(rows) <= limit {
+		return rows
+	}
+	return append([]string{}, rows[:limit]...)
+}
+
+func pulseMissionSummaryRow(pendingMissionCount, activeCount int) string {
+	if activeCount == 0 {
+		return "Mission lane: no live season missions right now."
+	}
+	if pendingMissionCount <= 0 {
+		return fmt.Sprintf("Mission lane: %d active mission(s), nothing pending for you right now.", activeCount)
+	}
+	return fmt.Sprintf("Mission lane: %d active mission(s), %d still worth claiming.", activeCount, pendingMissionCount)
+}
+
+func pulseEventSummaryRow(events []pulseCommunityEvent, time24h bool) string {
+	if len(events) == 0 {
+		return "Next event: nothing scheduled yet."
+	}
+	next := events[0]
+	return fmt.Sprintf("Next event: %s at %s", clampForTTY(next.Title, 42), formatClock(next.StartsAt.Local(), time24h))
+}
+
+func pulseChallengeSummaryRow(hasChallenge bool, challenge pulseSeasonChallenge, score pulseSeasonChallengeScore) string {
+	if !hasChallenge {
+		return "Challenge lane: no active season challenge."
+	}
+	return fmt.Sprintf("Challenge lane: %s, your score is %d.", clampForTTY(challenge.Name, 42), score.Points)
+}
+
+func pulseMentorSummaryRow(hasMentor bool, mentor pulseMentorshipPair) string {
+	if !hasMentor {
+		return "Mentor: no active mentor pairing yet."
+	}
+	note := strings.TrimSpace(mentor.Note)
+	if note == "" {
+		return fmt.Sprintf("Mentor: %s", mentor.Mentor)
+	}
+	return fmt.Sprintf("Mentor: %s (%s)", mentor.Mentor, clampForTTY(note, 40))
+}
+
+func pulseDigestWeekdaySummary(prefs pulseWeekdayDigestPrefs, base int) string {
+	customized := 0
+	for _, value := range []int{prefs.Sunday, prefs.Monday, prefs.Tuesday, prefs.Wednesday, prefs.Thursday, prefs.Friday, prefs.Saturday} {
+		if value > 0 && value != base {
+			customized++
+		}
+	}
+	if customized == 0 {
+		return "Weekday plan: every day follows the same cap."
+	}
+	return fmt.Sprintf("Weekday plan: %d day(s) use their own digest cap.", customized)
 }
 
 func writePulseRankSection(out *strings.Builder, title string, rows []pulseRankRow) {

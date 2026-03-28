@@ -3,6 +3,7 @@ package sshserver
 import (
 	"bufio"
 	"bytes"
+	"io"
 	"strconv"
 	"strings"
 	"testing"
@@ -32,6 +33,7 @@ func TestQueuePageRequestPersistsSharedStore(t *testing.T) {
 func TestReadMessageBodyComposeHelpers(t *testing.T) {
 	input := strings.Join([]string{
 		"first line",
+		"",
 		"second line",
 		"/preview",
 		"/del",
@@ -46,11 +48,11 @@ func TestReadMessageBodyComposeHelpers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read message body: %v", err)
 	}
-	if body != "first line\nthird line" {
+	if body != "first line\n\nthird line" {
 		t.Fatalf("unexpected compose body: %q", body)
 	}
 	text := out.String()
-	for _, needle := range []string{"draft preview", "Removed last line.", "Compose helpers"} {
+	for _, needle := range []string{"Body> ", "draft preview", "Removed last line.", "Compose helpers"} {
 		if !strings.Contains(text, needle) {
 			t.Fatalf("expected %q in compose output: %s", needle, text)
 		}
@@ -74,6 +76,22 @@ func TestReadLineHandlesBackspaceAndMaxLength(t *testing.T) {
 	}
 	if got != "abcd" {
 		t.Fatalf("expected max-length truncation, got %q", got)
+	}
+
+	reader = bufio.NewReader(strings.NewReader("quit\r\nx"))
+	got, err = readLine(reader, 16)
+	if err != nil {
+		t.Fatalf("read line with CRLF: %v", err)
+	}
+	if got != "quit" {
+		t.Fatalf("expected CRLF-terminated input to return quit, got %q", got)
+	}
+	next, err := reader.ReadByte()
+	if err != nil {
+		t.Fatalf("read trailing byte after CRLF line: %v", err)
+	}
+	if next != 'x' {
+		t.Fatalf("expected CRLF pair to be consumed before next byte, got %q", string(next))
 	}
 }
 
@@ -103,6 +121,83 @@ func TestReadLineHandlesCursorMotionAndDelete(t *testing.T) {
 	}
 	if got != "pre-tail!" {
 		t.Fatalf("expected home/end editing, got %q", got)
+	}
+}
+
+func TestReadLineEchoesVisibleInputAndMasksSecrets(t *testing.T) {
+	reader := bufio.NewReader(strings.NewReader("hello\n"))
+	var out bytes.Buffer
+	registerLineInput(reader, &out, true)
+	defer unregisterLineInput(reader)
+
+	got, err := readLine(reader, 16)
+	if err != nil {
+		t.Fatalf("read line with echo: %v", err)
+	}
+	if got != "hello" {
+		t.Fatalf("expected echoed input to return hello, got %q", got)
+	}
+	rendered := out.String()
+	if !strings.Contains(rendered, "hello") {
+		t.Fatalf("expected echo output to contain visible input, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "\r\n") {
+		t.Fatalf("expected echoed input to end with CRLF, got %q", rendered)
+	}
+
+	reader = bufio.NewReader(strings.NewReader("secret\n"))
+	out.Reset()
+	registerLineInput(reader, &out, true)
+	restore := setLineInputMask(reader, true)
+	defer unregisterLineInput(reader)
+	got, err = readLine(reader, 16)
+	restore()
+	if err != nil {
+		t.Fatalf("read masked line: %v", err)
+	}
+	if got != "secret" {
+		t.Fatalf("expected masked input to preserve actual value, got %q", got)
+	}
+	rendered = out.String()
+	if strings.Contains(rendered, "secret") {
+		t.Fatalf("expected masked echo to hide raw value, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "******") {
+		t.Fatalf("expected masked echo to contain placeholder glyphs, got %q", rendered)
+	}
+}
+
+func TestReadLineEchoesInPlainModeWhenPossible(t *testing.T) {
+	reader := bufio.NewReader(strings.NewReader("mail\n"))
+	var out bytes.Buffer
+	registerLineInput(reader, &out, false)
+	defer unregisterLineInput(reader)
+
+	got, err := readLine(reader, 16)
+	if err != nil {
+		t.Fatalf("read line in plain mode: %v", err)
+	}
+	if got != "mail" {
+		t.Fatalf("expected mail, got %q", got)
+	}
+	rendered := out.String()
+	if !strings.Contains(rendered, "mail") {
+		t.Fatalf("expected plain mode echo to show typed text, got %q", rendered)
+	}
+}
+
+func TestRenderFramePreservesRequestedLineBreaks(t *testing.T) {
+	var out bytes.Buffer
+	renderFrame(&out, 80, 80, "ONE\r\n", false, "")
+	renderFrame(&out, 80, 80, "TWO\r\n", false, "")
+	if got := out.String(); got != "ONE\r\nTWO\r\n" {
+		t.Fatalf("renderFrame should preserve frame newlines, got %q", got)
+	}
+
+	out.Reset()
+	renderFrame(io.Writer(&out), 100, 80, "BOX\r\n", false, "")
+	if !strings.HasSuffix(out.String(), "\r\n") {
+		t.Fatalf("expected centered frame to keep trailing newline, got %q", out.String())
 	}
 }
 

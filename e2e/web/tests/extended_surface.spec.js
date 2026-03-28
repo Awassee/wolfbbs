@@ -80,20 +80,20 @@ test("extended caller surfaces and exports stay healthy", async ({ page }) => {
     return menu;
   };
   const body = page.locator("body");
-  const statusMenu = await openControlMenu("Status");
-  await expect(statusMenu.locator(".wolfbbs-status-grid")).toBeVisible();
-  await expect(statusMenu.locator(".wolfbbs-focus-pill")).toBeVisible();
-  const viewMenu = await openControlMenu("View");
-  const layoutButton = viewMenu.getByRole("button", { name: /Layout:/i });
+  const moreMenu = await openControlMenu("More");
+  await expect(moreMenu.locator(".wolfbbs-status-grid")).toBeVisible();
+  await expect(moreMenu.locator(".wolfbbs-focus-pill")).toBeVisible();
+  const layoutButton = moreMenu.getByRole("button", { name: /Layout:/i });
   const layoutBefore = await body.getAttribute("data-layout-mode");
   await layoutButton.click();
   const layoutAfter = await body.getAttribute("data-layout-mode");
   expect(layoutAfter).not.toBe(layoutBefore);
-  await expect(viewMenu.getByRole("button", { name: /Accent:/i })).toBeVisible();
-  await expect(viewMenu.getByRole("button", { name: /Motion:/i })).toBeVisible();
-  await expect(viewMenu.getByRole("button", { name: /Profile:/i })).toBeVisible();
+  await expect(moreMenu.getByRole("button", { name: /Accent:/i })).toBeVisible();
+  await expect(moreMenu.getByRole("button", { name: /Motion:/i })).toBeVisible();
+  await expect(moreMenu.getByRole("button", { name: /Profile:/i })).toBeVisible();
   await expect(prefControls.getByRole("button", { name: "Back" })).toBeVisible();
-  const compactControls = viewMenu.getByRole("button", { name: /Controls:/i });
+  await expect(prefControls.getByRole("button", { name: "Search" })).toBeVisible();
+  const compactControls = moreMenu.getByRole("button", { name: /Controls:/i });
   await compactControls.click();
   await expect(page.locator("body")).toHaveClass(/wolfbbs-controls-compact/);
   await compactControls.click();
@@ -108,27 +108,14 @@ test("extended caller surfaces and exports stay healthy", async ({ page }) => {
   await expect(page.locator("#wolfbbsShortcutOverlay")).toHaveClass(/active/);
   await page.keyboard.press("Escape");
   await expect(page.locator("#wolfbbsShortcutOverlay")).not.toHaveClass(/active/);
-
-  const routeMenu = await openControlMenu("Route");
-  const pinRouteButton = routeMenu.getByRole("button", { name: /Pin route|Unpin route/i });
-  await pinRouteButton.click();
-  const actionDock = page.locator("#wolfbbsActionDock");
-  await expect(actionDock).toBeVisible();
-  await expect(actionDock.getByRole("button", { name: "Open" })).toBeVisible();
-  await expect(actionDock.getByRole("button", { name: /Dock left|Dock right/i })).toBeHidden();
-  await actionDock.getByRole("button", { name: "Open" }).click();
-  await expect(actionDock).toContainText(/Pinned routes/i);
-  await expect(actionDock.getByRole("button", { name: /Dock left|Dock right/i })).toBeVisible();
-  const dockSearch = actionDock.locator('.wolfbbs-action-dock-search input[type="search"]');
-  await expect(dockSearch).toBeVisible();
-  await dockSearch.fill("pinned");
-  await expect(actionDock).toContainText(/Pinned routes/i);
-
-  const sectionTools = page.locator(".wolfbbs-section-nav-tools").first();
-  await expect(sectionTools).toBeVisible();
-  await sectionTools.locator("summary").click();
-  await expect(sectionTools.locator('input[type="search"]')).toBeVisible();
-  await expect(sectionTools.getByRole("button", { name: "Copy all links" })).toBeVisible();
+  const sectionNav = page.locator(".wolfbbs-section-nav").first();
+  if (await sectionNav.count()) {
+    await expect(sectionNav).toBeVisible();
+    await expect(sectionNav).toContainText("Jump to");
+  }
+  await expect(page.locator(".wolfbbs-section-nav-tools")).toHaveCount(0);
+  await expect(page.locator(".wolfbbs-section-pin-button")).toHaveCount(0);
+  await expect(page.locator(".wolfbbs-section-done-toggle")).toHaveCount(0);
 
   const helpMenuAgain = await openControlMenu("Help");
   await helpMenuAgain.getByRole("button", { name: "Bug report" }).click();
@@ -155,7 +142,7 @@ test("extended caller surfaces and exports stay healthy", async ({ page }) => {
   if (await progressMeter.count()) {
     await expect(progressMeter.first()).toBeVisible();
   }
-  await expect(page.locator(".wolfbbs-form-id")).toBeVisible();
+  await expect(page.locator("body")).not.toContainText("Form slot #");
 });
 
 test("extended admin routes and setup actions stay functional", async ({ browser }) => {

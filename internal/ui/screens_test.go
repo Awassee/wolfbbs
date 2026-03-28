@@ -88,7 +88,7 @@ func TestRenderHelpPanels(t *testing.T) {
 		{
 			name:     "settings",
 			rendered: RenderSettingsHelp(80),
-			wants:    []string{"Help: Settings", "My Settings Commands", "cycle output mode for this session", "profile export JSON", "safe mode", "save preferences", "Press any key to return."},
+			wants:    []string{"Help: Settings", "My Settings Commands", "change your password", "cycle output mode for this session", "profile export JSON", "safe mode", "save preferences", "Press any key to return."},
 		},
 	}
 
@@ -97,6 +97,76 @@ func TestRenderHelpPanels(t *testing.T) {
 			if !strings.Contains(tc.rendered, want) {
 				t.Fatalf("%s help panel missing %q", tc.name, want)
 			}
+		}
+	}
+}
+
+func TestRenderSettingsDesk(t *testing.T) {
+	rendered := RenderSettingsDesk(80, "caller", "retro-amber", "Auto detect", true, true, false, true)
+	for _, want := range []string{
+		"My Settings",
+		"Quick Choices",
+		"Look + Feel",
+		"Reading Comfort",
+		"Account Safety",
+		"Personal Tools",
+		"[W] Change password",
+		"Two-step sign-in: enabled",
+		"Output mode for this call: Auto detect",
+		"Changes preview live on this screen.",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("settings desk missing %q", want)
+		}
+	}
+}
+
+func TestRenderCallerPulseDesk(t *testing.T) {
+	rendered := RenderCallerPulseDesk(80, "caller", []string{
+		"1. Open mail first: 2 unread private messages.",
+		"2. Mission lane has 1 pending objective.",
+	}, []string{
+		"Unread mail: 2   Boards to catch up on: 1",
+		"Current streak: 4 day(s)   Longest: 9 day(s)   Active days (14d): 7/14",
+	}, []string{
+		"Mission lane: 2 active mission(s), 1 still worth claiming.",
+		"Next event: ANSI Jam at 07:30 PM",
+	}, []string{
+		"Mentor: sysop",
+		"Digest cap: 10 items per issue",
+	})
+	for _, want := range []string{
+		"Caller Pulse",
+		"Do This Next",
+		"This Week",
+		"Season + Events",
+		"Support + Delivery",
+		"Open mail first",
+		"[R] Full report",
+		"[D] Digest plan",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("caller pulse desk missing %q", want)
+		}
+	}
+}
+
+func TestRenderOfflineCenterDesk(t *testing.T) {
+	rendered := RenderOfflineCenterDesk(80, "caller", 2, []string{
+		"- General (12 messages)",
+		"- Doors (4 messages)",
+	})
+	for _, want := range []string{
+		"Offline Center",
+		"Packet owner: caller",
+		"Boards ready: 2",
+		"Packet Preview",
+		"What You Can Do",
+		"[J] Save full packet (JSON)",
+		"[I] Import mail replies",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("offline center desk missing %q", want)
 		}
 	}
 }
@@ -119,9 +189,23 @@ func TestRenderBoardAndMailMenus(t *testing.T) {
 	}
 
 	mail := RenderMailOverview(80, []string{"   1  Hello                 01-01 12:00  new"}, []string{"   2  Re: Hello             uid:1"})
-	for _, want := range []string{"Private Mail", "Inbox:", "Outbox:", "(T)emplates", "Write personal notes", "Find people"} {
+	for _, want := range []string{"Private Mail", "Inbox:", "Outbox:", "(T)emplates", "Write personal notes", "Find people", "Press one hotkey now", "Press a hotkey:"} {
 		if !strings.Contains(mail, want) {
 			t.Fatalf("mail menu missing %q", want)
+		}
+	}
+
+	compose := RenderMailCompose(80, "Private Mail Compose", "sysop", "Hello", "normal", "Welcome Kit", "Type your note below.")
+	for _, want := range []string{"Compose Desk", "Loaded reply kit: Welcome Kit", "To: sysop", "Subject: Hello", "Urgency: NORMAL", "Body editor:"} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("mail compose missing %q", want)
+		}
+	}
+
+	reader := RenderMailReader(80, "Hello", []string{"Message ID: 1", "Box: Inbox"}, "Line one\nLine two")
+	for _, want := range []string{"Mail Header", "Subject: Hello", "Message ID: 1", "Line one", "Reader hotkeys: [P] Reply  [D] Delete  [Q] Back"} {
+		if !strings.Contains(reader, want) {
+			t.Fatalf("mail reader missing %q", want)
 		}
 	}
 
@@ -194,23 +278,32 @@ func TestRenderMainMenuAndQuickJumpDeck(t *testing.T) {
 }
 
 func TestRenderChatDesk(t *testing.T) {
-	rendered := RenderChatDesk(80, "#lobby", "Main lobby for general chat, greetings, and quick social check-ins.", 3, 2, false, []string{
-		"1) #lobby       current | 2 live      sysop: hello",
-		"2) #ansi        joined | now         caller: working on ansi art",
+	rendered := RenderChatDesk(80, "caller", "#lobby", "Main lobby for general chat, greetings, and quick social check-ins.", 3, 2, false, "Joined #lobby", []string{
+		"1  * #lobby        2 here  sysop: hello",
+		"2  + #ansi         now     caller: working on ansi art",
 	}, []string{
-		"15:04   sysop      hello world",
-		"15:05   caller     ansi forever",
+		"[15:04] <sysop>      hello world",
+		"[15:05] <caller>     ansi forever",
+	}, []string{
+		"* sysop        now",
+		"  caller       1m",
 	})
 	for _, want := range []string{
-		"Live Chat",
-		"Chat Command Bar",
-		"[1-9] Switch room",
-		"Current room: #lobby",
-		"Room guide:",
-		"Open Rooms",
-		"Transcript",
+		"Live Chat Client",
+		"IRC-style chat desk",
+		"Nick: caller",
+		"Channel: #lobby",
+		"Topic:",
+		"Status: Joined #lobby",
+		"Windows",
+		"Buffer",
+		"Users",
 		"#ansi",
-		"Use J to open another room",
+		"Prompt: caller@#lobby>",
+		"/join #room",
+		"/list",
+		"/whois nick",
+		"/topic",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("chat desk missing %q", want)
@@ -317,7 +410,9 @@ func TestResponsiveScreensFitCommonWidths(t *testing.T) {
 		{name: "welcome-40", width: 40, rendered: RenderWelcome(40)},
 		{name: "welcome-72", width: 72, rendered: RenderWelcome(72)},
 		{name: "main-40", width: 40, rendered: RenderMainMenu(40)},
-		{name: "chat-54", width: 54, rendered: RenderChatDesk(54, "#lobby", "Main lobby for general chat.", 2, 1, false, []string{"1) #lobby current | 1 live sysop: hello", "2) #ansi joined | now caller: art drop"}, []string{"15:04 sysop hello there", "15:05 caller ansi forever"})},
+		{name: "chat-54", width: 54, rendered: RenderChatDesk(54, "caller", "#lobby", "Main lobby for general chat.", 2, 1, false, "Buffer refreshed.", []string{"1  * #lobby   1 here  sysop: hello", "2  + #ansi    now     caller: art drop"}, []string{"[15:04] <sysop> hello there", "[15:05] <caller> ansi forever"}, []string{"* sysop now"})},
+		{name: "pulse-54", width: 54, rendered: RenderCallerPulseDesk(54, "caller", []string{"1. Open mail first."}, []string{"Unread mail: 1   Boards to catch up on: 2"}, []string{"Mission lane: 1 active mission."}, []string{"Digest cap: 10 items per issue"})},
+		{name: "offline-54", width: 54, rendered: RenderOfflineCenterDesk(54, "caller", 1, []string{"- General (12 messages)"})},
 		{name: "jump-40", width: 40, rendered: RenderQuickJumpGuide(40, false)},
 		{name: "files-32", width: 32, rendered: RenderFilesMenu(32, []string{"  1 Uploads   /bbs/files"})},
 		{name: "mail-54", width: 54, rendered: RenderMailOverview(54, []string{"  1  Hello there         01-01 12:00  new"}, []string{"  2  Re: Hello           uid:1"})},
